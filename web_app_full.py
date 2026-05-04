@@ -282,7 +282,7 @@ async def get_chat_interface():
     """Serve the chat interface."""
     template_path = Path(__file__).parent / "templates" / "index.html"
     if template_path.exists():
-        content = template_path.read_text()
+        content = template_path.read_text(encoding="utf-8")
     else:
         content = "<h1>Perspicacité v2</h1><p>Template not found. Please ensure templates/index.html exists.</p>"
     return HTMLResponse(content=content)
