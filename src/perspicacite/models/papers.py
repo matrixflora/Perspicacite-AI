@@ -158,3 +158,160 @@ class Paper(BaseModel):
                 "doi", "pmid", "url", "file", "keywords"
             }},
         )
+
+
+def normalize_paper_dict(raw: dict[str, Any], source: PaperSource = PaperSource.WEB_SEARCH) -> dict[str, Any]:
+    """Normalize any provider's paper response into a standardized dict.
+
+    This is the single source of truth for paper data formatting across the
+    entire system. All paper-returning functions should pass their raw
+    provider response through this before returning.
+
+    Args:
+        raw: Raw paper data from any provider (OpenAlex, Semantic Scholar, arXiv, etc.)
+        source: The source identifier for where this paper came from
+
+    Returns:
+        Normalized dict with keys matching the Paper schema:
+        {
+            "id": str,
+            "title": str,
+            "authors": list[str],  # List of author names (strings), not Author objects
+            "abstract": str | None,
+            "year": int | None,
+            "doi": str | None,
+            "pmid": str | None,
+            "url": str | None,
+            "pdf_url": str | None,
+            "citation_count": int | None,
+            "source": PaperSource,
+            "full_text": str | None,
+            "metadata": dict,
+        }
+    """
+    # Extract title
+    title = raw.get("title") or raw.get("display_name") or "Unknown"
+
+    # Extract and normalize authors
+    # Multiple possible input formats:
+    # - OpenAlex: authorships=[{"author": {"display_name": "..."}}]
+    # - Semantic Scholar: authors=[{"name": "..."}]
+    # - List of strings: ["Author One", "Author Two"]
+    # - Comma-separated string: "Author One, Author Two"
+    authors: list[str] = []
+
+    # First check authorships (OpenAlex format)
+    authorships = raw.get("authorships")
+    if authorships and isinstance(authorships, list):
+        for a in authorships[:10]:  # Limit to first 10
+            if isinstance(a, dict):
+                author_obj = a.get("author") or a
+                name = author_obj.get("display_name") or author_obj.get("name")
+                if name:
+                    authors.append(name)
+
+    # If no authorships, check authors directly
+    if not authors:
+        authors_raw = raw.get("authors")
+        if authors_raw:
+            if isinstance(authors_raw, list):
+                for a in authors_raw[:10]:
+                    if isinstance(a, Author):
+                        authors.append(a.name)
+                    elif isinstance(a, dict):
+                        name = a.get("display_name") or a.get("name")
+                        if name:
+                            authors.append(name)
+                    elif isinstance(a, str):
+                        authors.append(a)
+            elif isinstance(authors_raw, str):
+                # Comma-separated or " and "-separated
+                for part in authors_raw.replace(" and ", ",").split(","):
+                    part = part.strip()
+                    if part:
+                        authors.append(part)
+
+    # Extract year
+    year = raw.get("year")
+    if year is None:
+        year = raw.get("publication_year")
+    if year and isinstance(year, str):
+        import re
+        year_match = re.search(r"\b(19|20)\d{2}\b", year)
+        year = int(year_match.group()) if year_match else None
+    if year and isinstance(year, int):
+        # Validate reasonable range (Paper model does 1800 to current_year+1)
+        current_year = datetime.now().year
+        if 1800 <= year <= current_year + 1:
+            pass  # Valid year
+        else:
+            year = None
+    else:
+        year = None
+
+    # Extract DOI
+    doi = raw.get("doi")
+    if doi:
+        # Strip URL prefixes
+        for prefix in ("https://doi.org/", "http://dx.doi.org/", "doi:", "DOI:"):
+            if isinstance(doi, str) and doi.lower().startswith(prefix.lower()):
+                doi = doi[len(prefix):].strip()
+    # Validate DOI has a slash (basic check)
+    if not doi or not isinstance(doi, str) or "/" not in doi:
+        doi = None
+
+    # Extract PMID
+    pmid = raw.get("pmid") or raw.get("pmid_id")
+
+    # Extract URLs
+    url = raw.get("url") or raw.get("link")
+    pdf_url = raw.get("pdf_url") or raw.get("fulltext_pdf") or raw.get("oa_link")
+
+    # Extract citation count (try multiple field names)
+    # Use .get() with None default to avoid treating 0 as falsy
+    citation_count = raw.get("citation_count")
+    if citation_count is None:
+        citation_count = raw.get("cited_by_count")
+    if citation_count is None:
+        citation_count = raw.get("citationCount")  # Semantic Scholar format
+
+    if citation_count is not None and isinstance(citation_count, str):
+        try:
+            citation_count = int(citation_count)
+        except ValueError:
+            citation_count = None
+
+    # Generate ID if not provided
+    paper_id = raw.get("id")
+    if not paper_id:
+        if doi:
+            paper_id = f"doi:{doi}"
+        elif pmid:
+            paper_id = f"pmid:{pmid}"
+        elif raw.get("arxiv_id"):
+            paper_id = f"arxiv:{raw['arxiv_id']}"
+        else:
+            import hashlib
+            title_hash = hashlib.md5(str(title).encode()).hexdigest()[:12]
+            paper_id = f"generated:{title_hash}"
+
+    return {
+        "id": paper_id,
+        "title": title,
+        "authors": authors,
+        "abstract": raw.get("abstract") or raw.get("description"),
+        "year": year,
+        "doi": doi,
+        "pmid": pmid,
+        "url": url,
+        "pdf_url": pdf_url,
+        "citation_count": citation_count,
+        "source": source,
+        "full_text": raw.get("full_text"),
+        "metadata": {k: v for k, v in raw.items() if k not in {
+            "id", "title", "authors", "authorships", "abstract", "year", "doi", "pmid",
+            "url", "link", "pdf_url", "fulltext_pdf", "oa_link", "citation_count",
+            "full_text", "display_name", "publication_year", "publication_date",
+            "cited_by_count", "citationCount", "description"
+        }},
+    }

@@ -21,6 +21,60 @@ logger = get_logger("perspicacite.pipeline.download.discovery")
 _CACHE_DIR = Path("./data/papers")
 
 
+_ARXIV_ATOM_NS = {
+    "atom": "http://www.w3.org/2005/Atom",
+}
+
+
+async def _enrich_from_arxiv_atom(
+    arxiv_id: str,
+    disc: PaperDiscovery,
+    http_client: httpx.AsyncClient,
+) -> None:
+    """Fill missing title/authors/year on ``disc`` from the arXiv Atom API.
+
+    Mutates ``disc`` in place. Only fills fields that are currently empty —
+    OpenAlex data takes precedence over arXiv data.
+
+    arXiv export API: https://export.arxiv.org/api/query?id_list=<id>
+    Returns Atom XML. The id_list endpoint accepts arXiv IDs (without
+    version suffix). For a single id, the feed contains exactly one
+    ``<entry>`` with ``<title>``, ``<author><name>...``, ``<published>``.
+    """
+    import xml.etree.ElementTree as ET
+
+    bare = arxiv_id.split("v")[0] if re.match(r".*v\d+$", arxiv_id) else arxiv_id
+    url = f"https://export.arxiv.org/api/query?id_list={bare}"
+    logger.info("discovery_arxiv_atom_lookup", arxiv_id=bare)
+    r = await http_client.get(url)
+    if r.status_code != 200:
+        return
+    root = ET.fromstring(r.text)
+    entry = root.find("atom:entry", _ARXIV_ATOM_NS)
+    if entry is None:
+        return
+
+    title_el = entry.find("atom:title", _ARXIV_ATOM_NS)
+    if title_el is not None and title_el.text and not disc.title:
+        disc.title = " ".join(title_el.text.split())
+
+    if not disc.authors:
+        names = []
+        for author_el in entry.findall("atom:author", _ARXIV_ATOM_NS):
+            name_el = author_el.find("atom:name", _ARXIV_ATOM_NS)
+            if name_el is not None and name_el.text:
+                names.append(name_el.text.strip())
+        if names:
+            disc.authors = names
+
+    if disc.year is None:
+        published_el = entry.find("atom:published", _ARXIV_ATOM_NS)
+        if published_el is not None and published_el.text:
+            m = re.match(r"^(\d{4})", published_el.text)
+            if m:
+                disc.year = int(m.group(1))
+
+
 def _discovery_cache_path(doi: str) -> Path:
     safe = doi.replace("/", "_").replace(":", "-")
     return _CACHE_DIR / f"{safe}_discovery.json"
@@ -119,9 +173,31 @@ async def discover_paper_sources(
     clean = doi.replace("https://doi.org/", "").replace("http://doi.org/", "").strip()
     disc = PaperDiscovery(doi=clean)
 
-    # 1. Check disk cache
+    # 1. Check disk cache. If cached but missing authors/year for an arXiv
+    # paper (a known weakness of older cache entries — OpenAlex didn't have
+    # them populated yet at write time), opportunistically enrich from the
+    # arXiv Atom API and re-save.
     cached = _read_discovery_cache(clean)
     if cached is not None:
+        from .arxiv import is_arxiv_doi, get_arxiv_id_from_doi
+        needs_enrich = is_arxiv_doi(clean) and (
+            not cached.authors or cached.year is None or not cached.title
+        )
+        if needs_enrich:
+            arxiv_id = cached.arxiv_id or get_arxiv_id_from_doi(clean)
+            if arxiv_id:
+                try:
+                    await _enrich_from_arxiv_atom(arxiv_id, cached, http_client)
+                    if not cached.arxiv_id:
+                        cached.arxiv_id = arxiv_id
+                    _write_discovery_cache(cached)
+                    logger.info("discovery_cache_enriched_arxiv", doi=clean)
+                except Exception as e:
+                    logger.info(
+                        "discovery_cache_enrich_failed",
+                        doi=clean,
+                        error=str(e),
+                    )
         logger.info("discovery_cache_hit", doi=clean)
         return cached
 
@@ -169,6 +245,22 @@ async def discover_paper_sources(
                 disc.abstract = _invert_abstract(raw_abstract)
     except Exception as e:
         logger.info("discovery_openalex_failed", doi=clean, error=str(e))
+
+    # 2b. arXiv export API (fills gaps for very-new arXiv papers that
+    # OpenAlex hasn't fully indexed yet — title may be present but
+    # authorships and publication_year often missing for the first weeks).
+    arxiv_id_for_fallback = disc.arxiv_id
+    if not arxiv_id_for_fallback:
+        from .arxiv import is_arxiv_doi, get_arxiv_id_from_doi
+        if is_arxiv_doi(clean):
+            arxiv_id_for_fallback = get_arxiv_id_from_doi(clean)
+    if arxiv_id_for_fallback and (not disc.authors or disc.year is None or not disc.title):
+        try:
+            await _enrich_from_arxiv_atom(arxiv_id_for_fallback, disc, http_client)
+            if not disc.arxiv_id:
+                disc.arxiv_id = arxiv_id_for_fallback
+        except Exception as e:
+            logger.info("discovery_arxiv_atom_failed", arxiv_id=arxiv_id_for_fallback, error=str(e))
 
     # 3. Unpaywall (fills gaps OpenAlex left)
     email = unpaywall_email or os.getenv("UNPAYWALL_EMAIL")
