@@ -305,7 +305,7 @@ src/perspicacite/
     tools/                    # Tool registry, KB search, LOTUS
   search/scilex_adapter.py    # Multi-database literature search
   retrieval/                  # ChromaDB vector store + hybrid search
-web_app_full.py               # FastAPI web application
+src/perspicacite/web/         # FastAPI web application (routers, state, app)
 templates/index.html          # Single-page chat UI
 ```
 

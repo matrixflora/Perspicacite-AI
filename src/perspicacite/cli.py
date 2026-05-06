@@ -114,29 +114,12 @@ def serve(
     if config.mcp.enabled:
         click.echo(f"   MCP: http://{config.mcp.host}:{config.mcp.port}")
 
-    # Import and run server from web_app_full
-    import uvicorn
-    
-    # Dynamically import the web app module
-    import sys
-    web_app_path = Path(__file__).parent.parent.parent / "web_app_full.py"
-    
-    # Add the repo root to path temporarily
-    repo_root = web_app_path.parent
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-    
-    # Import using importlib to handle the module loading
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("web_app_full", web_app_path)
-    web_module = importlib.util.module_from_spec(spec)
-    
-    # Set up the app state with config
+    # Hand the resolved config path to the web app via env var
     import os
     os.environ["PERSPICACITE_CONFIG"] = str(config)
-    
-    spec.loader.exec_module(web_module)
-    app = web_module.app
+
+    import uvicorn
+    from perspicacite.web import app
 
     if config.mcp.enabled:
         # Start MCP server alongside FastAPI
