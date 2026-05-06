@@ -829,6 +829,44 @@
         }
         .kb-create-form.visible { display: block; }
 
+        .kb-tab-strip {
+            display: flex;
+            gap: 2px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 10px;
+        }
+        .kb-create-form .kb-tab-button {
+            flex: 1;
+            width: auto;
+            padding: 7px 10px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-top-left-radius: var(--radius);
+            border-top-right-radius: var(--radius);
+            border-bottom-left-radius: 0;
+            border-bottom-right-radius: 0;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-family: 'Chivo', sans-serif;
+            margin-bottom: -1px;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .kb-create-form .kb-tab-button:hover:not(.active) {
+            color: var(--text-main);
+            background: var(--bg-card);
+        }
+        .kb-create-form .kb-tab-button.active {
+            background: var(--secondary);
+            color: white;
+            border-color: var(--secondary);
+            font-weight: 600;
+        }
+        .kb-tab-panel { display: none; }
+        .kb-tab-panel.active { display: block; }
+
         .kb-tab-content textarea {
             width: 100%;
             padding: 8px 10px;
@@ -1429,23 +1467,34 @@
                     </div>
                     <div id="kb-create-form" class="kb-create-form">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                            <span style="font-size: 13px; font-weight: 500; color: var(--text-main);">Create from BibTeX</span>
+                            <span style="font-size: 13px; font-weight: 500; color: var(--text-main);">Create new Knowledge Base</span>
                             <button onclick="toggleCreateKB()" style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); padding: 0 2px; line-height: 1;" title="Close">&times;</button>
                         </div>
-                        <input id="kb-bibtex-name-input" type="text" placeholder="KB Name (e.g. FBMN papers)">
-                        <div id="bibtex-drop-zone" class="bibtex-drop-zone" style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 8px; cursor: pointer; transition: all 0.2s;">
-                            <div style="font-size: 24px; margin-bottom: 4px;">📄</div>
-                            <div style="font-size: 13px; color: var(--text-secondary);">Drop a <b>.bib</b> file here or click to browse</div>
-                            <input id="bibtex-file-input" type="file" accept=".bib,.txt" style="display:none;">
+                        <div class="kb-tab-strip">
+                            <button id="kb-tab-btn-empty" type="button" class="kb-tab-button active" onclick="switchKbCreateTab('empty')">Empty KB</button>
+                            <button id="kb-tab-btn-bibtex" type="button" class="kb-tab-button" onclick="switchKbCreateTab('bibtex')">From BibTeX</button>
                         </div>
-                        <input type="hidden" id="kb-bibtex-content" value="">
-                        <div id="bibtex-progress" style="display:none; margin-bottom: 8px;">
-                            <div style="background: var(--border); border-radius: 4px; height: 6px; overflow: hidden;">
-                                <div id="bibtex-progress-bar" style="background: var(--secondary); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                        <div id="kb-tab-panel-empty" class="kb-tab-panel active">
+                            <input id="kb-empty-name-input" type="text" placeholder="KB Name (e.g. My research)">
+                            <input id="kb-empty-desc-input" type="text" placeholder="Description (optional)">
+                            <button id="kb-empty-create-btn" onclick="createEmptyKB()">Create empty KB</button>
+                        </div>
+                        <div id="kb-tab-panel-bibtex" class="kb-tab-panel">
+                            <input id="kb-bibtex-name-input" type="text" placeholder="KB Name (e.g. FBMN papers)">
+                            <div id="bibtex-drop-zone" class="bibtex-drop-zone" style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 8px; cursor: pointer; transition: all 0.2s;">
+                                <div style="font-size: 24px; margin-bottom: 4px;">📄</div>
+                                <div style="font-size: 13px; color: var(--text-secondary);">Drop a <b>.bib</b> file here or click to browse</div>
+                                <input id="bibtex-file-input" type="file" accept=".bib,.txt" style="display:none;">
                             </div>
-                            <div id="bibtex-progress-text" style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Creating KB...</div>
+                            <input type="hidden" id="kb-bibtex-content" value="">
+                            <div id="bibtex-progress" style="display:none; margin-bottom: 8px;">
+                                <div style="background: var(--border); border-radius: 4px; height: 6px; overflow: hidden;">
+                                    <div id="bibtex-progress-bar" style="background: var(--secondary); height: 100%; width: 0%; transition: width 0.3s;"></div>
+                                </div>
+                                <div id="bibtex-progress-text" style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Creating KB...</div>
+                            </div>
+                            <button id="bibtex-create-btn" onclick="createKBFromBibtex()">Create from BibTeX</button>
                         </div>
-                        <button id="bibtex-create-btn" onclick="createKBFromBibtex()">Create from BibTeX</button>
                     </div>
                 </div>
             </div>
@@ -2026,7 +2075,83 @@
         }
         
         function toggleCreateKB() {
-            document.getElementById('kb-create-form').classList.toggle('visible');
+            const form = document.getElementById('kb-create-form');
+            const willOpen = !form.classList.contains('visible');
+            form.classList.toggle('visible');
+
+            // Reset to "Empty KB" tab and clear inputs whenever the panel toggles.
+            switchKbCreateTab('empty');
+            document.getElementById('kb-empty-name-input').value = '';
+            document.getElementById('kb-empty-desc-input').value = '';
+            document.getElementById('kb-bibtex-name-input').value = '';
+            document.getElementById('kb-bibtex-content').value = '';
+            const dropZone = document.getElementById('bibtex-drop-zone');
+            if (dropZone) {
+                const label = dropZone.querySelector('div:nth-child(2)');
+                if (label) label.innerHTML = 'Drop a <b>.bib</b> file here or click to browse';
+            }
+            const progress = document.getElementById('bibtex-progress');
+            if (progress) progress.style.display = 'none';
+            bibtexFileLoaded = false;
+
+            if (willOpen) {
+                setTimeout(() => document.getElementById('kb-empty-name-input').focus(), 50);
+            }
+        }
+
+        function switchKbCreateTab(which) {
+            const empty = which === 'empty';
+            document.getElementById('kb-tab-btn-empty').classList.toggle('active', empty);
+            document.getElementById('kb-tab-btn-bibtex').classList.toggle('active', !empty);
+            document.getElementById('kb-tab-panel-empty').classList.toggle('active', empty);
+            document.getElementById('kb-tab-panel-bibtex').classList.toggle('active', !empty);
+        }
+
+        async function createEmptyKB() {
+            const name = document.getElementById('kb-empty-name-input').value.trim();
+            const description = document.getElementById('kb-empty-desc-input').value.trim();
+
+            if (!name) {
+                showToast('Please enter a KB name');
+                return;
+            }
+
+            const btn = document.getElementById('kb-empty-create-btn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+
+            try {
+                const resp = await fetch('/api/kb', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ name, description })
+                });
+
+                const data = await resp.json();
+                if (!resp.ok || data.error) {
+                    const msg = data.detail
+                        ? (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : data.detail)
+                        : (data.error || 'Unknown error');
+                    throw new Error(msg);
+                }
+
+                const actualName = data.name || name;
+                showToast(`KB "${actualName}" created`);
+
+                await loadKBs();
+                document.getElementById('kb-select').value = actualName;
+                selectKB(actualName);
+
+                document.getElementById('kb-create-form').classList.remove('visible');
+                document.getElementById('kb-empty-name-input').value = '';
+                document.getElementById('kb-empty-desc-input').value = '';
+            } catch (e) {
+                showToast('Error: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
         }
         
         // BibTeX drag-and-drop and file input handling
@@ -2808,7 +2933,7 @@
         function showPapersCuration(parentDiv, papers) {
             const section = document.createElement('div');
             section.className = 'papers-found';
-            
+
             let html = '<h4>📄 Papers Found (' + papers.length + ')</h4>';
             papers.forEach((p, i) => {
                 const authors = (p.authors || []).join(', ');
@@ -2823,14 +2948,19 @@
                         </label>
                     </div>`;
             });
-            
-            const disabled = selectedKb ? '' : 'disabled title="Select a KB first"';
-            const kbLabel = selectedKb ? `Add selected to "${selectedKb}"` : 'Select a KB first';
-            html += `<button class="add-to-kb-btn" onclick="addToKB(this)" ${disabled}>${kbLabel}</button>`;
-            
+
+            // Two buttons: "Add to existing KB" and "Create new KB with these papers"
+            const addToKbDisabled = selectedKb ? '' : 'disabled title="Select a KB first"';
+            const addToKbLabel = selectedKb ? `Add selected to "${selectedKb}"` : 'Select a KB first';
+            html += `
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button class="add-to-kb-btn" onclick="addToKB(this)" ${addToKbDisabled}>${addToKbLabel}</button>
+                    <button class="add-to-kb-btn" onclick="createKBFromSelectedPapers()">Create new KB with selected papers</button>
+                </div>`;
+
             section.innerHTML = html;
             parentDiv.appendChild(section);
-            
+
             const container = document.getElementById('chat-container');
             container.scrollTop = container.scrollHeight;
         }
@@ -2885,7 +3015,94 @@
                 btn.textContent = `Add selected to "${selectedKb}"`;
             }
         }
-        
+
+        async function createKBFromSelectedPapers() {
+            if (!lastFoundPapers.length) {
+                showToast('No papers found');
+                return;
+            }
+
+            // Collect selected papers
+            const section = document.querySelector('.papers-found');
+            const checkboxes = section.querySelectorAll('input[type="checkbox"]');
+            const selected = [];
+            checkboxes.forEach(cb => {
+                if (cb.checked) {
+                    const p = lastFoundPapers[parseInt(cb.dataset.index)];
+                    selected.push({
+                        title: p.title,
+                        authors: p.authors || [],
+                        year: p.year,
+                        doi: p.doi,
+                        abstract: p.abstract,
+                        citations: p.citations
+                    });
+                }
+            });
+
+            if (!selected.length) {
+                showToast('No papers selected');
+                return;
+            }
+
+            // Prompt for KB name
+            const name = prompt(`Create a new knowledge base with ${selected.length} paper${selected.length > 1 ? 's' : ''}. Enter KB name:`);
+            if (!name || !name.trim()) {
+                return;
+            }
+
+            const kbName = name.trim();
+            const btn = section.querySelector('button[onclick="createKBFromSelectedPapers()"]');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+
+            try {
+                // First create the KB
+                const createResp = await fetch('/api/kb', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ name: kbName, description: `Created from ${selected.length} paper${selected.length > 1 ? 's' : ''}` })
+                });
+
+                if (!createResp.ok) {
+                    const data = await createResp.json();
+                    const msg = data.detail
+                        ? (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : data.detail)
+                        : (data.error || 'Unknown error');
+                    throw new Error(msg);
+                }
+
+                const kbData = await createResp.json();
+                const actualName = kbData.name || kbName;
+
+                // Then add papers
+                const addResp = await fetch(`/api/kb/${encodeURIComponent(actualName)}/papers`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ papers: selected })
+                });
+
+                const addData = await addResp.json();
+                if (addData.error) {
+                    throw new Error(addData.error);
+                }
+
+                btn.textContent = `✓ KB "${actualName}" created with ${addData.added_papers} paper${addData.added_papers > 1 ? 's' : ''}`;
+                showToast(`KB "${actualName}" created with ${addData.added_papers} paper${addData.added_papers > 1 ? 's' : ''}`);
+
+                // Load KBs and select the new one
+                await loadKBs();
+                document.getElementById('kb-select').value = actualName;
+                selectKB(actualName);
+
+            } catch (e) {
+                showToast('Error: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
         function showToast(message) {
             const toast = document.createElement('div');
             toast.className = 'toast';
