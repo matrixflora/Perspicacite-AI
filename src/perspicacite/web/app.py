@@ -1,1 +1,92 @@
-"""FastAPI application — placeholder until Task 9."""
+"""FastAPI application — instantiation, lifespan, root + favicon, router mounts.
+
+Logging is configured at the top of this module before any structlog-using
+imports (e.g. perspicacite.memory.session_store via perspicacite.logging),
+because basicConfig is a no-op once handlers are attached.
+"""
+
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
+
+# ── Logging setup MUST run before any imports that may trigger structlog ──
+_log_dir = Path("logs")
+_log_dir.mkdir(exist_ok=True)
+_log_file = _log_dir / f"web_app_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+
+_log_fmt = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+_file_handler = logging.FileHandler(_log_file)
+_file_handler.setFormatter(_log_fmt)
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(_log_fmt)
+
+_root = logging.getLogger()
+_root.setLevel(logging.INFO)
+_root.addHandler(_file_handler)
+_root.addHandler(_stream_handler)
+
+# Now safe to import modules that use structlog.
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, Response
+
+from perspicacite.web.state import app_state
+from perspicacite.web.routers import (
+    chat as chat_router,
+    conversations as conversations_router,
+    health as health_router,
+    kb as kb_router,
+    survey as survey_router,
+)
+
+
+logger = logging.getLogger("perspicacite.web")
+
+
+# Resolve repo-root paths once at import time.
+# This file lives at: <repo>/src/perspicacite/web/app.py
+# parents[3] from __file__ is <repo>.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_TEMPLATE_PATH = _REPO_ROOT / "templates" / "index.html"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager."""
+    await app_state.initialize()
+    yield
+    logger.info("Shutting down...")
+
+
+app = FastAPI(title="Perspicacité v2 - True Agentic RAG", lifespan=lifespan)
+
+
+# Mount routers
+app.include_router(health_router.router)
+app.include_router(conversations_router.router)
+app.include_router(chat_router.router)
+app.include_router(kb_router.router)
+app.include_router(survey_router.router)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def get_chat_interface():
+    """Serve the chat interface."""
+    if _TEMPLATE_PATH.exists():
+        content = _TEMPLATE_PATH.read_text(encoding="utf-8")
+    else:
+        content = "<h1>Perspicacité v2</h1><p>Template not found. Please ensure templates/index.html exists.</p>"
+    return HTMLResponse(content=content)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Return empty favicon to prevent 404 errors in logs."""
+    return Response(content=b"", media_type="image/x-icon")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("perspicacite.web.app:app", host="0.0.0.0", port=8000, reload=False)
