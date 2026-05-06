@@ -3,7 +3,6 @@
 Tests:
 - get_arxiv_id_from_url(): regex-based arXiv ID extraction
 - AgenticOrchestrator._try_resolve_url(): URL detection and paper fetching
-- AgenticOrchestrator._resolve_arxiv_metadata(): OpenAlex metadata lookup
 - AgenticOrchestrator._generate_single_paper_answer(): single-paper answer path
 
 Run: PYTHONPATH=src pytest tests/unit/test_url_prefetch.py -v
@@ -11,8 +10,29 @@ Run: PYTHONPATH=src pytest tests/unit/test_url_prefetch.py -v
 
 import pytest
 
+from perspicacite.models import PaperSource
 from perspicacite.pipeline.download.arxiv import get_arxiv_id_from_url
 from perspicacite.rag.agentic.orchestrator import AgenticOrchestrator, _URL_RE, _DOI_IN_URL_RE
+
+
+class _MockRetrieveResult:
+    """Minimal stand-in for PaperContent used in monkeypatched tests."""
+
+    def __init__(
+        self,
+        success=True,
+        full_text="Full paper text.",
+        content_type="full_text",
+        sections=None,
+        abstract=None,
+        metadata=None,
+    ):
+        self.success = success
+        self.full_text = full_text
+        self.content_type = content_type
+        self.sections = sections
+        self.abstract = abstract
+        self.metadata = metadata or {}
 
 
 # ---------------------------------------------------------------------------
@@ -105,10 +125,23 @@ class TestUrlPatterns:
 
 
 class TestTryResolveUrl:
-    """Tests for AgenticOrchestrator._try_resolve_url."""
+    """Tests for AgenticOrchestrator._try_resolve_url.
+
+    The function maps any URL (arxiv.org or doi.org/publisher) to a DOI and
+    runs the unified retrieval pipeline once. These tests mock
+    ``retrieve_paper_content`` (and, for the no-full-text path,
+    ``lookup_paper``) and assert the contract of the returned normalized dict.
+    """
 
     def _make_orchestrator(self):
         return AgenticOrchestrator.__new__(AgenticOrchestrator)
+
+    def _patch_retrieve(self, monkeypatch, mock_func):
+        """Patch retrieve_paper_content at both import sites."""
+        monkeypatch.setattr(
+            "perspicacite.pipeline.download.unified.retrieve_paper_content",
+            mock_func,
+        )
 
     @pytest.mark.asyncio
     async def test_no_url_returns_none(self):
@@ -117,120 +150,136 @@ class TestTryResolveUrl:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_arxiv_url_fetches_html(self, monkeypatch):
+    async def test_non_resolvable_url_returns_none(self, monkeypatch):
+        """A URL that isn't arXiv and contains no DOI doesn't trigger retrieval."""
         orch = self._make_orchestrator()
 
-        async def mock_fetch_html(arxiv_id, http_client=None):
-            return "Full paper text here with detailed content.", {"Intro": "Some intro"}, "HTML Page Title"
-
-        async def mock_resolve_metadata(arxiv_id):
-            return "Test Paper Title", "10.1234/test"
+        async def mock_lookup(*args, **kwargs):
+            return None
 
         monkeypatch.setattr(
-            "perspicacite.pipeline.download.arxiv.fetch_arxiv_html",
-            mock_fetch_html,
-        )
-        monkeypatch.setattr(orch, "_resolve_arxiv_metadata", mock_resolve_metadata)
-
-        result = await orch._try_resolve_url("https://arxiv.org/html/2604.06788v1")
-        assert result is not None
-        assert result["source"] == "url_fetch"
-        assert result["relevance_score"] == 5
-        assert result["title"] == "Test Paper Title"
-        assert result["doi"] == "10.1234/test"
-        assert result["full_text"] == "Full paper text here with detailed content."
-        assert result["arxiv_id"] == "2604.06788"
-
-    @pytest.mark.asyncio
-    async def test_arxiv_url_strips_version(self, monkeypatch):
-        """Version suffix is stripped for fetching."""
-        captured_id = {}
-
-        async def mock_fetch_html(arxiv_id, http_client=None):
-            captured_id["id"] = arxiv_id
-            return "Paper content.", None, None
-
-        async def mock_resolve_metadata(arxiv_id):
-            return None, None
-
-        monkeypatch.setattr(
-            "perspicacite.pipeline.download.arxiv.fetch_arxiv_html",
-            mock_fetch_html,
-        )
-        monkeypatch.setattr(orch := self._make_orchestrator(), "_resolve_arxiv_metadata", mock_resolve_metadata)
-
-        result = await orch._try_resolve_url("https://arxiv.org/abs/2604.06788v2")
-        assert captured_id["id"] == "2604.06788"
-        assert result is not None
-        assert result["arxiv_id"] == "2604.06788"
-
-    @pytest.mark.asyncio
-    async def test_arxiv_fetch_fails_returns_none(self, monkeypatch):
-        orch = self._make_orchestrator()
-
-        async def mock_fetch_html(arxiv_id, http_client=None):
-            return None, None, None
-
-        monkeypatch.setattr(
-            "perspicacite.pipeline.download.arxiv.fetch_arxiv_html",
-            mock_fetch_html,
+            "perspicacite.search.semantic_scholar.lookup_paper", mock_lookup,
         )
 
-        result = await orch._try_resolve_url("https://arxiv.org/abs/9999.99999")
-        # fetch_arxiv_html returns None → no arXiv result, and no DOI in URL
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_doi_url_resolves(self, monkeypatch):
-        orch = self._make_orchestrator()
-
-        class MockResult:
-            success = True
-            full_text = "Full text from DOI paper."
-            content_type = "pdf"
-            sections = None
-            metadata = {"title": "DOI Paper Title"}
-
-        async def mock_retrieve(doi, pdf_parser=None, unpaywall_email=None):
-            return MockResult()
-
-        monkeypatch.setattr(
-            "perspicacite.pipeline.download.unified.retrieve_paper_content",
-            mock_retrieve,
-        )
-
-        result = await orch._try_resolve_url("https://doi.org/10.1038/s41586-023-12345")
-        assert result is not None
-        assert result["source"] == "url_fetch"
-        assert result["doi"] == "10.1038/s41586-023-12345"
-        assert result["title"] == "DOI Paper Title"
-        assert result["full_text"] == "Full text from DOI paper."
-
-    @pytest.mark.asyncio
-    async def test_non_resolvable_url_returns_none(self):
-        orch = self._make_orchestrator()
-        # A URL that's neither arXiv nor contains a DOI
         result = await orch._try_resolve_url("https://example.com/some-page")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_url_with_trailing_punctuation_stripped(self, monkeypatch):
-        """Trailing .,;:) is stripped from detected URL."""
+    async def test_arxiv_url_resolves_to_arxiv_doi(self, monkeypatch):
+        """arXiv URLs are mapped to 10.48550/arXiv.<id> and routed through retrieve."""
+        captured = {}
+
+        async def mock_retrieve(doi, pdf_parser=None, unpaywall_email=None):
+            captured["doi"] = doi
+            return _MockRetrieveResult(
+                full_text="Full paper text here with detailed content.",
+                metadata={
+                    "title": "Test Paper Title",
+                    "authors": ["Alice Smith", "Bob Jones"],
+                    "year": 2024,
+                    "doi": doi,
+                    "arxiv_id": "2604.06788",
+                },
+            )
+
+        self._patch_retrieve(monkeypatch, mock_retrieve)
         orch = self._make_orchestrator()
 
-        captured_url = {}
+        result = await orch._try_resolve_url("https://arxiv.org/html/2604.06788v1")
+        assert captured["doi"] == "10.48550/arXiv.2604.06788"
+        assert result is not None
+        assert result["source"] == PaperSource.WEB_SEARCH
+        assert result["relevance_score"] == 5
+        assert result["title"] == "Test Paper Title"
+        assert result["doi"] == "10.48550/arXiv.2604.06788"
+        assert result["full_text"].startswith("Full paper text")
+        assert result["authors"] == ["Alice Smith", "Bob Jones"]
+        assert result["year"] == 2024
 
-        async def mock_fetch_html(arxiv_id, http_client=None):
-            return "text", None, None
+    @pytest.mark.asyncio
+    async def test_arxiv_url_strips_version(self, monkeypatch):
+        """Version suffix is stripped before constructing the DOI."""
+        captured = {}
 
-        async def mock_resolve_metadata(arxiv_id):
-            return None, None
+        async def mock_retrieve(doi, pdf_parser=None, unpaywall_email=None):
+            captured["doi"] = doi
+            return _MockRetrieveResult(metadata={"title": "P", "doi": doi})
 
-        monkeypatch.setattr(
-            "perspicacite.pipeline.download.arxiv.fetch_arxiv_html",
-            mock_fetch_html,
-        )
-        monkeypatch.setattr(orch, "_resolve_arxiv_metadata", mock_resolve_metadata)
+        self._patch_retrieve(monkeypatch, mock_retrieve)
+        orch = self._make_orchestrator()
+
+        result = await orch._try_resolve_url("https://arxiv.org/abs/2604.06788v2")
+        assert captured["doi"] == "10.48550/arXiv.2604.06788"
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_doi_url_resolves(self, monkeypatch):
+        """A doi.org URL feeds the DOI directly into retrieve_paper_content."""
+        captured = {}
+
+        async def mock_retrieve(doi, pdf_parser=None, unpaywall_email=None):
+            captured["doi"] = doi
+            return _MockRetrieveResult(
+                full_text="Full text from DOI paper.",
+                content_type="full_text",
+                metadata={
+                    "title": "DOI Paper Title",
+                    "authors": ["Carol White"],
+                    "year": 2023,
+                    "doi": doi,
+                },
+            )
+
+        self._patch_retrieve(monkeypatch, mock_retrieve)
+        orch = self._make_orchestrator()
+
+        result = await orch._try_resolve_url("https://doi.org/10.1038/s41586-023-12345")
+        assert captured["doi"] == "10.1038/s41586-023-12345"
+        assert result is not None
+        assert result["source"] == PaperSource.WEB_SEARCH
+        assert result["doi"] == "10.1038/s41586-023-12345"
+        assert result["title"] == "DOI Paper Title"
+        assert result["full_text"] == "Full text from DOI paper."
+        assert result["authors"] == ["Carol White"]
+        assert result["year"] == 2023
+
+    @pytest.mark.asyncio
+    async def test_arxiv_doi_url_populates_authors_year(self, monkeypatch):
+        """Regression: doi.org URL with arXiv DOI must yield rich authors+year.
+
+        Before unified.py started populating authors/year in metadata, this
+        path produced ``authors=[], year=None`` and the references section
+        rendered "Unknown, None".
+        """
+        async def mock_retrieve(doi, pdf_parser=None, unpaywall_email=None):
+            return _MockRetrieveResult(
+                full_text="Body of the paper.",
+                metadata={
+                    "title": "Heterogeneous Scientific Foundation Model Collaboration",
+                    "authors": ["First Author", "Second Author", "Third Author"],
+                    "year": 2026,
+                    "arxiv_id": "2604.27351",
+                    "doi": "10.48550/arXiv.2604.27351",
+                },
+            )
+
+        self._patch_retrieve(monkeypatch, mock_retrieve)
+        orch = self._make_orchestrator()
+
+        result = await orch._try_resolve_url("https://doi.org/10.48550/arXiv.2604.27351")
+        assert result is not None
+        assert result["authors"] == ["First Author", "Second Author", "Third Author"]
+        assert result["year"] == 2026
+        assert result["title"] == "Heterogeneous Scientific Foundation Model Collaboration"
+
+    @pytest.mark.asyncio
+    async def test_url_with_trailing_punctuation_stripped(self, monkeypatch):
+        """Trailing .,;:) is stripped from the detected URL before resolution."""
+        async def mock_retrieve(doi, pdf_parser=None, unpaywall_email=None):
+            return _MockRetrieveResult(metadata={"title": "T", "doi": doi})
+
+        self._patch_retrieve(monkeypatch, mock_retrieve)
+        orch = self._make_orchestrator()
 
         result = await orch._try_resolve_url("Check https://arxiv.org/abs/2604.06788.")
         assert result is not None
@@ -238,207 +287,52 @@ class TestTryResolveUrl:
     @pytest.mark.asyncio
     async def test_mixed_query_with_url(self, monkeypatch):
         """URL in a longer query is still detected and resolved."""
+        async def mock_retrieve(doi, pdf_parser=None, unpaywall_email=None):
+            return _MockRetrieveResult(
+                metadata={"title": "Paper Title", "doi": doi, "arxiv_id": "2604.06788"},
+            )
+
+        self._patch_retrieve(monkeypatch, mock_retrieve)
         orch = self._make_orchestrator()
-
-        async def mock_fetch_html(arxiv_id, http_client=None):
-            return "Paper content.", None, None
-
-        async def mock_resolve_metadata(arxiv_id):
-            return "Paper Title", None
-
-        monkeypatch.setattr(
-            "perspicacite.pipeline.download.arxiv.fetch_arxiv_html",
-            mock_fetch_html,
-        )
-        monkeypatch.setattr(orch, "_resolve_arxiv_metadata", mock_resolve_metadata)
 
         result = await orch._try_resolve_url(
             "summarize https://arxiv.org/abs/2604.06788 and compare with FBMN"
         )
         assert result is not None
-        assert result["arxiv_id"] == "2604.06788"
+        assert result["title"] == "Paper Title"
 
     @pytest.mark.asyncio
-    async def test_html_title_fallback_when_openalex_fails(self, monkeypatch):
-        """When OpenAlex returns None, HTML title is used instead of arXiv ID fallback."""
-        orch = self._make_orchestrator()
+    async def test_falls_back_to_s2_when_no_full_text(self, monkeypatch):
+        """When retrieve returns no full text, falls back to Semantic Scholar lookup."""
+        from perspicacite.models.papers import Paper, Author
 
-        async def mock_fetch_html(arxiv_id, http_client=None):
-            return "Paper full text.", None, "From Perception to Autonomous Computational Modeling"
+        async def mock_retrieve(doi, pdf_parser=None, unpaywall_email=None):
+            return _MockRetrieveResult(success=False, full_text=None)
 
-        async def mock_resolve_metadata(arxiv_id):
-            return None, None  # OpenAlex hasn't indexed this paper
+        async def mock_lookup(paper_id, http_client=None):
+            return Paper(
+                id="s2:abc",
+                title="Paper From S2",
+                authors=[Author(name="Eve Smith")],
+                year=2025,
+                doi="10.48550/arXiv.2604.06788",
+                citation_count=3,
+                source=PaperSource.WEB_SEARCH,
+            )
 
+        self._patch_retrieve(monkeypatch, mock_retrieve)
         monkeypatch.setattr(
-            "perspicacite.pipeline.download.arxiv.fetch_arxiv_html",
-            mock_fetch_html,
+            "perspicacite.search.semantic_scholar.lookup_paper", mock_lookup,
         )
-        monkeypatch.setattr(orch, "_resolve_arxiv_metadata", mock_resolve_metadata)
 
+        orch = self._make_orchestrator()
         result = await orch._try_resolve_url("https://arxiv.org/abs/2604.06788")
         assert result is not None
-        assert result["title"] == "From Perception to Autonomous Computational Modeling"
-
-    @pytest.mark.asyncio
-    async def test_openalex_title_preferred_over_html_title(self, monkeypatch):
-        """OpenAlex title takes priority when both sources return a title."""
-        orch = self._make_orchestrator()
-
-        async def mock_fetch_html(arxiv_id, http_client=None):
-            return "Paper text.", None, "HTML Title"
-
-        async def mock_resolve_metadata(arxiv_id):
-            return "OpenAlex Canonical Title", "10.1234/test"
-
-        monkeypatch.setattr(
-            "perspicacite.pipeline.download.arxiv.fetch_arxiv_html",
-            mock_fetch_html,
-        )
-        monkeypatch.setattr(orch, "_resolve_arxiv_metadata", mock_resolve_metadata)
-
-        result = await orch._try_resolve_url("https://arxiv.org/abs/2604.06788")
-        assert result["title"] == "OpenAlex Canonical Title"
-
-    @pytest.mark.asyncio
-    async def test_no_title_uses_arxiv_id_fallback(self, monkeypatch):
-        """When neither OpenAlex nor HTML provides a title, use arXiv ID."""
-        orch = self._make_orchestrator()
-
-        async def mock_fetch_html(arxiv_id, http_client=None):
-            return "Paper text.", None, None  # No HTML title
-
-        async def mock_resolve_metadata(arxiv_id):
-            return None, None  # No OpenAlex title
-
-        monkeypatch.setattr(
-            "perspicacite.pipeline.download.arxiv.fetch_arxiv_html",
-            mock_fetch_html,
-        )
-        monkeypatch.setattr(orch, "_resolve_arxiv_metadata", mock_resolve_metadata)
-
-        result = await orch._try_resolve_url("https://arxiv.org/abs/2604.06788")
-        assert result["title"] == "arXiv:2604.06788"
-
-
-# ---------------------------------------------------------------------------
-# _resolve_arxiv_metadata (with mocked httpx)
-# ---------------------------------------------------------------------------
-
-
-class TestResolveArxivMetadata:
-    """Tests for OpenAlex metadata resolution from arXiv ID."""
-
-    def _make_orchestrator(self):
-        return AgenticOrchestrator.__new__(AgenticOrchestrator)
-
-    @pytest.mark.asyncio
-    async def test_successful_resolution(self, monkeypatch):
-        orch = self._make_orchestrator()
-
-        class MockResponse:
-            status_code = 200
-
-            def json(self):
-                return {
-                    "title": "A Great Paper",
-                    "ids": {"doi": "https://doi.org/10.1234/great"},
-                }
-
-        class MockClient:
-            def __init__(self, **kwargs):
-                pass
-
-            async def get(self, url, **kwargs):
-                return MockResponse()
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
-
-        monkeypatch.setattr("httpx.AsyncClient", MockClient)
-        title, doi = await orch._resolve_arxiv_metadata("2604.06788")
-        assert title == "A Great Paper"
-        assert doi == "10.1234/great"
-
-    @pytest.mark.asyncio
-    async def test_404_returns_none(self, monkeypatch):
-        orch = self._make_orchestrator()
-
-        class MockResponse:
-            status_code = 404
-
-            def json(self):
-                return {}
-
-        class MockClient:
-            def __init__(self, **kwargs):
-                pass
-
-            async def get(self, url, **kwargs):
-                return MockResponse()
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
-
-        monkeypatch.setattr("httpx.AsyncClient", MockClient)
-        title, doi = await orch._resolve_arxiv_metadata("9999.99999")
-        assert title is None
-        assert doi is None
-
-    @pytest.mark.asyncio
-    async def test_network_error_returns_none(self, monkeypatch):
-        orch = self._make_orchestrator()
-
-        class MockClient:
-            def __init__(self, **kwargs):
-                pass
-
-            async def get(self, url, **kwargs):
-                raise ConnectionError("Network unreachable")
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
-
-        monkeypatch.setattr("httpx.AsyncClient", MockClient)
-        title, doi = await orch._resolve_arxiv_metadata("2604.06788")
-        assert title is None
-        assert doi is None
-
-    @pytest.mark.asyncio
-    async def test_missing_doi_field(self, monkeypatch):
-        orch = self._make_orchestrator()
-
-        class MockResponse:
-            status_code = 200
-
-            def json(self):
-                return {"title": "Paper Without DOI", "ids": {}}
-
-        class MockClient:
-            def __init__(self, **kwargs):
-                pass
-
-            async def get(self, url, **kwargs):
-                return MockResponse()
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *args):
-                pass
-
-        monkeypatch.setattr("httpx.AsyncClient", MockClient)
-        title, doi = await orch._resolve_arxiv_metadata("2604.06788")
-        assert title == "Paper Without DOI"
-        assert doi is None
+        assert result["title"] == "Paper From S2"
+        assert result["authors"] == ["Eve Smith"]
+        assert result["year"] == 2025
+        assert result["_metadata_only"] is True
+        assert result["relevance_score"] == 4
 
 
 # ---------------------------------------------------------------------------

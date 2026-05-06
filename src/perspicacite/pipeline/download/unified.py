@@ -47,6 +47,33 @@ def _none_result(doi: str) -> PaperContent:
     )
 
 
+def _metadata_from_discovery(
+    disc: PaperDiscovery,
+    doi: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a uniform metadata dict from a PaperDiscovery result.
+
+    Every PaperContent return site uses this so that downstream consumers
+    (orchestrator, web app) get authors/year/title/ids in one consistent shape.
+    """
+    md: dict[str, Any] = {
+        "doi": doi,
+        "title": disc.title,
+        "authors": disc.authors,
+        "year": disc.year,
+        "is_oa": disc.is_oa,
+        "work_type": disc.work_type,
+    }
+    if disc.arxiv_id:
+        md["arxiv_id"] = disc.arxiv_id
+    if disc.pmcid:
+        md["pmcid"] = disc.pmcid
+    if extra:
+        md.update(extra)
+    return md
+
+
 async def _parse_pdf_bytes(pdf_bytes: bytes, pdf_parser: Any) -> str | None:
     """Extract text from PDF bytes using the provided parser."""
     if not pdf_bytes or len(pdf_bytes) < 1000:
@@ -138,12 +165,7 @@ async def retrieve_paper_content(
                         full_text=text,
                         abstract=disc.abstract,
                         content_source="alternative",
-                        metadata={
-                            "title": disc.title,
-                            "authors": disc.authors,
-                            "year": disc.year,
-                            "doi": clean,
-                        },
+                        metadata=_metadata_from_discovery(disc, clean),
                     )
 
         # ── STEP 3: STRUCTURED FULL TEXT ────────────────────────────────
@@ -162,7 +184,7 @@ async def retrieve_paper_content(
                     references=refs,
                     abstract=disc.abstract,
                     content_source="pmc",
-                    metadata={"pmcid": disc.pmcid, "title": disc.title},
+                    metadata=_metadata_from_discovery(disc, clean),
                 )
 
         # 2b. arXiv HTML
@@ -183,7 +205,7 @@ async def retrieve_paper_content(
                     sections=html_sections,
                     abstract=disc.abstract,
                     content_source="arxiv_html",
-                    metadata={"arxiv_id": arxiv_id, "title": disc.title},
+                    metadata=_metadata_from_discovery(disc, clean, {"arxiv_id": arxiv_id}),
                 )
 
         # ── STEP 3: PDF FULL TEXT ───────────────────────────────────────
@@ -210,7 +232,7 @@ async def retrieve_paper_content(
                         full_text=text,
                         abstract=disc.abstract,
                         content_source=source_label,
-                        metadata={"title": disc.title},
+                        metadata=_metadata_from_discovery(disc, clean),
                     )
 
         # Elsevier API (structured text, not PDF)
@@ -224,7 +246,7 @@ async def retrieve_paper_content(
                     full_text=result.content,
                     abstract=disc.abstract,
                     content_source="elsevier",
-                    metadata={"title": disc.title},
+                    metadata=_metadata_from_discovery(disc, clean),
                 )
 
         # ── STEP 4: ABSTRACT ONLY ───────────────────────────────────────
@@ -235,7 +257,7 @@ async def retrieve_paper_content(
                 content_type="abstract",
                 abstract=disc.abstract,
                 content_source="openalex" if disc.title else "unknown",
-                metadata={"title": disc.title, "is_oa": disc.is_oa},
+                metadata=_metadata_from_discovery(disc, clean),
             )
 
         # ── STEP 5: DISCARD ─────────────────────────────────────────────

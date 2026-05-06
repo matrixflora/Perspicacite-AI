@@ -580,6 +580,11 @@ class AgenticOrchestrator:
                     "session_id": session.session_id,
                     "citations": citation_map,
                 }
+                # Emit papers_found AFTER answer so the UI can append the
+                # "Add to KB" curation block. The answer handler replaces
+                # assistantDiv.innerHTML, so a papers_found emitted before
+                # the answer would be wiped.
+                yield {"type": "papers_found", "papers": papers}
                 return
             else:
                 yield {"type": "thinking", "message": "I can answer from our conversation history..."}
@@ -887,50 +892,38 @@ class AgenticOrchestrator:
     # ------------------------------------------------------------------
 
     async def _try_resolve_url(self, query: str) -> Optional[Dict[str, Any]]:
-        """Detect paper URL in query, fetch content, return paper dict or None.
+        """Detect paper URL in query, fetch content, return normalized paper dict or None.
 
-        Priority:
-        1. arXiv URL → extract ID, fetch HTML version
-        2. DOI in URL (doi.org/... or publisher URLs containing a DOI) → unified retrieval
-        3. Publisher URL without DOI → give up (future: scrape meta tags)
+        Resolves the URL to a DOI (mapping arXiv IDs to their 10.48550/arXiv.<id> form)
+        and runs the unified retrieval pipeline once. The pipeline already queries
+        OpenAlex for metadata as part of discovery, so authors/year come back populated.
+        If the unified pipeline returns no full text, falls back to a Semantic Scholar
+        metadata-only lookup.
+
+        Returns:
+            Normalized paper dict with keys: id, title, authors[], year, doi, abstract,
+            full_text, source, relevance_score, _step_id, etc.
         """
         url_match = _URL_RE.search(query)
         if not url_match:
             return None
 
         url = url_match.group(0).rstrip(".,;:)")
+        from perspicacite.models import normalize_paper_dict, PaperSource
+        from perspicacite.pipeline.download.arxiv import get_arxiv_id_from_url
 
-        # 1. arXiv URL → extract ID directly
-        from perspicacite.pipeline.download.arxiv import (
-            get_arxiv_id_from_url,
-            fetch_arxiv_html,
-        )
+        # Resolve URL → (arxiv_id, doi). arXiv IDs map to their canonical DOI form
+        # so retrieve_paper_content's discovery step can look them up in OpenAlex.
         arxiv_id = get_arxiv_id_from_url(url)
-
-        if arxiv_id:
-            # Strip version suffix for fetching (arXiv serves latest by default)
-            bare_id = arxiv_id.split("v")[0] if re.match(r".*v\d+$", arxiv_id) else arxiv_id
-            full_text, sections, html_title = await fetch_arxiv_html(bare_id)
-            if full_text:
-                title, doi_resolved = await self._resolve_arxiv_metadata(bare_id)
-                # Prefer: OpenAlex title > HTML <title> tag > arXiv ID fallback
-                final_title = title or html_title or f"arXiv:{arxiv_id}"
-                return {
-                    "title": final_title,
-                    "doi": doi_resolved or f"10.48550/arXiv.{bare_id}",
-                    "full_text": full_text,
-                    "sections": sections,
-                    "source": "url_fetch",
-                    "relevance_score": 5,
-                    "arxiv_id": bare_id,
-                    "_step_id": "url_prefetch",
-                }
-
-        # 2. DOI in URL (doi.org/... or publisher URLs containing a DOI)
+        bare_id = None
         doi: Optional[str] = None
-        doi_match = _DOI_IN_URL_RE.search(url)
-        if doi_match:
-            doi = doi_match.group(0)
+        if arxiv_id:
+            bare_id = arxiv_id.split("v")[0] if re.match(r".*v\d+$", arxiv_id) else arxiv_id
+            doi = f"10.48550/arXiv.{bare_id}"
+        else:
+            doi_match = _DOI_IN_URL_RE.search(url)
+            if doi_match:
+                doi = doi_match.group(0)
 
         if doi:
             from perspicacite.pipeline.download.unified import retrieve_paper_content
@@ -944,72 +937,52 @@ class AgenticOrchestrator:
                     unpaywall_email="perspicacite@example.com",
                 )
                 if result.success and result.full_text:
-                    return {
-                        "title": (result.metadata or {}).get("title", doi),
-                        "doi": doi,
-                        "full_text": result.full_text,
-                        "sections": getattr(result, "sections", None),
-                        "source": "url_fetch",
-                        "relevance_score": 5,
-                        "content_type": result.content_type,
-                        "_step_id": "url_prefetch",
-                    }
+                    paper_dict = normalize_paper_dict(
+                        {
+                            **(result.metadata or {}),
+                            "doi": doi,
+                            "full_text": result.full_text,
+                            "abstract": result.abstract,
+                        },
+                        source=PaperSource.WEB_SEARCH,
+                    )
+                    paper_dict["relevance_score"] = 5
+                    paper_dict["_step_id"] = "url_prefetch"
+                    paper_dict["sections"] = result.sections
+                    paper_dict["content_type"] = result.content_type
+                    return paper_dict
             except Exception as e:
                 logger.warning(f"URL pre-fetch via retrieve_paper_content failed for {doi}: {e}")
 
-        # 3. Fallback: Semantic Scholar metadata lookup (no full text, just title + abstract)
+        # Fallback: Semantic Scholar metadata lookup (no full text, just title + abstract).
+        # Triggered when the unified pipeline returned no full text (very new papers, paywalled
+        # publishers we can't access, etc.).
         from perspicacite.search.semantic_scholar import lookup_paper
-        lookup_id = None
-        if doi:
-            lookup_id = doi
-        elif arxiv_id:
-            lookup_id = arxiv_id
+        lookup_id = doi or bare_id or arxiv_id
         if lookup_id:
             logger.info(f"URL pre-fetch fallback: S2 lookup for {lookup_id}")
             paper = await lookup_paper(lookup_id)
             if paper:
                 logger.info(f"S2 fallback: found '{paper.title[:60]}'")
-                return {
-                    "title": paper.title,
-                    "doi": paper.doi or doi or "",
-                    "abstract": paper.abstract or "",
-                    "full_text": None,
-                    "authors": [a.name for a in paper.authors],
-                    "year": paper.year,
-                    "citation_count": paper.citation_count,
-                    "source": "semantic_scholar_fallback",
-                    "relevance_score": 4,
-                    "arxiv_id": arxiv_id,
-                    "_step_id": "url_prefetch",
-                    "_metadata_only": True,
-                }
+                paper_dict = normalize_paper_dict(
+                    {
+                        "id": paper.id,
+                        "title": paper.title,
+                        "doi": paper.doi or doi or "",
+                        "abstract": paper.abstract or "",
+                        "authors": [a.name for a in paper.authors],
+                        "year": paper.year,
+                        "citation_count": paper.citation_count,
+                        "arxiv_id": bare_id,
+                    },
+                    source=PaperSource.WEB_SEARCH,
+                )
+                paper_dict["relevance_score"] = 4
+                paper_dict["_step_id"] = "url_prefetch"
+                paper_dict["_metadata_only"] = True
+                return paper_dict
 
         return None
-
-    async def _resolve_arxiv_metadata(
-        self, arxiv_id: str
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """Resolve title + DOI from arXiv ID via OpenAlex.
-
-        Lightweight — one API call.
-        """
-        import httpx
-
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.get(
-                    f"https://api.openalex.org/works/arxiv:{arxiv_id}",
-                    params={"mailto": "perspicacite@example.com"},
-                )
-                if r.status_code == 200:
-                    work = r.json()
-                    title = work.get("title")
-                    ids = work.get("ids") or {}
-                    doi = (ids.get("doi") or "").replace("https://doi.org/", "")
-                    return title, doi or None
-        except Exception as e:
-            logger.debug(f"OpenAlex arXiv metadata lookup failed for {arxiv_id}: {e}")
-        return None, None
 
     def _register_evidence_facets(self, session: AgentSession, plan: Plan) -> None:
         """Create evidence facets from search steps in the plan.

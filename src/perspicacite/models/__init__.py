@@ -1,6 +1,6 @@
 """Data models for Perspicacité v2."""
 
-from perspicacite.models.papers import Paper, Author, PaperSource
+from perspicacite.models.papers import Paper, Author, PaperSource, normalize_paper_dict
 from perspicacite.models.documents import DocumentChunk, ChunkMetadata
 from perspicacite.models.kb import KnowledgeBase, ChunkConfig, KBStats
 from perspicacite.models.search import SearchFilters, RetrievedChunk, SearchQuery
@@ -17,6 +17,7 @@ __all__ = [
     "Paper",
     "Author",
     "PaperSource",
+    "normalize_paper_dict",
     "DocumentChunk",
     "ChunkMetadata",
     "KnowledgeBase",
