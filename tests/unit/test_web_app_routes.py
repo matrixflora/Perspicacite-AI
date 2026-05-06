@@ -11,10 +11,6 @@ during the migration. After Task 9 the import switches to
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 
 
@@ -39,18 +35,9 @@ EXPECTED_ROUTES: list[tuple[str, set[str]]] = [
 
 
 def _load_app():
-    """Load the FastAPI app via the same loader cli.py uses."""
-    repo_root = Path(__file__).resolve().parents[2]
-    src = repo_root / "src"
-    if str(src) not in sys.path:
-        sys.path.insert(0, str(src))
-    web_app_path = repo_root / "web_app_full.py"
-    if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
-    spec = importlib.util.spec_from_file_location("web_app_full", web_app_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.app
+    """Load the FastAPI app via the canonical import path."""
+    from perspicacite.web import app
+    return app
 
 
 def _route_methods_by_path(app):
