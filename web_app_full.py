@@ -169,6 +169,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Perspicacité v2 - True Agentic RAG", lifespan=lifespan)
 
+from perspicacite.web.routers import health as health_router
+app.include_router(health_router.router)
+
 
 # =============================================================================
 # SECTION 4: Web UI Route
@@ -496,26 +499,6 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
 # =============================================================================
 # SECTION 6: Health & System Routes
 # =============================================================================
-
-@app.get("/api/health")
-async def health_check():
-    """Health check endpoint."""
-    provider_info = {}
-    if app_state.initialized and app_state.config:
-        llm_config = app_state.config.llm
-        provider_info = {
-            "default_provider": llm_config.default_provider,
-            "default_model": llm_config.default_model,
-            "available_providers": list(llm_config.providers.keys()),
-        }
-
-    return {
-        "status": "healthy" if app_state.initialized else "initializing",
-        "initialized": app_state.initialized,
-        "timestamp": datetime.now().isoformat(),
-        "llm": provider_info,
-    }
-
 
 @app.get("/favicon.ico")
 async def favicon():
