@@ -35,13 +35,13 @@ def index_html(client):
     return response.text
 
 
-@pytest.mark.parametrize("name", ["theme", "base"])
+@pytest.mark.parametrize("name", ["theme", "base", "layout", "kb"])
 def test_css_link_present(index_html, name):
     assert f'href="/static/css/{name}.css"' in index_html, f"Missing href for {name}.css"
-    assert 'rel="stylesheet"' in index_html, "Missing rel=stylesheet"
+    assert 'rel="stylesheet"' in index_html
 
 
-@pytest.mark.parametrize("name", ["theme", "base"])
+@pytest.mark.parametrize("name", ["theme", "base", "layout", "kb"])
 def test_css_file_served(client, name):
     response = client.get(f"/static/css/{name}.css")
     assert response.status_code == 200
