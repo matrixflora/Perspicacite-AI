@@ -31,6 +31,7 @@ _root.addHandler(_stream_handler)
 # Now safe to import modules that use structlog.
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from perspicacite.web.state import app_state
 from perspicacite.web.routers import (
@@ -61,6 +62,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Perspicacité v2 - True Agentic RAG", lifespan=lifespan)
+
+
+# Mount static assets (CSS/JS extracted from templates/index.html)
+STATIC_DIR = Path(__file__).resolve().parents[3] / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 # Mount routers
