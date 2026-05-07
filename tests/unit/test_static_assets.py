@@ -25,3 +25,23 @@ def test_static_dir_exists():
 def test_static_mount_serves_files(client):
     response = client.get("/static/css/.gitkeep")
     assert response.status_code == 200
+
+
+@pytest.fixture
+def index_html(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    return response.text
+
+
+@pytest.mark.parametrize("name", ["theme", "base"])
+def test_css_link_present(index_html, name):
+    import re
+    pattern = rf'<link\s+[^>]*href="/static/css/{name}\.css"'
+    assert re.search(pattern, index_html), f"Missing <link> for {name}.css"
+
+
+@pytest.mark.parametrize("name", ["theme", "base"])
+def test_css_file_served(client, name):
+    response = client.get(f"/static/css/{name}.css")
+    assert response.status_code == 200
