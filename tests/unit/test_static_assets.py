@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = REPO_ROOT / "static"
 
 CSS_FILES = ["theme", "base", "layout", "chat", "kb", "survey"]
-JS_FILES = ["utils", "databases", "mode"]
+JS_FILES = ["utils", "databases", "mode", "conversations"]
 
 
 @pytest.fixture
