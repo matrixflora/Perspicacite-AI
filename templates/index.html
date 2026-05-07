@@ -186,42 +186,12 @@
     </div>
 
     <script src="/static/js/utils.js"></script>
+    <script src="/static/js/databases.js"></script>
+    <script src="/static/js/mode.js"></script>
     <script>
         // Database selection state
         const defaultDatabases = ['semantic_scholar', 'openalex', 'pubmed'];
-        
-        // Initialize database selector
-        function initDatabaseSelector() {
-            const selector = document.getElementById('db-selector');
-            selector.addEventListener('click', function(e) {
-                const label = e.target.closest('.db-option');
-                if (label) {
-                    const checkbox = label.querySelector('input');
-                    checkbox.checked = !checkbox.checked;
-                    label.classList.toggle('selected', checkbox.checked);
-                    e.preventDefault();
-                }
-            });
-        }
-        
-        function toggleAllDatabases() {
-            const options = document.querySelectorAll('.db-option');
-            const allSelected = Array.from(options).every(opt => opt.classList.contains('selected'));
-            options.forEach(opt => {
-                const checkbox = opt.querySelector('input');
-                checkbox.checked = !allSelected;
-                opt.classList.toggle('selected', !allSelected);
-            });
-        }
-        
-        function getSelectedDatabases() {
-            const selected = [];
-            document.querySelectorAll('.db-option.selected').forEach(opt => {
-                selected.push(opt.dataset.db);
-            });
-            return selected.length > 0 ? selected : defaultDatabases;
-        }
-        
+
         const modeDescriptions = {
             'agentic': '🤖 KB-first with intent detection and tool use',
             'profound': '🔬 Multi-cycle deep research with planning',
@@ -229,40 +199,11 @@
             'basic': '📚 Fast single-query retrieval',
             'literature_survey': '📖 Systematic field mapping with themes'
         };
-        
+
         // Initialize theme on load
         initTheme();
-        
-        function setMode(mode) {
-            currentMode = mode;
-            console.log('RAG Mode set to:', mode);
-            
-            // Show/hide download cap control for agentic mode
-            const downloadCapControl = document.getElementById('download-cap-control');
-            if (mode === 'agentic') {
-                downloadCapControl.classList.add('visible');
-            } else {
-                downloadCapControl.classList.remove('visible');
-            }
-        }
 
-        /**
-         * Align currentMode with the mode <select>. The API body uses currentMode; the
-         * dropdown is the user's source of truth. After bfcache or soft reload, browsers
-         * may restore the select without firing onchange, leaving currentMode stuck at
-         * the script default ('basic') while the UI still shows Agentic.
-         */
-        function syncRagModeFromDropdown() {
-            const el = document.getElementById('mode-dropdown');
-            if (el && el.value) {
-                setMode(el.value);
-            }
-        }
-        
-        function updateDownloadCapDisplay(value) {
-            document.getElementById('download-cap-value').textContent = value;
-        }
-        
+
         function startNewChat() {
             // Generate a new session ID and clear conversation
             sessionId = null;
