@@ -11,6 +11,8 @@ from perspicacite.web import app
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = REPO_ROOT / "static"
 
+CSS_FILES = ["theme", "base", "layout", "chat", "kb", "survey"]
+
 
 @pytest.fixture
 def client():
@@ -35,14 +37,31 @@ def index_html(client):
     return response.text
 
 
-@pytest.mark.parametrize("name", ["theme", "base", "layout", "kb"])
+@pytest.mark.parametrize("name", CSS_FILES)
 def test_css_link_present(index_html, name):
     assert f'href="/static/css/{name}.css"' in index_html, f"Missing href for {name}.css"
     assert 'rel="stylesheet"' in index_html
 
 
-@pytest.mark.parametrize("name", ["theme", "base", "layout", "kb"])
+@pytest.mark.parametrize("name", CSS_FILES)
 def test_css_file_served(client, name):
     response = client.get(f"/static/css/{name}.css")
     assert response.status_code == 200
     assert "text/css" in response.headers["content-type"]
+
+
+def test_css_load_order(index_html):
+    """All <link> tags must appear in the documented dependency order."""
+    positions = {name: index_html.find(f"/static/css/{name}.css") for name in CSS_FILES}
+    for name in CSS_FILES:
+        assert positions[name] != -1, f"{name}.css not found in page"
+    actual = sorted(positions, key=positions.get)
+    assert actual == CSS_FILES, f"CSS load order is {actual}, expected {CSS_FILES}"
+
+
+def test_no_inline_style(index_html):
+    """No <style>...</style> blocks should remain after full extraction."""
+    import re
+    pattern = re.compile(r"<style[^>]*>.*?</style>", re.DOTALL)
+    matches = pattern.findall(index_html)
+    assert not matches, f"Found {len(matches)} inline <style> blocks"
