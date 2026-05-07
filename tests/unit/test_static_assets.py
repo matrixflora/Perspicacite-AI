@@ -1,5 +1,6 @@
 """Smoke tests for static asset mount and structure of templates/index.html."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -36,12 +37,12 @@ def index_html(client):
 
 @pytest.mark.parametrize("name", ["theme", "base"])
 def test_css_link_present(index_html, name):
-    import re
-    pattern = rf'<link\s+[^>]*href="/static/css/{name}\.css"'
-    assert re.search(pattern, index_html), f"Missing <link> for {name}.css"
+    assert f'href="/static/css/{name}.css"' in index_html, f"Missing href for {name}.css"
+    assert 'rel="stylesheet"' in index_html, "Missing rel=stylesheet"
 
 
 @pytest.mark.parametrize("name", ["theme", "base"])
 def test_css_file_served(client, name):
     response = client.get(f"/static/css/{name}.css")
     assert response.status_code == 200
+    assert "text/css" in response.headers["content-type"]

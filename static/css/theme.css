@@ -1,7 +1,6 @@
 /* Theme variables, dark mode, and dark-mode overrides.
    Loaded first so all other stylesheets can reference --bg-main, --primary, etc. */
 
-/* ScienceGuide-inspired styling */
 @import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700&family=Libre+Franklin:wght@300;400;500;600&family=Quicksand:wght@400;500;600&display=swap');
 
 :root {
