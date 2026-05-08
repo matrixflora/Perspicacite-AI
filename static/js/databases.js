@@ -1,5 +1,7 @@
 /* Database-source checkboxes in the sidebar (OpenAlex, arXiv, etc.). */
 
+const defaultDatabases = ['semantic_scholar', 'openalex', 'pubmed'];
+
 // Initialize database selector
 function initDatabaseSelector() {
     const selector = document.getElementById('db-selector');

@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = REPO_ROOT / "static"
 
 CSS_FILES = ["theme", "base", "layout", "chat", "kb", "survey"]
-JS_FILES = ["utils", "databases", "mode", "conversations", "chat", "kb", "survey"]
+JS_FILES = ["utils", "databases", "mode", "conversations", "chat", "kb", "survey", "main"]
 
 
 @pytest.fixture
@@ -77,3 +77,21 @@ def test_js_script_present(index_html, name):
 def test_js_file_served(client, name):
     response = client.get(f"/static/js/{name}.js")
     assert response.status_code == 200
+
+
+def test_js_load_order(index_html):
+    """All <script> tags must appear in the documented dependency order."""
+    positions = {}
+    for name in JS_FILES:
+        idx = index_html.find(f"/static/js/{name}.js")
+        assert idx != -1, f"{name}.js not found in page"
+        positions[name] = idx
+    actual = sorted(positions, key=positions.get)
+    assert actual == JS_FILES, f"JS load order is {actual}, expected {JS_FILES}"
+
+
+def test_no_inline_script(index_html):
+    """No <script> tags without a src= attribute (i.e. no inline JS)."""
+    pattern = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>.*?</script>", re.DOTALL)
+    matches = pattern.findall(index_html)
+    assert not matches, f"Found {len(matches)} inline <script> blocks"

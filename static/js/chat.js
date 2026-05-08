@@ -2,6 +2,21 @@
    message rendering (markdown/code blocks), thinking-panel UI, papers-found
    curation list. */
 
+let currentThinkingMessage = null;
+let thinkingSteps = [];
+
+function decodeUtf8FromBase64(b64) {
+    try {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new TextDecoder().decode(bytes);
+    } catch (e) {
+        console.warn('base64 decode failed', e);
+        return '';
+    }
+}
+
 function handleInputKeydown(event) {
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();

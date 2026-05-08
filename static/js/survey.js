@@ -1,6 +1,9 @@
 /* Literature survey ("profond" mode): theme accordions, paper selection,
    "Add selected to KB", report generation and rendering. */
 
+let currentSurveySession = null;
+let surveySelectedPapers = new Set();
+
 async function loadSurveySession(sessionId) {
     // Load literature survey session and display themes/paper selection
     try {

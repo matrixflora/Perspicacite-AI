@@ -1,5 +1,9 @@
 /* Chat history sidebar: load past conversations, add to list, switch to a past conversation, select-mode for bulk delete. */
 
+let isSelectMode = false;
+let deleteMode = 'all'; // 'all', 'selected', or 'single'
+let singleDeleteTarget = null;
+
 function startNewChat() {
     // Generate a new session ID and clear conversation
     sessionId = null;
