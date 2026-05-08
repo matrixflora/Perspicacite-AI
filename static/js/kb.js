@@ -1,6 +1,9 @@
 /* Knowledge Base management: list/select/delete KBs, create new (empty or
    from BibTeX file), add papers to existing KB, post-search bulk-add UI. */
 
+let bibtexFileLoaded = false;
+let kbToDelete = '';
+
 // KB management
 async function loadKBs() {
     try {
@@ -487,3 +490,51 @@ async function confirmDeleteKB() {
         }
     }
 }
+
+// Wire up BibTeX drag-and-drop and file input listeners on page load.
+document.addEventListener('DOMContentLoaded', function () {
+    const dropZone = document.getElementById('bibtex-drop-zone');
+    const fileInput = document.getElementById('bibtex-file-input');
+    const hiddenInput = document.getElementById('kb-bibtex-content');
+
+    function handleFile(file) {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            hiddenInput.value = e.target.result;
+            bibtexFileLoaded = true;
+            dropZone.querySelector('div:last-child').innerHTML =
+                '<b>' + file.name + '</b> loaded (' + Math.round(file.size / 1024) + ' KB)';
+            dropZone.style.borderColor = 'var(--accent)';
+        };
+        reader.onerror = function() {
+            showToast('Error reading file');
+        };
+        reader.readAsText(file);
+    }
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--accent-color)';
+        dropZone.style.background = 'var(--hover-bg)';
+    });
+    dropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--border-color)';
+        dropZone.style.background = '';
+    });
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--border-color)';
+        dropZone.style.background = '';
+        const file = e.dataTransfer.files[0];
+        if (file && (file.name.endsWith('.bib') || file.name.endsWith('.txt') || file.type === 'text/plain')) {
+            handleFile(file);
+        } else {
+            showToast('Please drop a .bib file');
+        }
+    });
+});
