@@ -20,9 +20,10 @@ uv run python old_tools/library_expansion_with_abstract/build_libraries_from_doi
     --bibtex seed.bib \
     --output-dir ./expanded_library/
 
-# Screen the expanded set against a reference set via BM25
+# Screen one expanded library against a reference set via BM25
+# (--input takes a single .bib path; if you expanded multiple seeds, merge or screen them one at a time)
 uv run python old_tools/library_expansion_with_abstract/screen_papers.py \
-    --input expanded_library/library_*.bib \
+    --input expanded_library/library_10_1038_s41467-022-33890-w.bib \
     --output screened.bib \
     --threshold 0.3
 ```
