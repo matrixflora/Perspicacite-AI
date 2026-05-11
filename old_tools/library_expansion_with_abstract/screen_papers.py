@@ -13,7 +13,6 @@ Workflow:
 """
 
 import os
-import sys
 import re
 import argparse
 import logging
@@ -33,8 +32,6 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 
-# Add bibtex2kb to path for PubmedExplorer import
-sys.path.append(str(Path(__file__).parent.parent.parent / "bibtex2kb"))
 from pubmed_explorer import PubmedExplorer
 
 # Download NLTK data if not already present
