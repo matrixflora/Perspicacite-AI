@@ -6,6 +6,7 @@ to create comprehensive libraries for each DOI.
 """
 
 import os
+import argparse
 import re
 from pathlib import Path
 
@@ -111,66 +112,82 @@ def build_libraries_from_dois(dois, output_dir, email="your.email@example.com"):
     return successful_builds, failed_builds
 
 def main():
-    """Main function to orchestrate the library building process."""
-    
-    # Configuration
-    script_dir = Path(__file__).parent
-    bibtex_file = script_dir / "thaiz.bib"
-    output_dir = script_dir
-    
-    # Email for NCBI API - you should replace this with your actual email
-    email = "your.email@example.com"
-    
+    """Parse CLI args and orchestrate library building."""
+    parser = argparse.ArgumentParser(
+        description="Build PubMed libraries from DOIs (citations + references + related papers).",
+    )
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument(
+        "--bibtex",
+        type=Path,
+        help="Path to a .bib file; all DOIs inside are processed.",
+    )
+    src.add_argument(
+        "--doi",
+        nargs="+",
+        help="One or more DOIs to process directly.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path.cwd(),
+        help="Directory for library_*.bib outputs (default: current working directory).",
+    )
+    parser.add_argument(
+        "--email",
+        help="Email for NCBI E-utilities. Falls back to PERSPICACITE_NCBI_EMAIL env var if unset.",
+    )
+    args = parser.parse_args()
+
+    email = args.email or os.environ.get("PERSPICACITE_NCBI_EMAIL")
+    if not email:
+        parser.error("NCBI email required. Set --email or export PERSPICACITE_NCBI_EMAIL.")
+
+    output_dir = args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     print("PubMed Library Builder from DOIs")
-    print("="*60)
-    print(f"BibTeX file: {bibtex_file}")
+    print("=" * 60)
     print(f"Output directory: {output_dir}")
     print(f"Email for NCBI API: {email}")
-    
-    # Check if BibTeX file exists
-    if not bibtex_file.exists():
-        print(f"❌ Error: BibTeX file not found: {bibtex_file}")
-        return
-    
-    # Extract DOIs from BibTeX file
-    print(f"\nExtracting DOIs from {bibtex_file}...")
-    dois = extract_dois_from_bibtex(bibtex_file)
-    
-    if not dois:
-        print("❌ No DOIs found in the BibTeX file")
-        return
-    
-    print(f"✅ Extracted {len(dois)} DOIs:")
+
+    if args.bibtex:
+        if not args.bibtex.exists():
+            print(f"❌ Error: BibTeX file not found: {args.bibtex}")
+            return
+        print(f"\nExtracting DOIs from {args.bibtex}...")
+        dois = extract_dois_from_bibtex(str(args.bibtex))
+        if not dois:
+            print("❌ No DOIs found in the BibTeX file")
+            return
+        print(f"✅ Extracted {len(dois)} DOIs:")
+    else:
+        dois = args.doi
+        print(f"\n✅ Got {len(dois)} DOI(s) from --doi:")
+
     for i, doi in enumerate(dois, 1):
         print(f"  {i}. {doi}")
-    
-    # Create output directory if it doesn't exist
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Build libraries from DOIs
-    print(f"\nStarting library building process...")
+
+    print("\nStarting library building process...")
     successful_builds, failed_builds = build_libraries_from_dois(dois, str(output_dir), email)
-    
-    # Create a summary file
+
     summary_file = output_dir / "library_building_summary.txt"
-    with open(summary_file, 'w') as f:
+    with open(summary_file, "w") as f:
         f.write("PubMed Library Building Summary\n")
-        f.write("="*50 + "\n\n")
+        f.write("=" * 50 + "\n\n")
         f.write(f"Total DOIs processed: {len(dois)}\n")
         f.write(f"Successful builds: {len(successful_builds)}\n")
         f.write(f"Failed builds: {len(failed_builds)}\n\n")
-        
         if successful_builds:
             f.write("Successful builds:\n")
             for doi, filename in successful_builds:
                 f.write(f"  - {doi} → {filename}\n")
             f.write("\n")
-        
         if failed_builds:
             f.write("Failed builds:\n")
             for doi, error in failed_builds:
                 f.write(f"  - {doi}: {error}\n")
-    
+
     print(f"\n📄 Summary saved to: {summary_file}")
     print("\n🎉 Library building process completed!")
 
