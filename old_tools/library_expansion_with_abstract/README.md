@@ -1,3 +1,40 @@
+# Library Expansion Tools (vendored from ScienceGuide)
+
+These scripts were ported from the v1 ScienceGuide project on 2026-05-08. They are kept under `old_tools/` because they are not yet integrated with perspicacite's KB infrastructure — they are standalone CLI tools that produce `.bib` files you can then drag into the perspicacite web UI's "Add from BibTeX" flow.
+
+## Invocation in perspicacite v2
+
+All scripts are run via `uv run`:
+
+```bash
+# Set your NCBI email once (mandatory; obvious placeholders are rejected)
+export PERSPICACITE_NCBI_EMAIL="you@your-domain.org"
+
+# Expand a single DOI into a library of citations + references + related
+uv run python old_tools/library_expansion_with_abstract/build_libraries_from_dois.py \
+    --doi 10.1038/s41467-022-33890-w \
+    --output-dir ./expanded_library/
+
+# Or expand every DOI inside an existing .bib file
+uv run python old_tools/library_expansion_with_abstract/build_libraries_from_dois.py \
+    --bibtex seed.bib \
+    --output-dir ./expanded_library/
+
+# Screen the expanded set against a reference set via BM25
+uv run python old_tools/library_expansion_with_abstract/screen_papers.py \
+    --input expanded_library/library_*.bib \
+    --output screened.bib \
+    --threshold 0.3
+```
+
+If you don't set `PERSPICACITE_NCBI_EMAIL` and don't pass `--email`, both scripts fail fast with a clear error.
+
+NLTK corpora (`punkt`, `stopwords`) auto-download on first run of `screen_papers.py`.
+
+The rest of this file is the original ScienceGuide README, kept for reference.
+
+---
+
 # BM25-based Paper Relevance Screening Tool
 
 A Python script that screens papers for relevance using BM25 similarity scoring on abstracts. This tool helps researchers quickly identify relevant papers from a large collection by comparing them against a set of reference papers.
