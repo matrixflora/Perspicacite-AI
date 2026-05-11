@@ -6,14 +6,8 @@ to create comprehensive libraries for each DOI.
 """
 
 import os
-import sys
 import re
 from pathlib import Path
-
-# Add the parent directory to the path to import PubmedExplorer
-bibtex2kb_path = str(Path(__file__).parent.parent.parent / "bibtex2kb")
-print(f"Adding to sys.path: {bibtex2kb_path}")
-sys.path.insert(0, bibtex2kb_path)
 
 from pubmed_explorer import PubmedExplorer
 
