@@ -70,7 +70,7 @@ class PaperScreener:
         self.input_bib = Path(input_bib)
         self.output_bib = Path(output_bib)
         self.threshold = threshold
-        self.email = email or "user@example.com"
+        self.email = email
         self.csv_report = Path(csv_report) if csv_report else None
         self.cache_abstracts = cache_abstracts
         self.auto_threshold = auto_threshold
@@ -1106,7 +1106,7 @@ Examples:
 
     parser.add_argument(
         '--email',
-        help='Email address for PubMed API (recommended for better rate limits)'
+        help='Email for NCBI E-utilities. Falls back to PERSPICACITE_NCBI_EMAIL env var if unset. Required.'
     )
 
     parser.add_argument(
@@ -1151,12 +1151,16 @@ Examples:
 
     args = parser.parse_args()
 
+    email = args.email or os.environ.get("PERSPICACITE_NCBI_EMAIL")
+    if not email:
+        parser.error("NCBI email required. Set --email or export PERSPICACITE_NCBI_EMAIL.")
+
     # Create screener instance
     screener = PaperScreener(
         input_bib=args.input,
         output_bib=args.output,
         threshold=args.threshold,
-        email=args.email,
+        email=email,
         csv_report=args.csv_report,
         intermediate_dir=args.intermediate_dir,
         cache_abstracts=not args.no_cache,
