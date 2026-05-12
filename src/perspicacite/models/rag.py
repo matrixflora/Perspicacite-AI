@@ -37,6 +37,7 @@ class SourceReference(BaseModel):
     url: Optional[str] = None
     relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
     chunk_text: Optional[str] = None
+    kb_name: Optional[str] = None
 
     def __repr__(self) -> str:
         return f"SourceReference(title='{self.title[:40]}...', score={self.relevance_score:.2f})"
@@ -86,6 +87,7 @@ class RAGRequest(BaseModel):
     vector_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     recency_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     recency_half_life_years: Optional[float] = Field(default=None, gt=0.0)
+    kb_names: Optional[List[str]] = None
 
     def __repr__(self) -> str:
         return (
