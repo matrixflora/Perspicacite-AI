@@ -8,7 +8,6 @@ Run: PYTHONPATH=src pytest tests/unit/test_chat_endpoint.py -v
 
 import base64
 import json
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -150,6 +149,46 @@ def test_chat_rag_mode_map_includes_contradiction():
     from perspicacite.web.routers import chat
 
     assert chat.RAG_MODE_MAP.get("contradiction") is RAGMode.CONTRADICTION
+
+
+def test_chat_request_accepts_kb_names():
+    from perspicacite.web.routers.chat import ChatRequest
+
+    r = ChatRequest(query="q", kb_names=["a", "b"])
+    assert r.kb_names == ["a", "b"]
+    assert ChatRequest(query="q").kb_names is None
+
+
+@pytest.mark.asyncio
+async def test_stream_rag_mode_embedding_mismatch_yields_error(monkeypatch):
+    from perspicacite.web.routers import chat
+
+    class _KB:
+        def __init__(self, name, model):
+            self.name = name
+            self.collection_name = f"c_{name}"
+            self.embedding_model = model
+
+    class _SS:
+        def __init__(self, mapping):
+            self.m = mapping
+
+        async def get_kb_metadata(self, name):
+            return self.m.get(name)
+
+    monkeypatch.setattr(
+        chat.app_state,
+        "session_store",
+        _SS({"a": _KB("a", "m1"), "b": _KB("b", "m2")}),
+        raising=False,
+    )
+    req = chat.ChatRequest(query="q", mode="basic", kb_names=["a", "b"])
+    events = []
+    async for chunk in chat._stream_rag_mode(req):
+        events.append(chunk)
+    joined = "".join(events)
+    assert '"type": "error"' in joined or '"type":"error"' in joined
+    assert "embedding" in joined.lower()
 
 
 if __name__ == "__main__":
