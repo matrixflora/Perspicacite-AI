@@ -13,6 +13,7 @@ logger = get_logger("perspicacite.pipeline.download")
 @dataclass
 class DownloadResult:
     """Result of a PDF download attempt."""
+
     success: bool
     content: bytes | None
     source: str  # e.g., "unpaywall", "wiley", "alternative"
@@ -23,6 +24,7 @@ class DownloadResult:
 @dataclass
 class ContentResult:
     """Result of a content download attempt (text/XML)."""
+
     success: bool
     content: str | None
     content_type: str  # "pdf", "text", "xml"
@@ -46,6 +48,7 @@ class PaperDiscovery:
     is_oa: bool = False
     work_type: str | None = None  # "article", "preprint", etc.
     unpaywall_pdf_url: str | None = None
+    journal: str | None = None
 
 
 @dataclass
@@ -84,9 +87,7 @@ class PDFDownloader:
         headers: dict[str, str] | None = None,
     ) -> bytes | None:
         """Download PDF from URL."""
-        client = http_client or httpx.AsyncClient(
-            timeout=self.timeout, follow_redirects=True
-        )
+        client = http_client or httpx.AsyncClient(timeout=self.timeout, follow_redirects=True)
         should_close = http_client is None
         # Browser-like UA prevents NCBI PMC / Europe PMC from serving
         # HTML landing pages instead of actual PDFs.
