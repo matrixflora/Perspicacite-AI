@@ -71,6 +71,10 @@ database:
 # =============================================================================
 
 rag_modes:
+  # Cross-encoder model used for result reranking across all RAG modes.
+  # Any HuggingFace cross-encoder compatible with sentence-transformers works here.
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
   basic:
     max_iterations: 1
     use_hybrid: true
@@ -93,6 +97,10 @@ rag_modes:
     max_iterations: 5
     use_hybrid: true
     early_exit_confidence: 0.85
+    # Max papers processed by the map-reduce answer-synthesis step.
+    # Higher values improve coverage but increase latency and token cost.
+    # Range: 1–64; default is 8.
+    map_reduce_max_papers: 8
 
 # =============================================================================
 # SciLEx Integration
