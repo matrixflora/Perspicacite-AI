@@ -99,20 +99,23 @@ async function sendQuery() {
         // Get selected databases
         const selectedDatabases = getSelectedDatabases();
 
+        // Collect advanced query options (only include when changed from defaults)
+        const advancedBody = getAdvancedQueryOptions();
+
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
+            body: JSON.stringify(Object.assign({
                 query: query,
                 messages: messages.slice(0, -1),
                 session_id: sessionId,
                 conversation_id: conversationId,
-                kb_name: selectedKb,
+                kb_name: advancedBody.kb_names ? undefined : selectedKb,
                 mode: currentMode,
                 stream: true,
                 max_papers_to_download: downloadCap,
                 databases: selectedDatabases
-            })
+            }, advancedBody))
         });
 
         const reader = response.body.getReader();
@@ -149,10 +152,24 @@ async function sendQuery() {
                 } else if (data.type === 'source') {
                     // Source from RAG modes (basic, advanced, profound)
                     if (data.source) {
+                        const src = data.source;
+                        const ct = src.content_type || 'none';
+                        const ctLabels = { structured: 'Structured', full_text: 'Full text', abstract: 'Abstract', none: '—' };
+                        const ctLabel = ctLabels[ct] || ct;
+                        const badgeHtml = '<span class="pipeline-badge pipeline-' + ct + '">' + ctLabel + '</span>';
+                        let kbTagHtml = '';
+                        if (src.kb_name) {
+                            kbTagHtml = '<span class="source-kb-tag">' + src.kb_name + '</span>';
+                        }
+                        let detailsLink = '';
+                        if (src.doi) {
+                            detailsLink = ' <button class="paper-detail-link" onclick="openPaperDetail(\'' +
+                                src.doi.replace(/'/g, "\\'") + '\')">details</button>';
+                        }
                         addThinkingStep(
-                            `Source: ${data.source.title}`,
+                            'Source: ' + src.title + ' ' + badgeHtml + kbTagHtml + detailsLink,
                             'result',
-                            `Relevance: ${(data.source.relevance_score * 100).toFixed(1)}%`
+                            'Relevance: ' + (src.relevance_score * 100).toFixed(1) + '%'
                         );
                     }
                 } else if (data.type === 'tool_call') {
@@ -417,6 +434,87 @@ function clearThinking() {
     currentThinkingMessage = null;
     thinkingSteps = [];
 }
+
+/* ── Advanced query options helper ─────────────────────────────────────── */
+
+/**
+ * Read the advanced-options disclosure block if it has been opened/interacted
+ * with and return the fields to merge into the POST body.
+ * Only fields that differ from defaults are included.
+ */
+function getAdvancedQueryOptions() {
+    const body = {};
+
+    const details = document.getElementById('advanced-options-details');
+    if (!details || !details.open) {
+        // Disclosure never opened → use defaults; send nothing extra
+        return body;
+    }
+
+    // Vector / BM25 slider (default 0.5 / 0.5)
+    const vectorSlider = document.getElementById('adv-vector-slider');
+    if (vectorSlider) {
+        const vw = parseFloat(vectorSlider.value);
+        if (!isNaN(vw) && Math.abs(vw - 0.5) > 0.01) {
+            body.vector_weight = vw;
+            body.bm25_weight = parseFloat((1 - vw).toFixed(2));
+        }
+    }
+
+    // Recency weight slider (default 0)
+    const recencySlider = document.getElementById('adv-recency-slider');
+    if (recencySlider) {
+        const rw = parseFloat(recencySlider.value);
+        if (!isNaN(rw) && rw > 0.005) {
+            body.recency_weight = rw;
+        }
+    }
+
+    // Multi-KB checkboxes
+    const kbCheckboxes = document.querySelectorAll('.adv-kb-checkbox:checked');
+    if (kbCheckboxes.length >= 2) {
+        body.kb_names = Array.from(kbCheckboxes).map(cb => cb.value);
+    } else if (kbCheckboxes.length === 1) {
+        // Single selection: treat like the main KB selector
+        const name = kbCheckboxes[0].value;
+        if (name !== selectedKb) {
+            body.kb_name = name;
+        }
+    }
+
+    return body;
+}
+
+/**
+ * Populate the multi-KB checkbox list inside the advanced options block
+ * from the global KB list. Called after loadKBs().
+ */
+function refreshAdvancedKbList() {
+    const container = document.getElementById('adv-kb-list');
+    if (!container) return;
+    const select = document.getElementById('kb-select');
+    if (!select) return;
+
+    container.innerHTML = '';
+    const options = select.querySelectorAll('option');
+    options.forEach(function(opt) {
+        if (!opt.value) return; // skip "No KB" option
+        const label = document.createElement('label');
+        label.className = 'adv-kb-option';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'adv-kb-checkbox';
+        cb.value = opt.value;
+        cb.checked = opt.value === selectedKb;
+        label.appendChild(cb);
+        const span = document.createElement('span');
+        span.textContent = opt.value;
+        label.appendChild(span);
+        container.appendChild(label);
+    });
+}
+
+/* ── Paper curation ─────────────────────────────────────────────────────── */
 
 // Paper curation
 function showPapersCuration(parentDiv, papers) {
