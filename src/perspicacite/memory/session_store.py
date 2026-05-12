@@ -1,5 +1,6 @@
 """SQLite-backed session and conversation persistence."""
 
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -63,11 +64,28 @@ class SessionStore:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fts_available: bool = False
 
     async def init_db(self) -> None:
         """Initialize database schema."""
         async with aiosqlite.connect(self.db_path) as db:
             await db.executescript(SCHEMA)
+            try:
+                await db.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts "
+                    "USING fts5(content, conversation_id UNINDEXED)"
+                )
+                self._fts_available = True
+            except Exception:
+                self._fts_available = False
+            if self._fts_available:
+                cur = await db.execute("SELECT count(*) FROM messages_fts")
+                row = await cur.fetchone()
+                if row and (row[0] or 0) == 0:
+                    await db.execute(
+                        "INSERT INTO messages_fts(content, conversation_id) "
+                        "SELECT content, conversation_id FROM messages"
+                    )
             await db.commit()
         logger.info("database_initialized", path=str(self.db_path))
 
@@ -158,6 +176,14 @@ class SessionStore:
                 ),
             )
 
+            # Keep FTS index in sync
+            if self._fts_available:
+                with contextlib.suppress(Exception):
+                    await db.execute(
+                        "INSERT INTO messages_fts(content, conversation_id) VALUES (?, ?)",
+                        (message.content, conv_id),
+                    )
+
             # Update conversation timestamp
             await db.execute(
                 "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -199,6 +225,56 @@ class SessionStore:
                 )
 
             return messages
+
+    async def search_conversations(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Full-text search over message content.
+
+        Returns matching conversations with a snippet.
+        Uses FTS5 if available, else falls back to a LIKE scan.
+        """
+        if not query or not query.strip():
+            return []
+        q = query.strip()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            try:
+                if self._fts_available:
+                    cur = await db.execute(
+                        "SELECT conversation_id, "
+                        "snippet(messages_fts, 0, '[', ']', '…', 12) AS snippet "
+                        "FROM messages_fts WHERE messages_fts MATCH ? LIMIT ?",
+                        (q, limit * 4),
+                    )
+                else:
+                    raise RuntimeError("fts unavailable")
+                rows = await cur.fetchall()
+            except Exception:
+                like = f"%{q}%"
+                cur = await db.execute(
+                    "SELECT conversation_id, substr(content, 1, 200) AS snippet "
+                    "FROM messages WHERE content LIKE ? LIMIT ?",
+                    (like, limit * 4),
+                )
+                rows = await cur.fetchall()
+            seen: set[str] = set()
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                cid = r["conversation_id"]
+                if cid in seen:
+                    continue
+                seen.add(cid)
+                c2 = await db.execute("SELECT title FROM conversations WHERE id = ?", (cid,))
+                trow = await c2.fetchone()
+                out.append(
+                    {
+                        "id": cid,
+                        "title": trow["title"] if trow else None,
+                        "snippet": r["snippet"],
+                    }
+                )
+                if len(out) >= limit:
+                    break
+            return out
 
     async def save_kb_metadata(self, kb: KnowledgeBase) -> None:
         """Save KB metadata."""
@@ -252,9 +328,7 @@ class SessionStore:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
 
-            rows = await db.execute_fetchall(
-                "SELECT * FROM kb_metadata ORDER BY updated_at DESC"
-            )
+            rows = await db.execute_fetchall("SELECT * FROM kb_metadata ORDER BY updated_at DESC")
 
             from perspicacite.models.kb import ChunkConfig
 
@@ -273,7 +347,7 @@ class SessionStore:
 
     async def delete_conversation(self, conv_id: str) -> bool:
         """Delete a conversation and all its messages.
-        
+
         Returns True if conversation was found and deleted, False otherwise.
         """
         async with aiosqlite.connect(self.db_path) as db:
@@ -297,14 +371,12 @@ class SessionStore:
 
     async def delete_all_conversations(self) -> int:
         """Delete all conversations and their messages.
-        
+
         Returns the number of conversations deleted.
         """
         async with aiosqlite.connect(self.db_path) as db:
             # Get count before deletion
-            row = await db.execute_fetchall(
-                "SELECT COUNT(*) as count FROM conversations"
-            )
+            row = await db.execute_fetchall("SELECT COUNT(*) as count FROM conversations")
             count = row[0]["count"] if row else 0
 
             # Delete all conversations (messages will be cascade deleted)

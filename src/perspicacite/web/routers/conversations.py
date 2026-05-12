@@ -43,6 +43,16 @@ async def list_conversations(session_id: Optional[str] = None):
     return conversations
 
 
+@router.get("/api/conversations/search")
+async def search_conversations(q: str = ""):
+    """Full-text search across saved conversations."""
+    if not app_state.session_store:
+        return {"results": []}
+    if not q or not q.strip():
+        return {"results": []}
+    return {"results": await app_state.session_store.search_conversations(q.strip())}
+
+
 @router.get("/api/conversations/{conv_id}")
 async def get_conversation(conv_id: str):
     """Get a specific conversation with all messages."""
