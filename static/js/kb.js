@@ -20,6 +20,10 @@ async function loadKBs() {
             select.appendChild(opt);
         }
         if (currentVal) select.value = currentVal;
+        // Refresh advanced-options multi-KB checkbox list
+        if (typeof refreshAdvancedKbList === 'function') {
+            refreshAdvancedKbList();
+        }
     } catch (e) {
         console.error('Failed to load KBs:', e);
     }
@@ -30,14 +34,19 @@ function selectKB(name) {
     const infoDiv = document.getElementById('kb-info');
     const deleteBtn = document.getElementById('kb-delete-btn');
     const addBibtexBtn = document.getElementById('kb-add-bibtex-btn');
+    const statsTabStrip = document.getElementById('kb-detail-tab-strip');
+    const statsContainer = document.getElementById('kb-stats-container');
     if (selectedKb) {
         fetch(`/api/kb/${selectedKb}`).then(r => r.json()).then(data => {
             if (data.error) {
                 infoDiv.style.display = 'none';
                 deleteBtn.style.display = 'none';
                 addBibtexBtn.style.display = 'none';
+                if (statsTabStrip) statsTabStrip.style.display = 'none';
+                if (statsContainer) { statsContainer.innerHTML = ''; statsContainer.style.display = 'none'; }
                 return;
             }
+            // Show info tab content (default tab)
             infoDiv.style.display = 'block';
             infoDiv.innerHTML = `<strong>${data.name}</strong><br>` +
                 (data.description ? data.description + '<br>' : '') +
@@ -45,14 +54,49 @@ function selectKB(name) {
         });
         deleteBtn.style.display = 'inline';
         addBibtexBtn.style.display = 'inline';
+        // Show the tab strip, default to "Info" tab
+        if (statsTabStrip) {
+            statsTabStrip.style.display = 'flex';
+            switchKbDetailTab('info');
+        }
+        if (statsContainer) statsContainer.style.display = 'none';
     } else {
         infoDiv.style.display = 'none';
         deleteBtn.style.display = 'none';
         addBibtexBtn.style.display = 'none';
+        if (statsTabStrip) statsTabStrip.style.display = 'none';
+        if (statsContainer) { statsContainer.innerHTML = ''; statsContainer.style.display = 'none'; }
     }
 
     // Update survey "Add to KB" button if survey is visible
     updateSurveyAddToKBButton();
+    // Refresh the multi-KB list in advanced options
+    if (typeof refreshAdvancedKbList === 'function') {
+        refreshAdvancedKbList();
+    }
+}
+
+function switchKbDetailTab(which) {
+    const infoDiv = document.getElementById('kb-info');
+    const statsContainer = document.getElementById('kb-stats-container');
+    const infoBtn = document.getElementById('kb-detail-tab-info');
+    const statsBtn = document.getElementById('kb-detail-tab-stats');
+
+    if (which === 'stats') {
+        if (infoDiv) infoDiv.style.display = 'none';
+        if (statsContainer) { statsContainer.style.display = 'block'; }
+        if (infoBtn) infoBtn.classList.remove('active');
+        if (statsBtn) statsBtn.classList.add('active');
+        // Load stats lazily
+        if (typeof loadKbStats === 'function' && selectedKb) {
+            loadKbStats(selectedKb);
+        }
+    } else {
+        if (infoDiv) infoDiv.style.display = 'block';
+        if (statsContainer) { statsContainer.style.display = 'none'; statsContainer.innerHTML = ''; }
+        if (infoBtn) infoBtn.classList.add('active');
+        if (statsBtn) statsBtn.classList.remove('active');
+    }
 }
 
 function updateSurveyAddToKBButton() {

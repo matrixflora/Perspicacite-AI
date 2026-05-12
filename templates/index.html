@@ -22,12 +22,17 @@
                 
                 <!-- Chat History -->
                 <div class="chat-history-section">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <h3 style="margin: 0;">💬 Chat History</h3>
                         <div class="history-actions">
                             <button class="history-action-btn" id="select-mode-btn" onclick="toggleSelectMode()" title="Select multiple">☑️</button>
                             <button class="clear-history-btn" onclick="isSelectMode ? showClearHistoryDialog('selected') : showClearHistoryDialog('all')" title="Clear history">🗑️</button>
                         </div>
+                    </div>
+                    <!-- Conversation search -->
+                    <div class="conv-search-wrapper">
+                        <input id="conv-search-input" class="conv-search-input" type="search" placeholder="Search conversations…" autocomplete="off">
+                        <div id="conv-search-results" class="conv-search-results" style="display:none;"></div>
                     </div>
                     <div id="chat-history-list" class="chat-history-list">
                         <div class="chat-history-item active" data-session="" data-kb="" data-created-at="" data-conv-id="">
@@ -84,7 +89,13 @@
                     <select id="kb-select" class="kb-select" onchange="selectKB(this.value)" style="margin-top: 8px;">
                         <option value="">No KB (web search only)</option>
                     </select>
+                    <!-- KB detail tabs (Info / Stats) — visible when a KB is selected -->
+                    <div id="kb-detail-tab-strip" class="kb-detail-tab-strip" style="display:none;">
+                        <button id="kb-detail-tab-info" class="kb-detail-tab-btn active" type="button" onclick="switchKbDetailTab('info')">Info</button>
+                        <button id="kb-detail-tab-stats" class="kb-detail-tab-btn" type="button" onclick="switchKbDetailTab('stats')">Stats</button>
+                    </div>
                     <div id="kb-info" class="kb-info" style="display:none;"></div>
+                    <div id="kb-stats-container" style="display:none;"></div>
                     <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
                         <button id="kb-add-bibtex-btn" class="kb-create-toggle" style="display:none;" onclick="document.getElementById('kb-add-bibtex-file').click()">Add from BibTeX</button>
                         <input type="file" id="kb-add-bibtex-file" accept=".bib" style="display:none" onchange="addToKBFromBibtex(this.files[0])">
@@ -152,14 +163,32 @@
             
             <div class="input-area">
                 <div class="chat-input-wrapper">
-                    <textarea 
-                        id="query-input" 
+                    <textarea
+                        id="query-input"
                         class="chat-input"
                         placeholder="Ask your research question..."
                         rows="3"
                         onkeydown="handleInputKeydown(event)"
                         oninput="handleInputChange()"
                     ></textarea>
+                    <!-- Advanced query options -->
+                    <details id="advanced-options-details" class="advanced-options-disclosure">
+                        <summary class="advanced-options-summary">Advanced options</summary>
+                        <div class="advanced-options-body">
+                            <div class="adv-opt-row">
+                                <label class="adv-opt-label">Vector vs BM25 weight <span id="adv-vector-value">vector 0.50 / BM25 0.50</span></label>
+                                <input type="range" id="adv-vector-slider" min="0" max="1" step="0.05" value="0.5">
+                            </div>
+                            <div class="adv-opt-row">
+                                <label class="adv-opt-label">Recency weight <span id="adv-recency-value">0.00</span></label>
+                                <input type="range" id="adv-recency-slider" min="0" max="1" step="0.05" value="0">
+                            </div>
+                            <div class="adv-opt-row">
+                                <label class="adv-opt-label">Knowledge Bases (select 2+ for multi-KB)</label>
+                                <div id="adv-kb-list" class="adv-kb-list"></div>
+                            </div>
+                        </div>
+                    </details>
                     <div class="input-actions">
                         <select id="mode-dropdown" class="mode-dropdown" onchange="setMode(this.value)">
                             <option value="basic" selected>📚 Quick Search</option>
@@ -167,6 +196,7 @@
                             <option value="profound">🔬 Deep Research</option>
                             <option value="agentic">🤖 Perspicacité Agentic</option>
                             <option value="literature_survey">📖 Literature Survey</option>
+                            <option value="contradiction">⚖️ Contradiction</option>
                         </select>
                         <div id="download-cap-control" class="download-cap-control" title="Maximum papers to download for full-text analysis">
                             <label>📄 Max papers:</label>
@@ -191,8 +221,13 @@
     <script src="/static/js/conversations.js"></script>
     <script src="/static/js/chat.js"></script>
     <script src="/static/js/kb.js"></script>
+    <script src="/static/js/kb_stats.js"></script>
+    <script src="/static/js/paper_detail.js"></script>
     <script src="/static/js/survey.js"></script>
     <script src="/static/js/main.js"></script>
+
+    <!-- Paper detail slide-over panel -->
+    <div id="paper-detail-panel" class="paper-detail-panel" hidden></div>
 
     <!-- Delete KB Confirmation Modal -->
     <div id="delete-modal" class="modal-overlay">
