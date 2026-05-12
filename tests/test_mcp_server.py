@@ -275,5 +275,80 @@ class TestSearchLiterature:
         _mcp_mod.mcp_state = old
 
 
+@pytest.mark.asyncio
+async def test_screen_papers_tool_uninitialized():
+    from perspicacite.mcp import server as mcp_server
+
+    saved = mcp_server.mcp_state.initialized
+    mcp_server.mcp_state.initialized = False
+    try:
+        out = await mcp_server.screen_papers(candidates=["10.1/a"], query="x")
+        data = json.loads(out)
+        assert data["success"] is False
+    finally:
+        mcp_server.mcp_state.initialized = saved
+
+
+@pytest.mark.asyncio
+async def test_screen_papers_tool_bm25_titles(monkeypatch):
+    from perspicacite.mcp import server as mcp_server
+
+    saved = mcp_server.mcp_state.initialized
+    mcp_server.mcp_state.initialized = True
+    try:
+        out = await mcp_server.screen_papers(
+            candidates=[
+                "neural networks for protein structure prediction",
+                "renaissance oil painting in florence",
+            ],
+            query="deep learning protein folding",
+            method="bm25",
+            threshold=0.0,
+            max_results=10,
+        )
+        data = json.loads(out)
+        assert data["success"] is True
+        assert "screened" in data and len(data["screened"]) == 2
+        # entries have score/kept and either doi or title
+        for e in data["screened"]:
+            assert "score" in e and "kept" in e and ("title" in e or "doi" in e)
+    finally:
+        mcp_server.mcp_state.initialized = saved
+
+
+@pytest.mark.asyncio
+async def test_screen_papers_tool_doi_candidate(monkeypatch):
+    from perspicacite.mcp import server as mcp_server
+
+    saved = mcp_server.mcp_state.initialized
+    mcp_server.mcp_state.initialized = True
+
+    # avoid network: stub retrieve_paper_content where the server module references it
+    async def _fake_retrieve(doi, **kw):
+        from perspicacite.pipeline.download.base import PaperContent
+
+        return PaperContent(
+            success=True,
+            doi=doi,
+            content_type="abstract",
+            content_source="x",
+            abstract="neural network protein folding deep learning",
+            metadata={"title": "Fake Paper"},
+        )
+
+    monkeypatch.setattr("perspicacite.pipeline.download.retrieve_paper_content", _fake_retrieve)
+    # also patch the name as imported inside server.py if it does `from perspicacite.pipeline.download import retrieve_paper_content`
+    monkeypatch.setattr(mcp_server, "retrieve_paper_content", _fake_retrieve, raising=False)
+    try:
+        out = await mcp_server.screen_papers(
+            candidates=["10.1/abc"], query="protein folding", method="bm25", threshold=0.0
+        )
+        data = json.loads(out)
+        assert data["success"] is True and data["screened"][0].get("doi") == "10.1/abc"
+        assert data["screened"][0].get("title") == "Fake Paper"
+    finally:
+        mcp_server.mcp_state.initialized = saved
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
