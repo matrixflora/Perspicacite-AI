@@ -13,6 +13,7 @@ Tools exposed:
 - add_papers_to_kb: Add papers to a KB
 - generate_report: Synthesize a research report from a KB
 - screen_papers: Score candidate papers by relevance to a query
+- add_dois_to_kb: Bulk-add papers to a KB from a list of DOIs
 """
 
 from __future__ import annotations
@@ -890,6 +891,160 @@ async def screen_papers(
 
 
 # =============================================================================
+# Tool 10: add_dois_to_kb
+# =============================================================================
+
+
+@mcp.tool
+async def add_dois_to_kb(
+    kb_name: str,
+    dois: list[str],
+) -> str:
+    """
+    Bulk-add papers to a knowledge base from a list of DOIs.
+
+    For each DOI the tool fetches full text via the unified download pipeline,
+    deduplicates against existing KB content, and indexes the result.
+
+    Args:
+        kb_name: Target knowledge base name
+        dois: List of DOIs to add (max 200 per call)
+
+    Returns:
+        JSON with added_papers, added_chunks, skipped_duplicates, failed, pdf_download stats.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    if len(dois) > 200:
+        return _json_error("At most 200 DOIs per request")
+
+    try:
+        import httpx
+        from perspicacite.models.kb import chroma_collection_name_for_kb
+        from perspicacite.models.papers import Author, Paper, PaperSource
+        from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+
+        kb_meta = await state.session_store.get_kb_metadata(kb_name)
+        if not kb_meta:
+            return _json_error(f"Knowledge base '{kb_name}' not found")
+
+        collection_name = chroma_collection_name_for_kb(kb_name)
+
+        pdf_config = state.config.pdf_download
+        pdf_kwargs: dict[str, Any] = {}
+        if pdf_config:
+            pdf_kwargs = {
+                "unpaywall_email": pdf_config.unpaywall_email,
+                "alternative_endpoint": pdf_config.alternative_endpoint,
+                "wiley_tdm_token": pdf_config.wiley_tdm_token,
+                "aaas_api_key": pdf_config.aaas_api_key,
+                "rsc_api_key": pdf_config.rsc_api_key,
+                "springer_api_key": pdf_config.springer_api_key,
+            }
+
+        papers_to_add: list[Paper] = []
+        skipped: list[dict] = []
+        failed: list[dict] = []
+        dl: dict[str, int] = {"attempted": 0, "success": 0, "failed": 0}
+
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+            for raw_doi in dois:
+                doi = (raw_doi or "").strip().replace("https://doi.org/", "")
+                if not doi:
+                    continue
+
+                if await state.vector_store.paper_exists(collection_name, doi):
+                    skipped.append({"doi": doi})
+                    continue
+
+                dl["attempted"] += 1
+                try:
+                    result = await retrieve_paper_content(
+                        doi,
+                        http_client=client,
+                        pdf_parser=state.pdf_parser,
+                        **pdf_kwargs,
+                    )
+                except Exception as e:
+                    failed.append({"doi": doi, "reason": str(e)})
+                    dl["failed"] += 1
+                    continue
+
+                if not result or not result.success:
+                    failed.append({"doi": doi, "reason": "no content"})
+                    dl["failed"] += 1
+                    continue
+
+                md = result.metadata or {}
+                paper = Paper(
+                    id=doi,
+                    title=md.get("title") or f"Reference {doi}",
+                    authors=[Author(name=a) for a in (md.get("authors") or [])],
+                    year=md.get("year"),
+                    doi=doi,
+                    abstract=result.abstract or md.get("abstract"),
+                    journal=md.get("journal"),
+                    source=PaperSource.WEB_SEARCH,
+                )
+                if result.full_text:
+                    paper.full_text = result.full_text
+                    dl["success"] += 1
+                else:
+                    dl["failed"] += 1
+                papers_to_add.append(paper)
+
+        if not papers_to_add:
+            return _json_ok(
+                {
+                    "kb_name": kb_name,
+                    "added_papers": 0,
+                    "added_chunks": 0,
+                    "skipped_duplicates": len(skipped),
+                    "failed": failed,
+                    "pdf_download": dl,
+                }
+            )
+
+        dkb = DynamicKnowledgeBase(
+            state.vector_store,
+            state.embedding_provider,
+        )
+        dkb.collection_name = collection_name
+        dkb._initialized = True
+
+        chunks_added = await dkb.add_papers(papers_to_add, include_full_text=True)
+
+        kb_meta.paper_count = (kb_meta.paper_count or 0) + len(papers_to_add)
+        kb_meta.chunk_count = (kb_meta.chunk_count or 0) + chunks_added
+        await state.session_store.save_kb_metadata(kb_meta)
+
+        logger.info(
+            "mcp_add_dois_to_kb",
+            kb_name=kb_name,
+            papers=len(papers_to_add),
+            chunks=chunks_added,
+        )
+
+        return _json_ok(
+            {
+                "kb_name": kb_name,
+                "added_papers": len(papers_to_add),
+                "added_chunks": chunks_added,
+                "skipped_duplicates": len(skipped),
+                "failed": failed,
+                "pdf_download": dl,
+            }
+        )
+
+    except Exception as e:
+        logger.error("mcp_add_dois_to_kb_error", kb_name=kb_name, error=str(e))
+        return _json_error(f"Failed to add DOIs: {e}")
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -911,6 +1066,7 @@ async def get_info() -> str:
                 "add_papers_to_kb",
                 "generate_report",
                 "screen_papers",
+                "add_dois_to_kb",
             ],
             "initialized": mcp_state.initialized,
         }

@@ -1,7 +1,7 @@
 # Perspicacité MCP Skills Reference
 
 This file guides external agents (Mimosa-AI and similar) in using Perspicacité's
-8 MCP tools effectively. It covers prerequisites, recommended workflows, and
+10 MCP tools effectively. It covers prerequisites, recommended workflows, and
 failure recovery patterns.
 
 ## Prerequisites
@@ -147,6 +147,49 @@ Generates a synthesized research report from a KB using RAG.
 **Notes:**
 - The KB must contain relevant papers before generating a report.
 - Returns report text, cited sources, and metadata.
+
+### screen_papers
+
+```
+screen_papers(candidates, query, method="bm25", threshold=0.3, max_results=50)
+```
+
+Scores candidate papers (DOIs or titles) by relevance to a research query without
+adding them to a KB.
+
+**Args:**
+- `candidates` — list of DOIs (e.g. `"10.1234/abc"`) or plain-text titles.
+- `query` — research topic/question to screen against.
+- `method` — `"bm25"` (fast, no LLM) or `"llm"` (LLM-rated 0-1 with reasons).
+- `threshold` — keep papers scoring >= this value (0–1).
+- `max_results` — cap on returned items.
+
+**Notes:**
+- DOI candidates trigger abstract retrieval via the unified pipeline.
+- BM25 mode requires no API calls beyond optional DOI abstract lookup.
+- Returns `screened` list with `score`, `kept`, `reason`, and `doi`/`title`.
+
+### add_dois_to_kb
+
+```
+add_dois_to_kb(kb_name, dois)
+```
+
+Bulk-adds papers to a knowledge base directly from a list of DOIs (max 200 per
+call). For each DOI the tool fetches full text via the unified download pipeline,
+deduplicates against existing KB content, and indexes the result.
+
+**Args:**
+- `kb_name` — target KB name (must exist).
+- `dois` — list of DOI strings (bare or `https://doi.org/`-prefixed).
+
+**Notes:**
+- Returns `added_papers`, `added_chunks`, `skipped_duplicates`, `failed` (list),
+  and `pdf_download` stats (attempted/success/failed).
+- Papers already present in the KB are silently skipped (deduplicated by DOI).
+- Content retrieval follows the same priority pipeline as `get_paper_content`.
+- Use this tool when you have a list of DOIs from an external source (e.g.
+  citation export, `screen_papers` output) and want to ingest them directly.
 
 ---
 

@@ -43,7 +43,7 @@
 - **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
 - **5 RAG modes** — From fast KB retrieval to multi-cycle agentic research and systematic literature surveys
 - **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
-- **MCP server** — 8 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
+- **MCP server** — 10 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
 - **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
 - **Local-first** — Data stays on your machine; only API calls go to LLM providers
 
@@ -158,7 +158,7 @@ Structured content (PMC, arXiv) provides sections and references. PDF content pr
 
 ## MCP Server
 
-Perspicacité exposes an MCP server with 8 tools at `http://localhost:8000/mcp`, accessible via:
+Perspicacité exposes an MCP server with 10 tools at `http://localhost:8000/mcp`, accessible via:
 - **MCP protocol** — native tool discovery and invocation
 - **HTTP JSON-RPC** — `POST /mcp` with standard JSON-RPC 2.0 envelope
 
@@ -171,9 +171,11 @@ Perspicacité exposes an MCP server with 8 tools at `http://localhost:8000/mcp`,
 | `get_paper_references` | Extract cited references from a paper |
 | `create_knowledge_base` | Create a new KB |
 | `add_papers_to_kb` | Add papers with auto-download and indexing |
+| `add_dois_to_kb` | Bulk-add papers to a KB from a list of DOIs (max 200 per call) |
 | `search_knowledge_base` | Semantic search within a KB |
 | `list_knowledge_bases` | List all KBs with stats |
 | `generate_report` | Synthesize a research report using RAG |
+| `screen_papers` | Score candidate papers by relevance to a query (BM25 or LLM-rated) |
 
 Full usage details and parameter documentation: [`docs/perspicacite_skills.md`](docs/perspicacite_skills.md)
 

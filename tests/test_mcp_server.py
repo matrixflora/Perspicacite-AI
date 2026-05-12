@@ -350,5 +350,32 @@ async def test_screen_papers_tool_doi_candidate(monkeypatch):
         mcp_server.mcp_state.initialized = saved
 
 
+@pytest.mark.asyncio
+async def test_add_dois_to_kb_uninitialized():
+    import json
+    from perspicacite.mcp import server as s
+
+    saved = s.mcp_state.initialized
+    s.mcp_state.initialized = False
+    try:
+        assert json.loads(await s.add_dois_to_kb("k", ["10.1/a"]))["success"] is False
+    finally:
+        s.mcp_state.initialized = saved
+
+
+@pytest.mark.asyncio
+async def test_add_dois_to_kb_oversize():
+    import json
+    from perspicacite.mcp import server as s
+
+    saved = s.mcp_state.initialized
+    s.mcp_state.initialized = True
+    try:
+        out = json.loads(await s.add_dois_to_kb("k", ["10.1/x"] * 1000))
+        assert out["success"] is False and "200" in out["error"]
+    finally:
+        s.mcp_state.initialized = saved
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
