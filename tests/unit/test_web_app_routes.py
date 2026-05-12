@@ -28,6 +28,7 @@ EXPECTED_ROUTES: list[tuple[str, set[str]]] = [
     ("/api/kb/{name}/papers", {"POST"}),
     ("/api/kb/{name}/chunks", {"GET"}),
     ("/api/kb/{name}/bibtex", {"POST"}),
+    ("/api/kb/{name}/dois", {"POST"}),
     ("/api/survey/{session_id}", {"GET"}),
     ("/api/survey/{session_id}/select", {"POST"}),
     ("/api/survey/{session_id}/generate", {"POST"}),
@@ -37,12 +38,14 @@ EXPECTED_ROUTES: list[tuple[str, set[str]]] = [
 def _load_app():
     """Load the FastAPI app via the canonical import path."""
     from perspicacite.web import app
+
     return app
 
 
 def _route_methods_by_path(app):
     """Return {path: {methods}} for every APIRoute on the app."""
     from fastapi.routing import APIRoute
+
     out: dict[str, set[str]] = {}
     for r in app.routes:
         if isinstance(r, APIRoute):
@@ -76,5 +79,5 @@ def test_total_route_count_unchanged():
     app = _load_app()
     routes = _route_methods_by_path(app)
     pair_count = sum(len(methods) for methods in routes.values())
-    # 19 (path, method) pairs across the EXPECTED_ROUTES list above.
-    assert pair_count >= 19, f"expected at least 19 (path, method) pairs, got {pair_count}"
+    # 20 (path, method) pairs across the EXPECTED_ROUTES list above.
+    assert pair_count >= 20, f"expected at least 20 (path, method) pairs, got {pair_count}"

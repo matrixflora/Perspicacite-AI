@@ -36,7 +36,7 @@ class KBCreateRequest(BaseModel):
         pattern=r"^[a-zA-Z0-9 _-]+$",
         min_length=1,
         max_length=100,
-        description="KB name (spaces will be converted to underscores)"
+        description="KB name (spaces will be converted to underscores)",
     )
     description: Optional[str] = None
 
@@ -57,6 +57,12 @@ class KBAddPapersRequest(BaseModel):
     """Request to add papers to a knowledge base."""
 
     papers: List[PaperData]
+
+
+class KBAddDOIsRequest(BaseModel):
+    """Request to bulk-add papers from a list of DOIs."""
+
+    dois: List[str] = Field(..., min_length=1)
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +264,9 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
         if full_text is None and pd.doi and app_state.pdf_downloader and app_state.pdf_parser:
             download_stats["attempted"] += 1
             try:
-                result = await retrieve_paper_content(pd.doi, pdf_parser=app_state.pdf_parser, **pdf_kw)
+                result = await retrieve_paper_content(
+                    pd.doi, pdf_parser=app_state.pdf_parser, **pdf_kw
+                )
                 if result.success and result.full_text:
                     full_text = result.full_text
                     download_stats["success"] += 1
@@ -268,6 +276,7 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
                         paper.title = meta["title"]
                     if meta.get("authors") and not paper.authors:
                         from perspicacite.models.papers import Author
+
                         paper.authors = [Author(name=a) for a in meta["authors"]]
                     if result.abstract and not paper.abstract:
                         paper.abstract = result.abstract
@@ -353,18 +362,20 @@ async def get_kb_chunks(
     for i, chunk_id in enumerate(result["ids"]):
         meta = result["metadatas"][i] if result["metadatas"] else {}
         doc = result["documents"][i] if result["documents"] else ""
-        chunks.append({
-            "id": chunk_id,
-            "text": doc,
-            "paper_id": meta.get("paper_id"),
-            "chunk_index": meta.get("chunk_index"),
-            "section": meta.get("section"),
-            "title": meta.get("title"),
-            "authors": meta.get("authors"),
-            "year": meta.get("year"),
-            "doi": meta.get("doi"),
-            "source": meta.get("source"),
-        })
+        chunks.append(
+            {
+                "id": chunk_id,
+                "text": doc,
+                "paper_id": meta.get("paper_id"),
+                "chunk_index": meta.get("chunk_index"),
+                "section": meta.get("section"),
+                "title": meta.get("title"),
+                "authors": meta.get("authors"),
+                "year": meta.get("year"),
+                "doi": meta.get("doi"),
+                "source": meta.get("source"),
+            }
+        )
 
     return {
         "kb": name,
@@ -450,7 +461,9 @@ async def add_bibtex_to_kb(name: str, request: Request):
         if paper.doi and app_state.pdf_parser:
             download_stats["attempted"] += 1
             try:
-                result = await retrieve_paper_content(paper.doi, pdf_parser=app_state.pdf_parser, **pdf_kw)
+                result = await retrieve_paper_content(
+                    paper.doi, pdf_parser=app_state.pdf_parser, **pdf_kw
+                )
                 if result.success and result.full_text:
                     paper.full_text = result.full_text
                     download_stats["success"] += 1
@@ -460,6 +473,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
                         paper.title = meta["title"]
                     if meta.get("authors") and not paper.authors:
                         from perspicacite.models.papers import Author
+
                         paper.authors = [Author(name=a) for a in meta["authors"]]
                     if result.abstract and not paper.abstract:
                         paper.abstract = result.abstract
@@ -498,5 +512,104 @@ async def add_bibtex_to_kb(name: str, request: Request):
         "added_papers": len(papers_to_add),
         "added_chunks": added,
         "pdf_download": download_stats,
+        "kb": name,
+    }
+
+
+@router.post("/api/kb/{name}/dois")
+async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
+    """Bulk-add papers to a knowledge base from a list of DOIs (synchronous)."""
+    if not app_state.session_store:
+        return {"error": "System not initialized"}
+
+    if len(request.dois) > 200:
+        raise HTTPException(status_code=400, detail="At most 200 DOIs per request")
+
+    kb = await app_state.session_store.get_kb_metadata(name)
+    if not kb:
+        return {"error": f"Knowledge base '{name}' not found"}
+
+    from perspicacite.models.papers import Paper, Author, PaperSource
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+    from perspicacite.pipeline.download import retrieve_paper_content
+
+    pdf_config = app_state.config.pdf_download if app_state.config else None
+    pdf_kw = _get_pdf_fallback_kwargs(pdf_config)
+
+    papers_to_add: list = []
+    skipped: list = []
+    failed: list = []
+    dl = {"attempted": 0, "success": 0, "failed": 0}
+
+    for raw_doi in request.dois:
+        doi = (raw_doi or "").strip().replace("https://doi.org/", "")
+        if not doi:
+            continue
+
+        if await app_state.vector_store.paper_exists(kb.collection_name, doi):
+            skipped.append({"doi": doi})
+            continue
+
+        dl["attempted"] += 1
+        try:
+            result = await retrieve_paper_content(doi, pdf_parser=app_state.pdf_parser, **pdf_kw)
+        except Exception as e:
+            failed.append({"doi": doi, "reason": str(e)})
+            dl["failed"] += 1
+            continue
+
+        if not result or not result.success:
+            failed.append({"doi": doi, "reason": "no content"})
+            dl["failed"] += 1
+            continue
+
+        md = result.metadata or {}
+        paper = Paper(
+            id=doi,
+            title=md.get("title") or f"Reference {doi}",
+            authors=[Author(name=a) for a in (md.get("authors") or [])],
+            year=md.get("year"),
+            doi=doi,
+            abstract=result.abstract or md.get("abstract"),
+            journal=md.get("journal"),
+            source=PaperSource.WEB_SEARCH,
+        )
+        if result.full_text:
+            paper.full_text = result.full_text
+            dl["success"] += 1
+        else:
+            dl["failed"] += 1
+        papers_to_add.append(paper)
+
+    if not papers_to_add:
+        return {
+            "added_papers": 0,
+            "added_chunks": 0,
+            "skipped_duplicates": len(skipped),
+            "failed": failed,
+            "pdf_download": dl,
+            "kb": name,
+        }
+
+    dkb = DynamicKnowledgeBase(
+        vector_store=app_state.vector_store,
+        embedding_service=app_state.embedding_provider,
+    )
+    dkb.collection_name = kb.collection_name
+    dkb._initialized = True
+
+    added = await dkb.add_papers(papers_to_add, include_full_text=True)
+
+    kb.paper_count += len(papers_to_add)
+    kb.chunk_count += added
+    await app_state.session_store.save_kb_metadata(kb)
+
+    logger.info(f"Added {len(papers_to_add)} papers from DOI list to KB '{name}' ({added} chunks)")
+    return {
+        "added_papers": len(papers_to_add),
+        "added_chunks": added,
+        "skipped_duplicates": len(skipped),
+        "failed": failed,
+        "pdf_download": dl,
         "kb": name,
     }
