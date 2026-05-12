@@ -84,6 +84,8 @@ class RAGRequest(BaseModel):
     )
     bm25_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     vector_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    recency_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    recency_half_life_years: Optional[float] = Field(default=None, gt=0.0)
 
     def __repr__(self) -> str:
         return (
