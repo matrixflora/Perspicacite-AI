@@ -364,6 +364,44 @@ async def test_add_dois_to_kb_uninitialized():
 
 
 @pytest.mark.asyncio
+async def test_generate_report_accepts_contradiction_mode(monkeypatch):
+    from perspicacite.mcp import server as s
+    from perspicacite.models.rag import StreamEvent
+
+    saved = s.mcp_state.initialized
+    s.mcp_state.initialized = True
+
+    class _KB:
+        collection_name = "c"
+
+    class _SS:
+        async def get_kb_metadata(self, name):
+            return _KB()
+
+    s.mcp_state.session_store = _SS()
+
+    class _FakeEngine:
+        def __init__(self, *a, **k):
+            pass
+
+        async def query_stream(self, req):
+            yield StreamEvent(event="content", data=json.dumps({"delta": "hello"}))
+            yield StreamEvent(event="done", data="{}")
+
+    monkeypatch.setattr("perspicacite.rag.engine.RAGEngine", _FakeEngine)
+    try:
+        out = json.loads(
+            await s.generate_report(
+                query="Does X cause Y?", kb_name="default", mode="contradiction"
+            )
+        )
+        assert out["success"] is True
+        assert out.get("mode") == "contradiction"
+    finally:
+        s.mcp_state.initialized = saved
+
+
+@pytest.mark.asyncio
 async def test_add_dois_to_kb_oversize():
     import json
     from perspicacite.mcp import server as s

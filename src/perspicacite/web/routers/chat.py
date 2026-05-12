@@ -23,6 +23,15 @@ from perspicacite.web.state import app_state
 
 logger = logging.getLogger(__name__)
 
+# Module-level map from mode string to RAGMode enum.
+# Referenced by _stream_rag_mode and exposed for testing.
+RAG_MODE_MAP = {
+    "basic": RAGMode.BASIC,
+    "advanced": RAGMode.ADVANCED,
+    "profound": RAGMode.PROFOUND,
+    "literature_survey": RAGMode.LITERATURE_SURVEY,
+    "contradiction": RAGMode.CONTRADICTION,
+}
 
 router = APIRouter()
 
@@ -44,18 +53,25 @@ class ChatRequest(BaseModel):
         default=None, description="Conversation ID for persistent chat thread"
     )
     kb_name: Optional[str] = Field(default=None, description="Knowledge base to search first")
-    mode: str = Field(default="basic", description="RAG mode: basic, advanced, profound, agentic")
+    mode: str = Field(
+        default="basic",
+        description=(
+            "RAG mode: basic, advanced, profound, agentic, literature_survey, contradiction"
+        ),
+    )
     stream: bool = Field(default=True, description="Stream the response")
-    max_papers: int = Field(default=3, ge=1, le=10, description="Maximum papers to display in results")
+    max_papers: int = Field(
+        default=3, ge=1, le=10, description="Maximum papers to display in results"
+    )
     max_papers_to_download: int = Field(
         default=10,
         ge=1,
         le=50,
-        description="Maximum papers to download for full-text analysis (Agentic mode). Higher = more comprehensive but slower"
+        description="Maximum papers to download for full-text analysis (Agentic mode). Higher = more comprehensive but slower",
     )
     databases: List[str] = Field(
         default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
-        description="List of databases to search (semantic_scholar, openalex, pubmed, arxiv, ieee, springer, dblp)"
+        description="List of databases to search (semantic_scholar, openalex, pubmed, arxiv, ieee, springer, dblp)",
     )
 
 
@@ -264,7 +280,7 @@ async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] =
         session_id=request.session_id,
         kb_name=request.kb_name,
         stream=True,
-        max_papers_to_download=request.max_papers_to_download
+        max_papers_to_download=request.max_papers_to_download,
     ):
         # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
         # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
@@ -286,17 +302,11 @@ async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] =
 
 
 async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] = None):
-    """Stream using RAGEngine with selected mode (basic, advanced, profound)."""
+    """Stream using RAGEngine with selected mode (basic, advanced, profound, contradiction…)."""
     from perspicacite.models.rag import RAGRequest as RAGReq, RAGMode
 
-    # Map string mode to RAGMode enum
-    mode_map = {
-        "basic": RAGMode.BASIC,
-        "advanced": RAGMode.ADVANCED,
-        "profound": RAGMode.PROFOUND,
-        "literature_survey": RAGMode.LITERATURE_SURVEY,
-    }
-    rag_mode = mode_map.get(request.mode, RAGMode.BASIC)
+    # Map string mode to RAGMode enum using the module-level constant
+    rag_mode = RAG_MODE_MAP.get(request.mode, RAGMode.BASIC)
 
     logger.info(f"Using RAGEngine with mode: {rag_mode.value}")
 
