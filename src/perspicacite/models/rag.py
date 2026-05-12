@@ -10,7 +10,7 @@ from perspicacite.models.search import SearchFilters
 
 class RAGMode(str, Enum):
     """RAG modes for benchmark comparison.
-    
+
     BASIC: Simple retrieval + generation (single query, no refinement)
     ADVANCED: Query rephrasing + hybrid retrieval + WRRF scoring + optional refinement
     PROFOUND: Multi-cycle research with planning, web search, reflection (from v1)
@@ -68,7 +68,7 @@ class RAGRequest(BaseModel):
     evaluator_model: Optional[str] = None
     databases: List[str] = Field(
         default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
-        description="List of databases to search"
+        description="List of databases to search",
     )
     conversation_history: Optional[List[Dict[str, str]]] = Field(
         default=None,
@@ -80,6 +80,8 @@ class RAGRequest(BaseModel):
         le=10,
         description="Hard cap on papers loaded in two-pass; None uses mode default",
     )
+    bm25_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    vector_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
     def __repr__(self) -> str:
         return (

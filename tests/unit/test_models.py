@@ -189,6 +189,15 @@ class TestMessage:
         assert d["content"] == "Hi there"
 
 
+def test_ragrequest_weight_fields_default_none():
+    from perspicacite.models.rag import RAGRequest
+
+    r = RAGRequest(query="x")
+    assert r.bm25_weight is None and r.vector_weight is None
+    r2 = RAGRequest(query="x", bm25_weight=0.7, vector_weight=0.3)
+    assert r2.bm25_weight == 0.7 and r2.vector_weight == 0.3
+
+
 class TestRAGMode:
     """Tests for RAGMode enum."""
 

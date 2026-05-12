@@ -29,7 +29,11 @@ from perspicacite.rag.prompts import (
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.rag.conversation_helpers import compute_retrieval_query, format_conversation_block
 from perspicacite.rag.query_scope import merge_scope_with_candidates, resolve_paper_scope_for_query
-from perspicacite.retrieval.hybrid import hybrid_retrieval
+from perspicacite.retrieval.hybrid import (
+    determine_weights_with_llm,
+    hybrid_retrieval,
+    resolve_hybrid_weights,
+)
 from perspicacite.rag.relevancy import assess_query_complexity, reorder_documents_by_relevance
 from perspicacite.rag.utils import (
     format_references,
@@ -86,14 +90,14 @@ class AdvancedRAGMode(BaseRAGMode):
         # v1 get_response: relevancy reorder + focus instructions
         self.use_relevancy_optimization = rag_settings.get("use_relevancy_optimization", True)
         # v1 profonde: refinement_iterations clamped 1–3; core refine_response default 2
-        self.refinement_iterations = max(1, min(int(rag_settings.get("refinement_iterations", 2)), 3))
+        self.refinement_iterations = max(
+            1, min(int(rag_settings.get("refinement_iterations", 2)), 3)
+        )
         self.evaluator_model = rag_settings.get("evaluator_model")
         self.evaluator_provider = rag_settings.get("evaluator_provider")
         # v1 get_response: max length for mandatory + DEFAULT_SYSTEM_PROMPT before focus instructions
         llm_cfg = getattr(config, "llm", None)
-        self.max_context_window = int(
-            getattr(llm_cfg, "max_context_window", None) or 10000
-        )
+        self.max_context_window = int(getattr(llm_cfg, "max_context_window", None) or 10000)
 
     def _truncate_combined_prompt_base(self, combined_prompt: str) -> str:
         """core/core.py get_response: truncate mandatory + system only (before focus)."""
@@ -258,9 +262,12 @@ Sources:
             embedding_provider=embedding_provider,
             kb_name=chroma_collection_name_for_kb(request.kb_name),
             llm=llm,
+            request=request,
         )
 
-        logger.info("advanced_selected_docs", count=len(selected_documents), use_two_pass=self.use_two_pass)
+        logger.info(
+            "advanced_selected_docs", count=len(selected_documents), use_two_pass=self.use_two_pass
+        )
 
         retrieval_docs_for_refine = list(selected_documents)
         if self.use_relevancy_optimization and selected_documents:
@@ -288,15 +295,14 @@ Sources:
                         paper_meta[pid] = meta.metadata
 
             if paper_ids:
-                ordered = merge_scope_with_candidates(
-                    paper_ids, paper_scores, scope, cap
-                )
+                ordered = merge_scope_with_candidates(paper_ids, paper_scores, scope, cap)
                 all_chunks = await vector_store.get_chunks_by_paper_ids(
                     chroma_collection_name_for_kb(request.kb_name), ordered
                 )
                 deduped = deduplicate_chunk_overlaps(all_chunks)
                 # Group by paper
                 from collections import OrderedDict
+
                 grouped: OrderedDict[str, list] = OrderedDict()
                 for d in deduped:
                     grouped.setdefault(d["paper_id"], []).append(d)
@@ -304,16 +310,18 @@ Sources:
                     chunks_list = grouped.get(pid, [])
                     full_text = " ".join(c["text"] for c in chunks_list)
                     meta = paper_meta.get(pid)
-                    paper_results.append({
-                        "paper_id": pid,
-                        "paper_score": paper_scores[pid],
-                        "title": getattr(meta, "title", None),
-                        "authors": getattr(meta, "authors", None),
-                        "year": getattr(meta, "year", None),
-                        "doi": getattr(meta, "doi", None),
-                        "chunks": chunks_list,
-                        "full_text": full_text,
-                    })
+                    paper_results.append(
+                        {
+                            "paper_id": pid,
+                            "paper_score": paper_scores[pid],
+                            "title": getattr(meta, "title", None),
+                            "authors": getattr(meta, "authors", None),
+                            "year": getattr(meta, "year", None),
+                            "doi": getattr(meta, "doi", None),
+                            "chunks": chunks_list,
+                            "full_text": full_text,
+                        }
+                    )
 
         # Step 3: Generate response using full paper context
         if paper_results:
@@ -352,13 +360,16 @@ Sources:
             sources = []
             for p in paper_results:
                 from perspicacite.models.rag import SourceReference
-                sources.append(SourceReference(
-                    title=p.get("title") or "Untitled",
-                    authors=p.get("authors"),
-                    year=p.get("year"),
-                    doi=p.get("doi"),
-                    relevance_score=p.get("paper_score", 0.0),
-                ))
+
+                sources.append(
+                    SourceReference(
+                        title=p.get("title") or "Untitled",
+                        authors=p.get("authors"),
+                        year=p.get("year"),
+                        doi=p.get("doi"),
+                        relevance_score=p.get("paper_score", 0.0),
+                    )
+                )
         else:
             sources = self._prepare_sources(selected_documents)
 
@@ -488,6 +499,7 @@ Sources:
             embedding_provider=embedding_provider,
             kb_name=kb_collection,
             llm=llm,
+            request=request,
         )
 
         if self.use_relevancy_optimization and selected_documents:
@@ -513,12 +525,8 @@ Sources:
                         paper_scores[pid] = score
                         paper_meta[pid] = meta.metadata
             if paper_ids:
-                ordered = merge_scope_with_candidates(
-                    paper_ids, paper_scores, scope, cap
-                )
-                all_chunks = await vector_store.get_chunks_by_paper_ids(
-                    kb_collection, ordered
-                )
+                ordered = merge_scope_with_candidates(paper_ids, paper_scores, scope, cap)
+                all_chunks = await vector_store.get_chunks_by_paper_ids(kb_collection, ordered)
                 deduped = deduplicate_chunk_overlaps(all_chunks)
                 from collections import OrderedDict
 
@@ -529,16 +537,18 @@ Sources:
                     chunks_list = grouped.get(pid, [])
                     full_text = " ".join(c["text"] for c in chunks_list)
                     meta = paper_meta.get(pid)
-                    paper_results.append({
-                        "paper_id": pid,
-                        "paper_score": paper_scores[pid],
-                        "title": getattr(meta, "title", None),
-                        "authors": getattr(meta, "authors", None),
-                        "year": getattr(meta, "year", None),
-                        "doi": getattr(meta, "doi", None),
-                        "chunks": chunks_list,
-                        "full_text": full_text,
-                    })
+                    paper_results.append(
+                        {
+                            "paper_id": pid,
+                            "paper_score": paper_scores[pid],
+                            "title": getattr(meta, "title", None),
+                            "authors": getattr(meta, "authors", None),
+                            "year": getattr(meta, "year", None),
+                            "doi": getattr(meta, "doi", None),
+                            "chunks": chunks_list,
+                            "full_text": full_text,
+                        }
+                    )
 
         # Step 3: Prepare sources
         if paper_results:
@@ -698,6 +708,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         embedding_provider: Any,
         kb_name: str,
         llm: Any = None,
+        request: Any = None,
     ) -> list[Any]:
         """
         Retrieve documents using WRRF (Weighted Reciprocal Rank Fusion).
@@ -733,11 +744,17 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
 
                     vector_scores = [getattr(r, "score", 0.5) for r in results]
 
+                    # Determine LLM-based weights first, then let request overrides win
+                    llm_vw, llm_bw = await determine_weights_with_llm(query, llm)
+                    final_vw, final_bw = resolve_hybrid_weights(request, default=(llm_vw, llm_bw))
+
                     hybrid_results = await hybrid_retrieval(
                         query=query,
                         documents=results,
                         vector_scores=vector_scores,
-                        use_llm_weights=True,
+                        vector_weight=final_vw,
+                        bm25_weight=final_bw,
+                        use_llm_weights=False,
                         llm=llm,
                     )
 
@@ -827,7 +844,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         # Use KB-specific mandatory prompt if KB info available (v1 compatibility)
         kb_title = getattr(request, "kb_name", "Perspicacité")
         kb_scope = getattr(request, "kb_scope", "scientific research and education")
-        
+
         if kb_title and kb_scope:
             mandatory = get_mandatory_prompt(kb_title, kb_scope)
         else:
@@ -909,7 +926,9 @@ Provide a comprehensive answer based on the documents above."""
             for (url, citation), count in sc.items():
                 year = ""
                 for p in paper_results:
-                    if (p.get("title") or p.get("doi")) == citation or str(p.get("doi")) == citation:
+                    if (p.get("title") or p.get("doi")) == citation or str(
+                        p.get("doi")
+                    ) == citation:
                         year = str(p.get("year") or "")
                         break
                 citations.append(f"{citation}. Accessed on: {year} (url: {url}). [{count} docs]")
@@ -1042,7 +1061,9 @@ Sources:
                 eval_model=eval_model,
                 eval_provider=eval_provider,
             )
-            logger.info("advanced_refinement_final_eval", overall_score=final_fb.get("overall_score"))
+            logger.info(
+                "advanced_refinement_final_eval", overall_score=final_fb.get("overall_score")
+            )
         except Exception as e:
             logger.debug("advanced_refinement_final_eval_skipped", error=str(e))
         return current_response
@@ -1085,7 +1106,7 @@ Sources:
                 text = str(doc)
                 citation = "Unknown"
             doc_texts.append(f"[Citation: {citation}]\n{text}")
-        
+
         doc_content = "\n\n---\n\n".join(doc_texts) if doc_texts else "No documents"
 
         user_message = f"""Response to evaluate:
@@ -1126,7 +1147,7 @@ Evaluate the response according to the criteria and return a valid JSON."""
                 result = result.split("```json")[1]
             if result.endswith("```"):
                 result = result.rsplit("```", 1)[0]
-            
+
             json_match = re.search(r"\{.*\}", result, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
@@ -1169,16 +1190,16 @@ Previous response:
 {response}
 
 Feedback from evaluator:
-- Overall score: {feedback.get('overall_score', 'Not provided')}
-- Relevance: {feedback.get('relevance', {}).get('feedback', 'Not provided')}
-- Accuracy: {feedback.get('accuracy', {}).get('feedback', 'Not provided')}
-- Completeness: {feedback.get('completeness', {}).get('feedback', 'Not provided')}
-- Entities Recall: {feedback.get('entities_recall', {}).get('feedback', 'Not provided')}
-- Faithfulness: {feedback.get('faithfulness', {}).get('feedback', 'Not provided')}
+- Overall score: {feedback.get("overall_score", "Not provided")}
+- Relevance: {feedback.get("relevance", {}).get("feedback", "Not provided")}
+- Accuracy: {feedback.get("accuracy", {}).get("feedback", "Not provided")}
+- Completeness: {feedback.get("completeness", {}).get("feedback", "Not provided")}
+- Entities Recall: {feedback.get("entities_recall", {}).get("feedback", "Not provided")}
+- Faithfulness: {feedback.get("faithfulness", {}).get("feedback", "Not provided")}
 
-Missing key points: {', '.join(feedback.get('completeness', {}).get('missing_key_points', ['None provided']))}
-Missing entities: {', '.join(feedback.get('entities_recall', {}).get('missing_entities', ['None provided']))}
-Unfaithful statements: {', '.join(feedback.get('faithfulness', {}).get('unfaithful_statements', ['None provided']))}
+Missing key points: {", ".join(feedback.get("completeness", {}).get("missing_key_points", ["None provided"]))}
+Missing entities: {", ".join(feedback.get("entities_recall", {}).get("missing_entities", ["None provided"]))}
+Unfaithful statements: {", ".join(feedback.get("faithfulness", {}).get("unfaithful_statements", ["None provided"]))}
 
 Source documents contain the following information:
 {doc_context}

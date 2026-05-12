@@ -17,14 +17,36 @@ from perspicacite.logging import get_logger
 logger = get_logger("perspicacite.retrieval.hybrid")
 
 
+def resolve_hybrid_weights(
+    request: Any,
+    default: tuple[float, float] = (0.5, 0.5),
+) -> tuple[float, float]:
+    """Return (vector_weight, bm25_weight). Request overrides win; else `default`
+    (which may come from config or determine_weights_with_llm()). If only one of
+    request.vector_weight / request.bm25_weight is set, the other is its complement.
+    Always returns a pair that sums to 1.0 when at least one override is given."""
+    rv = getattr(request, "vector_weight", None)
+    rb = getattr(request, "bm25_weight", None)
+    if rv is None and rb is None:
+        return default
+    if rv is None:
+        rv = max(0.0, 1.0 - (rb or 0.0))
+    if rb is None:
+        rb = max(0.0, 1.0 - (rv or 0.0))
+    total = rv + rb
+    if total <= 0:
+        return default
+    return rv / total, rb / total
+
+
 def normalize_scores(scores: np.ndarray) -> np.ndarray:
     """Normalize scores to 0-1 range using min-max normalization."""
     min_score = scores.min()
     max_score = scores.max()
-    
+
     if max_score == min_score:
         return np.ones_like(scores) * 0.5  # All equal, return middle value
-    
+
     return (scores - min_score) / (max_score - min_score)
 
 
@@ -36,23 +58,23 @@ def combine_scores(
 ) -> np.ndarray:
     """
     Combine vector and BM25 scores with given weights.
-    
+
     Args:
         vector_scores: Vector similarity scores
         bm25_scores: BM25 scores
         vector_weight: Weight for vector scores (0-1)
         bm25_weight: Weight for BM25 scores (0-1)
-        
+
     Returns:
         Combined scores array
     """
     # Normalize both score arrays
     norm_vector = normalize_scores(vector_scores)
     norm_bm25 = normalize_scores(bm25_scores)
-    
+
     # Combine with weights
     combined = vector_weight * norm_vector + bm25_weight * norm_bm25
-    
+
     return combined
 
 
@@ -62,13 +84,13 @@ async def determine_weights_with_llm(
 ) -> Tuple[float, float]:
     """
     Use LLM to determine optimal weights for vector and BM25 retrieval.
-    
+
     Ported from: core/hybrid_retrieval.py::determine_weights_with_llm()
-    
+
     Args:
         query: The search query
         llm: LLM client
-        
+
     Returns:
         Tuple of (vector_weight, bm25_weight)
     """
@@ -89,7 +111,7 @@ Example responses:
 
 DO NOT include any explanation or additional text in your response.
 """
-    
+
     try:
         response = await llm.complete(
             messages=[
@@ -99,24 +121,24 @@ DO NOT include any explanation or additional text in your response.
             temperature=0.3,
             max_tokens=20,
         )
-        
+
         # Clean the response to ensure it only contains numbers and comma
-        cleaned = ''.join(c for c in response.strip() if c.isdigit() or c == ',' or c == '.')
-        parts = cleaned.split(',')
-        
+        cleaned = "".join(c for c in response.strip() if c.isdigit() or c == "," or c == ".")
+        parts = cleaned.split(",")
+
         if len(parts) >= 2:
             vector_weight = float(parts[0])
             bm25_weight = float(parts[1])
-            
+
             # Ensure weights sum to 1.0
             total = vector_weight + bm25_weight
             if total == 0:
                 logger.warning("LLM returned zero weights, using defaults")
                 return 0.5, 0.5
-            
+
             vector_weight /= total
             bm25_weight /= total
-            
+
             logger.info(
                 "hybrid_weights_determined",
                 vector_weight=vector_weight,
@@ -126,7 +148,7 @@ DO NOT include any explanation or additional text in your response.
         else:
             logger.warning("Could not parse LLM weights, using defaults")
             return 0.5, 0.5
-            
+
     except Exception as e:
         logger.warning("hybrid_weight_determination_error", error=str(e))
         return 0.5, 0.5
@@ -138,26 +160,26 @@ def compute_bm25_scores(
 ) -> np.ndarray:
     """
     Compute BM25 scores for documents given a query.
-    
+
     Args:
         documents: List of document texts
         query: Search query
-        
+
     Returns:
         Array of BM25 scores
     """
     # Tokenize documents
     tokenized_docs = [doc.lower().split() for doc in documents]
-    
+
     # Create BM25 index
     bm25 = BM25Okapi(tokenized_docs)
-    
+
     # Tokenize query
     tokenized_query = query.lower().split()
-    
+
     # Get scores
     scores = bm25.get_scores(tokenized_query)
-    
+
     return np.array(scores)
 
 
@@ -172,9 +194,9 @@ async def hybrid_retrieval(
 ) -> List[Tuple[Any, float]]:
     """
     Perform hybrid retrieval combining vector similarity and BM25.
-    
+
     Ported from: core/hybrid_retrieval.py::hybrid_retrieval()
-    
+
     Args:
         query: Search query
         documents: List of documents (with page_content attribute)
@@ -183,39 +205,39 @@ async def hybrid_retrieval(
         bm25_weight: Weight for BM25 scores
         use_llm_weights: Whether to use LLM to determine weights
         llm: LLM client (required if use_llm_weights is True)
-        
+
     Returns:
         List of (document, combined_score) tuples sorted by score
     """
     logger.info("hybrid_retrieval_start", query=query[:100], num_docs=len(documents))
-    
+
     # Determine weights using LLM if requested
     if use_llm_weights and llm is not None:
         vector_weight, bm25_weight = await determine_weights_with_llm(query, llm)
-    
+
     # Extract document texts
     doc_texts = []
     for doc in documents:
-        if hasattr(doc, 'chunk') and hasattr(doc.chunk, 'text'):
+        if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
             text = doc.chunk.text
-        elif hasattr(doc, 'page_content'):
+        elif hasattr(doc, "page_content"):
             text = doc.page_content
-        elif hasattr(doc, 'content'):
+        elif hasattr(doc, "content"):
             text = str(doc.content)
         else:
             text = str(doc)
         doc_texts.append(text)
-    
+
     # Compute BM25 scores
     bm25_scores = compute_bm25_scores(doc_texts, query)
     vector_scores_arr = np.array(vector_scores)
-    
+
     logger.info(
         "hybrid_scores_computed",
         vector_scores_range=(vector_scores_arr.min(), vector_scores_arr.max()),
         bm25_scores_range=(bm25_scores.min(), bm25_scores.max()),
     )
-    
+
     # Combine scores
     combined_scores = combine_scores(
         vector_scores_arr,
@@ -223,31 +245,31 @@ async def hybrid_retrieval(
         vector_weight,
         bm25_weight,
     )
-    
+
     # Create result tuples
     results = list(zip(documents, combined_scores))
-    
+
     # Sort by combined score (descending)
     results.sort(key=lambda x: x[1], reverse=True)
-    
+
     logger.info(
         "hybrid_retrieval_complete",
         top_score=results[0][1] if results else 0,
         vector_weight=vector_weight,
         bm25_weight=bm25_weight,
     )
-    
+
     return results
 
 
 class HybridRetriever:
     """
     Hybrid retriever class that combines vector and BM25 retrieval.
-    
+
     This is a wrapper class that provides a consistent interface for hybrid retrieval,
     matching the expected API from web_app_full.py.
     """
-    
+
     def __init__(
         self,
         vector_weight: float = 0.5,
@@ -256,7 +278,7 @@ class HybridRetriever:
     ):
         """
         Initialize hybrid retriever.
-        
+
         Args:
             vector_weight: Weight for vector scores (0-1)
             bm25_weight: Weight for BM25 scores (0-1)
@@ -265,14 +287,14 @@ class HybridRetriever:
         self.vector_weight = vector_weight
         self.bm25_weight = bm25_weight
         self.use_llm_weights = use_llm_weights
-        
+
         logger.info(
             "hybrid_retriever_initialized",
             vector_weight=vector_weight,
             bm25_weight=bm25_weight,
             use_llm_weights=use_llm_weights,
         )
-    
+
     async def retrieve(
         self,
         query: str,
@@ -282,13 +304,13 @@ class HybridRetriever:
     ) -> List[Tuple[Any, float]]:
         """
         Retrieve documents using hybrid scoring.
-        
+
         Args:
             query: Search query
             documents: List of documents
             vector_scores: Vector similarity scores
             llm: LLM client (required if use_llm_weights is True)
-            
+
         Returns:
             List of (document, combined_score) tuples sorted by score
         """
