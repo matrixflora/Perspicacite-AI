@@ -597,6 +597,93 @@ class TestUnpaywall:
         assert result is None
 
 
+class TestCrossrefEnrichmentInUnifiedPipeline:
+    """Tests for Crossref gap-fill wiring in the unified retrieval pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_discovery_enriched_by_crossref(self, respx_mock, monkeypatch):
+        from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.pipeline.download.base import PaperDiscovery
+
+        doi = "10.1234/sparse"
+
+        async def _sparse_disc(*a, **k):
+            # discovery succeeds but is missing year, journal, abstract
+            return PaperDiscovery(
+                doi=doi,
+                title="Sparse Title",
+                authors=["A. Author"],
+                year=None,
+                abstract=None,
+                is_oa=False,
+                work_type=None,
+                pmcid=None,
+                arxiv_id=None,
+                oa_url=None,
+                unpaywall_pdf_url=None,
+            )
+
+        monkeypatch.setattr(
+            "perspicacite.pipeline.download.unified.discover_paper_sources", _sparse_disc
+        )
+        respx_mock.get(url__regex=r"https://api\.crossref\.org/works/.*").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "published": {"date-parts": [[2019]]},
+                        "container-title": ["Journal X"],
+                        "abstract": "<jats:p>Crossref abstract.</jats:p>",
+                    }
+                },
+            )
+        )
+        result = await retrieve_paper_content(doi)
+        md = result.metadata or {}
+        assert md.get("year") == 2019
+        assert md.get("journal") == "Journal X"
+        # title from discovery preserved (not overwritten):
+        assert md.get("title") == "Sparse Title"
+        # if the result ends up abstract-only, it should carry the Crossref abstract:
+        if result.content_type == "abstract":
+            assert result.abstract == "Crossref abstract."
+
+    @pytest.mark.asyncio
+    async def test_discovery_not_enriched_when_complete(self, respx_mock, monkeypatch):
+        from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.pipeline.download.base import PaperDiscovery
+
+        # discovery has everything -> Crossref must NOT be called
+        crossref_route = respx_mock.get(url__regex=r"https://api\.crossref\.org/works/.*").mock(
+            return_value=httpx.Response(
+                200, json={"message": {"title": ["WRONG"], "published": {"date-parts": [[1999]]}}}
+            )
+        )
+
+        async def _full_disc(*a, **k):
+            return PaperDiscovery(
+                doi="10.1/full",
+                title="Full Title",
+                authors=["X"],
+                year=2021,
+                abstract="A complete abstract that is long enough to be used directly here.",
+                is_oa=False,
+                work_type="article",
+                pmcid=None,
+                arxiv_id=None,
+                oa_url=None,
+                unpaywall_pdf_url=None,
+            )
+
+        monkeypatch.setattr(
+            "perspicacite.pipeline.download.unified.discover_paper_sources", _full_disc
+        )
+        result = await retrieve_paper_content("10.1/full")
+        md = result.metadata or {}
+        assert md.get("year") == 2021 and md.get("title") == "Full Title"
+        assert not crossref_route.called  # no enrichment needed
+
+
 class TestBioRxivInUnifiedPipeline:
     """Tests for bioRxiv/medRxiv wiring in the unified retrieval pipeline."""
 

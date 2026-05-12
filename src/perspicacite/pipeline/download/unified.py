@@ -70,6 +70,8 @@ def _metadata_from_discovery(
         md["arxiv_id"] = disc.arxiv_id
     if disc.pmcid:
         md["pmcid"] = disc.pmcid
+    if getattr(disc, "journal", None):
+        md["journal"] = disc.journal
     if extra:
         md.update(extra)
     return md
@@ -150,6 +152,37 @@ async def retrieve_paper_content(
             is_oa=disc.is_oa,
             has_abstract=disc.abstract is not None,
         )
+
+        # ── Crossref gap-fill (cheap; never overwrites discovery values) ──
+        if any(
+            getattr(disc, f, None) in (None, "", [])
+            for f in ("title", "authors", "year", "abstract")
+        ):
+            try:
+                from .crossref import enrich_from_crossref
+
+                base_meta = {
+                    "title": disc.title,
+                    "authors": disc.authors,
+                    "year": disc.year,
+                    "abstract": disc.abstract,
+                    "journal": getattr(disc, "journal", None),
+                }
+                patch = await enrich_from_crossref(
+                    clean, http_client=client, base_metadata=base_meta, mailto=unpaywall_email
+                )
+                if patch.get("title") and not disc.title:
+                    disc.title = patch["title"]
+                if patch.get("authors") and not disc.authors:
+                    disc.authors = patch["authors"]
+                if patch.get("year") and not disc.year:
+                    disc.year = patch["year"]
+                if patch.get("abstract") and not disc.abstract:
+                    disc.abstract = patch["abstract"]
+                if patch.get("journal") and not getattr(disc, "journal", None):
+                    disc.journal = patch["journal"]
+            except Exception as e:
+                logger.warning("crossref_enrich_skipped", doi=clean, error=str(e))
 
         # ── STEP 2: ALTERNATIVE ENDPOINT (before structured/PDF) ──────
         if alternative_endpoint and pdf_parser is not None:
@@ -274,7 +307,13 @@ async def retrieve_paper_content(
 
         # ── STEP 5: DISCARD ─────────────────────────────────────────────
         logger.warning("unified_no_content", doi=clean)
-        return _none_result(clean)
+        return PaperContent(
+            success=False,
+            doi=clean,
+            content_type="none",
+            content_source="none",
+            metadata=_metadata_from_discovery(disc, clean),
+        )
 
     except Exception as e:
         logger.error("unified_pipeline_error", doi=clean, error=str(e))
