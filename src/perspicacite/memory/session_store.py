@@ -359,6 +359,14 @@ class SessionStore:
             if not row:
                 return False
 
+            # Purge FTS index rows for this conversation before deleting
+            if getattr(self, "_fts_available", False):
+                with contextlib.suppress(Exception):
+                    await db.execute(
+                        "DELETE FROM messages_fts WHERE conversation_id = ?",
+                        (conv_id,),
+                    )
+
             # Delete conversation (messages will be cascade deleted)
             await db.execute(
                 "DELETE FROM conversations WHERE id = ?",
@@ -378,6 +386,11 @@ class SessionStore:
             # Get count before deletion
             row = await db.execute_fetchall("SELECT COUNT(*) as count FROM conversations")
             count = row[0]["count"] if row else 0
+
+            # Purge the entire FTS index
+            if getattr(self, "_fts_available", False):
+                with contextlib.suppress(Exception):
+                    await db.execute("DELETE FROM messages_fts")
 
             # Delete all conversations (messages will be cascade deleted)
             await db.execute("DELETE FROM conversations")
