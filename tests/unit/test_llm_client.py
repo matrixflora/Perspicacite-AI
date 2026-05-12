@@ -52,19 +52,22 @@ class TestAsyncLLMClient:
     @pytest.mark.asyncio
     async def test_complete_mock(self, client, monkeypatch):
         """Test completion with mocked LiteLLM."""
-        # Mock the litellm response
-        class MockResponse:
+        # Mock the litellm response. LiteLLM's ModelResponse extends dict so
+        # client.py accesses usage via response.get("usage", {}). We replicate
+        # that by making MockResponse a dict subclass.
+        class MockResponse(dict):
             class Choice:
                 class Message:
                     content = "Test response"
                 message = Message()
-            choices = [Choice()]
-            usage = {"prompt_tokens": 10, "completion_tokens": 5}
+
+            def __init__(self):
+                super().__init__(usage={"prompt_tokens": 10, "completion_tokens": 5})
+                self.choices = [self.Choice()]
 
         async def mock_acompletion(*args, **kwargs):
             return MockResponse()
 
-        # Mock litellm module
         import litellm
         original = litellm.acompletion
         litellm.acompletion = mock_acompletion

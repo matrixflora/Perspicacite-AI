@@ -72,8 +72,9 @@ class TestProviderValidation:
         with pytest.raises(ValueError, match="Unknown provider"):
             validate_provider_config("unknown", "model")
 
-    def test_validate_unknown_model(self):
-        """Test validating unknown model."""
+    def test_validate_unknown_model(self, monkeypatch):
+        """Test validating unknown model (API key must be set so model check runs)."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         with pytest.raises(ValueError, match="Unknown model"):
             validate_provider_config("anthropic", "unknown-model")
 

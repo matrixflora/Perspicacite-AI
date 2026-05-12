@@ -115,8 +115,8 @@ class TestCreateEmbeddingProvider:
     """Tests for provider factory."""
 
     def test_create_openai_model(self):
-        """Test creating provider for OpenAI model."""
-        provider = create_embedding_provider("text-embedding-3-small")
+        """Test creating provider for OpenAI model without local fallback."""
+        provider = create_embedding_provider("text-embedding-3-small", use_local_fallback=False)
         assert isinstance(provider, LiteLLMEmbeddingProvider)
         assert provider.model_name == "text-embedding-3-small"
 

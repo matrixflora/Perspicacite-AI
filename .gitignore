@@ -122,3 +122,6 @@ enrich_kb_metadata.py
 # scratch artifacts (per-paper experiment dirs, hack scripts, intermediate
 # .bib files, downloaded PDFs).
 old_tools/
+
+# Local Claude Code MCP config (server must be running; not for CI)
+.mcp.json
