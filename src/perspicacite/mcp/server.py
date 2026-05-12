@@ -12,6 +12,7 @@ Tools exposed:
 - create_knowledge_base: Create a new KB
 - add_papers_to_kb: Add papers to a KB
 - generate_report: Synthesize a research report from a KB
+- screen_papers: Score candidate papers by relevance to a query
 """
 
 from __future__ import annotations
@@ -92,6 +93,7 @@ class MCPState:
 
         # Tool registry for RAG engine
         from perspicacite.rag.tools import ToolRegistry
+
         self.tool_registry = ToolRegistry()
 
         self.initialized = True
@@ -184,8 +186,7 @@ async def search_literature(
             }
             if p.authors:
                 pd["authors"] = [
-                    a.family if hasattr(a, "family") and a.family else str(a)
-                    for a in p.authors
+                    a.family if hasattr(a, "family") and a.family else str(a) for a in p.authors
                 ]
             results.append(pd)
 
@@ -263,13 +264,15 @@ async def get_paper_content(
             return _json_ok(resp)
 
         if result.content_type == "abstract":
-            return _json_ok({
-                "doi": doi,
-                "content_type": "abstract",
-                "content_source": result.content_source,
-                "abstract": result.abstract,
-                "note": "Full text not available; returning abstract only",
-            })
+            return _json_ok(
+                {
+                    "doi": doi,
+                    "content_type": "abstract",
+                    "content_source": result.content_source,
+                    "abstract": result.abstract,
+                    "note": "Full text not available; returning abstract only",
+                }
+            )
 
         return _json_error(f"Could not retrieve content for DOI: {doi}")
 
@@ -320,8 +323,12 @@ async def get_paper_references(
         pdf_kwargs = {}
         if pdf_config:
             for key in (
-                "unpaywall_email", "wiley_tdm_token", "elsevier_api_key",
-                "aaas_api_key", "rsc_api_key", "springer_api_key",
+                "unpaywall_email",
+                "wiley_tdm_token",
+                "elsevier_api_key",
+                "aaas_api_key",
+                "rsc_api_key",
+                "springer_api_key",
             ):
                 val = getattr(pdf_config, key, None)
                 if val:
@@ -329,7 +336,10 @@ async def get_paper_references(
 
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
             await retrieve_paper_content(
-                doi, http_client=client, pdf_parser=state.pdf_parser, **pdf_kwargs,
+                doi,
+                http_client=client,
+                pdf_parser=state.pdf_parser,
+                **pdf_kwargs,
             )
 
         # Try cache again after content fetch
@@ -337,12 +347,14 @@ async def get_paper_references(
         if refs:
             return _json_ok({"doi": doi, "references": refs, "total": len(refs)})
 
-        return _json_ok({
-            "doi": doi,
-            "references": [],
-            "total": 0,
-            "note": "References not available — JATS XML extraction only works for PMC Open Access papers",
-        })
+        return _json_ok(
+            {
+                "doi": doi,
+                "references": [],
+                "total": 0,
+                "note": "References not available — JATS XML extraction only works for PMC Open Access papers",
+            }
+        )
 
     except Exception as e:
         logger.error("mcp_get_paper_references_error", doi=doi, error=str(e))
@@ -370,13 +382,15 @@ async def list_knowledge_bases() -> str:
         kbs = await state.session_store.list_kbs()
         result = []
         for kb in kbs:
-            result.append({
-                "name": kb.name,
-                "description": kb.description,
-                "paper_count": kb.paper_count,
-                "chunk_count": kb.chunk_count,
-                "created_at": str(kb.created_at) if hasattr(kb, "created_at") else None,
-            })
+            result.append(
+                {
+                    "name": kb.name,
+                    "description": kb.description,
+                    "paper_count": kb.paper_count,
+                    "chunk_count": kb.chunk_count,
+                    "created_at": str(kb.created_at) if hasattr(kb, "created_at") else None,
+                }
+            )
         return _json_ok({"knowledge_bases": result})
     except Exception as e:
         logger.error("mcp_list_kbs_error", error=str(e))
@@ -435,20 +449,24 @@ async def search_knowledge_base(
         chunks = []
         for r in results:
             meta = r.metadata if hasattr(r, "metadata") else {}
-            chunks.append({
-                "paper_id": meta.get("paper_id"),
-                "title": meta.get("title"),
-                "section": meta.get("section"),
-                "chunk_text": r.text if hasattr(r, "text") else str(r),
-                "relevance_score": r.score if hasattr(r, "score") else None,
-                "doi": meta.get("doi"),
-            })
+            chunks.append(
+                {
+                    "paper_id": meta.get("paper_id"),
+                    "title": meta.get("title"),
+                    "section": meta.get("section"),
+                    "chunk_text": r.text if hasattr(r, "text") else str(r),
+                    "relevance_score": r.score if hasattr(r, "score") else None,
+                    "doi": meta.get("doi"),
+                }
+            )
 
-        return _json_ok({
-            "query": query,
-            "kb_name": kb_name,
-            "results": chunks,
-        })
+        return _json_ok(
+            {
+                "query": query,
+                "kb_name": kb_name,
+                "results": chunks,
+            }
+        )
 
     except Exception as e:
         logger.error("mcp_search_kb_error", kb_name=kb_name, error=str(e))
@@ -510,13 +528,15 @@ async def create_knowledge_base(
         await state.session_store.save_kb_metadata(kb)
 
         logger.info("mcp_create_kb", name=name)
-        return _json_ok({
-            "name": name,
-            "description": kb.description,
-            "collection_name": collection_name,
-            "paper_count": 0,
-            "chunk_count": 0,
-        })
+        return _json_ok(
+            {
+                "name": name,
+                "description": kb.description,
+                "collection_name": collection_name,
+                "paper_count": 0,
+                "chunk_count": 0,
+            }
+        )
 
     except Exception as e:
         logger.error("mcp_create_kb_error", name=name, error=str(e))
@@ -566,20 +586,20 @@ async def add_papers_to_kb(
         # Convert paper dicts to Paper models
         paper_models: list[Paper] = []
         for pd in papers:
-            paper_id = pd.get("doi") or hashlib.md5(
-                pd.get("title", "").encode()
-            ).hexdigest()[:12]
+            paper_id = pd.get("doi") or hashlib.md5(pd.get("title", "").encode()).hexdigest()[:12]
 
             authors = []
             for a in pd.get("authors", []):
                 if isinstance(a, str):
                     authors.append(Author(family=a, given="", name=a))
                 elif isinstance(a, dict):
-                    authors.append(Author(
-                        family=a.get("family", ""),
-                        given=a.get("given", ""),
-                        name=a.get("name", ""),
-                    ))
+                    authors.append(
+                        Author(
+                            family=a.get("family", ""),
+                            given=a.get("given", ""),
+                            name=a.get("name", ""),
+                        )
+                    )
 
             paper = Paper(
                 id=paper_id,
@@ -664,12 +684,14 @@ async def add_papers_to_kb(
             chunks=chunks_added,
         )
 
-        return _json_ok({
-            "kb_name": kb_name,
-            "added_papers": len(paper_models),
-            "added_chunks": chunks_added,
-            "pdf_download": pdf_stats,
-        })
+        return _json_ok(
+            {
+                "kb_name": kb_name,
+                "added_papers": len(paper_models),
+                "added_chunks": chunks_added,
+                "pdf_download": pdf_stats,
+            }
+        )
 
     except Exception as e:
         logger.error("mcp_add_papers_error", kb_name=kb_name, error=str(e))
@@ -745,34 +767,126 @@ async def generate_report(
         async for event in engine.query_stream(rag_request):
             if event.event == "content":
                 import json as _json
+
                 payload = _json.loads(event.data)
                 report_text += payload.get("delta", "")
             elif event.event == "source":
                 import json as _json
+
                 src = _json.loads(event.data)
-                sources.append({
-                    "title": src.get("title"),
-                    "authors": src.get("authors"),
-                    "year": src.get("year"),
-                    "doi": src.get("doi"),
-                    "relevance_score": src.get("relevance_score"),
-                    "section": src.get("section"),
-                })
+                sources.append(
+                    {
+                        "title": src.get("title"),
+                        "authors": src.get("authors"),
+                        "year": src.get("year"),
+                        "doi": src.get("doi"),
+                        "relevance_score": src.get("relevance_score"),
+                        "section": src.get("section"),
+                    }
+                )
 
         logger.info("mcp_generate_report", query=query, kb_name=kb_name, mode=mode)
 
-        return _json_ok({
-            "query": query,
-            "kb_name": kb_name,
-            "mode": mode,
-            "report": report_text,
-            "sources": sources,
-            "papers_used": len(sources),
-        })
+        return _json_ok(
+            {
+                "query": query,
+                "kb_name": kb_name,
+                "mode": mode,
+                "report": report_text,
+                "sources": sources,
+                "papers_used": len(sources),
+            }
+        )
 
     except Exception as e:
         logger.error("mcp_generate_report_error", query=query, error=str(e))
         return _json_error(f"Report generation failed: {e}")
+
+
+# =============================================================================
+# Tool 9: screen_papers
+# =============================================================================
+
+
+@mcp.tool
+async def screen_papers(
+    candidates: list[str],
+    query: str,
+    method: str = "bm25",
+    threshold: float = 0.3,
+    max_results: int = 50,
+) -> str:
+    """
+    Score candidate papers (DOIs or titles) by relevance to a research query.
+
+    Args:
+        candidates: List of DOIs (e.g. "10.1234/abc") or paper titles to screen.
+        query: The research query / topic to screen against.
+        method: "bm25" (fast, no LLM) or "llm" (LLM-rated 0-1 with one-line reasons).
+        threshold: Keep papers scoring >= this value (0..1).
+        max_results: Cap on the number of returned items.
+
+    Returns:
+        JSON with keys: query, method, screened (list of doi/title/score/kept/reason).
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+    try:
+        import httpx
+        from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.search.screening import screen_papers as _bm25
+        from perspicacite.search.screening import screen_papers_llm as _llm
+
+        items: list[dict] = []
+        # Only spin up an HTTP client if at least one candidate looks like a DOI.
+        doi_like = [c for c in candidates if c.strip().lower().startswith("10.") or "doi.org/" in c]
+        if doi_like:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                for c in candidates:
+                    if c.strip().lower().startswith("10.") or "doi.org/" in c:
+                        doi = c.strip().replace("https://doi.org/", "")
+                        try:
+                            r = await retrieve_paper_content(
+                                doi, http_client=client, pdf_parser=state.pdf_parser
+                            )
+                            md = r.metadata or {}
+                            items.append(
+                                {
+                                    "doi": doi,
+                                    "title": md.get("title") or doi,
+                                    "abstract": r.abstract or md.get("abstract") or "",
+                                }
+                            )
+                        except Exception:
+                            items.append({"doi": doi, "title": doi, "abstract": ""})
+                    else:
+                        items.append({"title": c, "abstract": ""})
+        else:
+            items = [{"title": c, "abstract": ""} for c in candidates]
+
+        if method == "llm":
+            results = await _llm(items, query=query, llm=state.llm_client, threshold=threshold)
+        else:
+            results = _bm25(items, reference=query, method="bm25", threshold=threshold)
+
+        screened = []
+        for r in results[:max_results]:
+            entry: dict = {"score": r.score, "kept": r.kept, "reason": r.reason}
+            if r.item.get("doi"):
+                entry["doi"] = r.item["doi"]
+            entry["title"] = r.item.get("title")
+            screened.append(entry)
+        logger.info(
+            "mcp_screen_papers",
+            n=len(candidates),
+            method=method,
+            kept=sum(e["kept"] for e in screened),
+        )
+        return _json_ok({"query": query, "method": method, "screened": screened})
+    except Exception as e:
+        logger.error("mcp_screen_papers_error", error=str(e))
+        return _json_error(f"Screening failed: {e}")
 
 
 # =============================================================================
@@ -783,18 +897,21 @@ async def generate_report(
 @mcp.resource("perspicacite://info")
 async def get_info() -> str:
     """Perspicacité capabilities and status."""
-    return json.dumps({
-        "name": "Perspicacité v2",
-        "description": "AI-powered scientific literature research assistant",
-        "tools": [
-            "search_literature",
-            "get_paper_content",
-            "get_paper_references",
-            "list_knowledge_bases",
-            "search_knowledge_base",
-            "create_knowledge_base",
-            "add_papers_to_kb",
-            "generate_report",
-        ],
-        "initialized": mcp_state.initialized,
-    })
+    return json.dumps(
+        {
+            "name": "Perspicacité v2",
+            "description": "AI-powered scientific literature research assistant",
+            "tools": [
+                "search_literature",
+                "get_paper_content",
+                "get_paper_references",
+                "list_knowledge_bases",
+                "search_knowledge_base",
+                "create_knowledge_base",
+                "add_papers_to_kb",
+                "generate_report",
+                "screen_papers",
+            ],
+            "initialized": mcp_state.initialized,
+        }
+    )
