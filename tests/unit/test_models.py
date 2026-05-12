@@ -207,3 +207,10 @@ class TestRAGMode:
         assert RAGMode.ADVANCED == "advanced"
         assert RAGMode.PROFOUND == "profound"
         assert RAGMode.AGENTIC == "agentic"
+
+
+def test_contradiction_mode_enum():
+    from perspicacite.models.rag import RAGMode
+
+    assert RAGMode.CONTRADICTION.value == "contradiction"
+    assert RAGMode("contradiction") is RAGMode.CONTRADICTION

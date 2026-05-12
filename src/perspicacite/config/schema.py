@@ -192,6 +192,19 @@ class RAGModesConfig(BaseModel):
         )
     )
 
+    # Contradiction: Identify agreement / disagreement / open questions across papers
+    contradiction: RAGModeSettings = Field(
+        default_factory=lambda: RAGModeSettings(
+            max_iterations=1,
+            tools=["kb_search"],
+            rerank=True,
+            query_expansion=True,
+            enable_planning=False,
+            enable_reflection=False,
+            use_hybrid=True,
+        )
+    )
+
 
 class SciLexAPIConfig(BaseModel):
     """Configuration for a SciLEx API."""
