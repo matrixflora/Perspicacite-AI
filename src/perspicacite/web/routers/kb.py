@@ -668,3 +668,35 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
         "pdf_download": dl,
         "kb": name,
     }
+
+
+@router.get("/api/paper")
+async def get_paper_detail(doi: str):
+    """Discovery metadata + abstract + available content type for a DOI.
+
+    Cheap path: live-fetch via the unified pipeline (no per-DOI PaperContent
+    file cache is implemented yet — discovery + abstract is fast, ~1-2 s).
+    """
+    if not doi or not doi.strip():
+        raise HTTPException(status_code=400, detail="doi query param required")
+    doi = doi.strip().replace("https://doi.org/", "")
+    from perspicacite.pipeline.download import retrieve_paper_content
+
+    pdf_kw = _get_pdf_fallback_kwargs(app_state.config.pdf_download if app_state.config else None)
+    try:
+        result = await retrieve_paper_content(doi, pdf_parser=app_state.pdf_parser, **pdf_kw)
+    except Exception as e:
+        return {"doi": doi, "error": str(e), "content_type": "none"}
+    md = result.metadata or {}
+    return {
+        "doi": doi,
+        "title": md.get("title"),
+        "authors": md.get("authors") or [],
+        "year": md.get("year"),
+        "journal": md.get("journal"),
+        "abstract": result.abstract or md.get("abstract"),
+        "content_type": result.content_type,
+        "content_source": result.content_source,
+        "has_full_text": bool(result.full_text),
+        "references_count": len(result.references) if result.references else 0,
+    }
