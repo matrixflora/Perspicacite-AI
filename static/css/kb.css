@@ -192,3 +192,142 @@
 .modal-cancel { background: #e2e8f0; border: none; color: var(--text-main); }
 .modal-confirm { background: #dc2626; color: white; border: none; }
 .modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── KB Statistics Panel ─────────────────────────────────────────────────── */
+
+/* Tab strip inside the KB detail area (Stats tab) */
+.kb-detail-tab-strip {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    margin: 10px 0 10px;
+}
+.kb-detail-tab-btn {
+    padding: 5px 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-top-left-radius: var(--radius);
+    border-top-right-radius: var(--radius);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: 'Chivo', sans-serif;
+    margin-bottom: -1px;
+    transition: background 0.15s, color 0.15s;
+}
+.kb-detail-tab-btn:hover:not(.active) {
+    color: var(--text-main);
+    background: var(--bg-card);
+}
+.kb-detail-tab-btn.active {
+    background: var(--secondary);
+    color: white;
+    border-color: var(--secondary);
+    font-weight: 600;
+}
+
+#kb-stats-container {
+    font-size: 12px;
+    color: var(--text-main);
+}
+
+.kb-stats-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.kb-stats-loading,
+.kb-stats-empty,
+.kb-stats-error {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 6px 0;
+}
+.kb-stats-error { color: #dc2626; }
+
+.kb-stats-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+.kb-stats-name {
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 13px;
+    margin-right: 2px;
+}
+.kb-stats-pill {
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 99px;
+    background: var(--secondary);
+    color: white;
+    font-weight: 500;
+}
+.kb-stats-pill-muted {
+    background: #e2e8f0;
+    color: var(--text-muted);
+}
+
+.kb-stats-section {
+    padding: 4px 0;
+}
+.kb-stats-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 0 0 6px;
+}
+
+/* Inline SVG bar chart */
+.kb-stats-chart {
+    display: block;
+    overflow: visible;
+}
+.kb-stats-bar {
+    fill: var(--secondary);
+    opacity: 0.85;
+    transition: opacity 0.2s;
+}
+.kb-stats-bar:hover { opacity: 1; }
+.kb-stats-bar-label {
+    font-size: 8px;
+    fill: var(--text-muted);
+}
+.kb-stats-year-label {
+    font-size: 8px;
+    fill: var(--text-muted);
+}
+
+.kb-stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.kb-stats-table th,
+.kb-stats-table td {
+    padding: 4px 6px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+.kb-stats-table th {
+    font-weight: 600;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+.kb-stats-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+
+.kb-stats-note {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin: 2px 0 0;
+}

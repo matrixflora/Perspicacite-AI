@@ -12,7 +12,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = REPO_ROOT / "static"
 
 CSS_FILES = ["theme", "base", "layout", "chat", "kb", "survey"]
-JS_FILES = ["utils", "databases", "mode", "conversations", "chat", "kb", "survey", "main"]
+JS_FILES = [
+    "utils",
+    "databases",
+    "mode",
+    "conversations",
+    "chat",
+    "kb",
+    "kb_stats",
+    "paper_detail",
+    "survey",
+    "main",
+]
 
 
 @pytest.fixture
@@ -95,3 +106,27 @@ def test_no_inline_script(index_html):
     pattern = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>.*?</script>", re.DOTALL)
     matches = pattern.findall(index_html)
     assert not matches, f"Found {len(matches)} inline <script> blocks"
+
+
+def test_phase5_static_assets(index_html):
+    """Phase-5 new JS files exist on disk and are referenced from index.html."""
+    assert (REPO_ROOT / "static" / "js" / "kb_stats.js").exists(), "kb_stats.js missing from disk"
+    assert "kb_stats.js" in index_html, "kb_stats.js not referenced in index.html"
+
+    assert (REPO_ROOT / "static" / "js" / "paper_detail.js").exists(), (
+        "paper_detail.js missing from disk"
+    )
+    assert "paper_detail.js" in index_html, "paper_detail.js not referenced in index.html"
+
+    assert "contradiction" in (REPO_ROOT / "static" / "js" / "mode.js").read_text(), (
+        "mode.js does not contain 'contradiction'"
+    )
+
+
+def test_phase5_html_elements(index_html):
+    """Phase-5 required DOM elements are present in index.html."""
+    assert 'id="paper-detail-panel"' in index_html, "#paper-detail-panel div missing"
+    assert 'id="kb-stats-container"' in index_html, "#kb-stats-container div missing"
+    assert 'id="conv-search-input"' in index_html, "#conv-search-input missing"
+    assert 'id="advanced-options-details"' in index_html, "#advanced-options-details missing"
+    assert 'value="contradiction"' in index_html, "contradiction option missing from mode dropdown"
