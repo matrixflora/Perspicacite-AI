@@ -86,10 +86,12 @@ class TestAlternativeEndpoint:
         mock_pdf_response.raise_for_status = Mock()
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[
-            mock_response,
-            mock_pdf_response,
-        ])
+        mock_client.get = AsyncMock(
+            side_effect=[
+                mock_response,
+                mock_pdf_response,
+            ]
+        )
 
         result = await get_pdf_from_alternative_endpoint(
             "10.1234/test",
@@ -120,10 +122,12 @@ class TestAlternativeEndpoint:
         mock_pdf_response.raise_for_status = Mock()
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[
-            mock_response,
-            mock_pdf_response,
-        ])
+        mock_client.get = AsyncMock(
+            side_effect=[
+                mock_response,
+                mock_pdf_response,
+            ]
+        )
 
         result = await get_pdf_from_alternative_endpoint(
             "10.1234/test",
@@ -153,10 +157,12 @@ class TestAlternativeEndpoint:
         mock_pdf_response.raise_for_status = Mock()
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[
-            mock_response,
-            mock_pdf_response,
-        ])
+        mock_client.get = AsyncMock(
+            side_effect=[
+                mock_response,
+                mock_pdf_response,
+            ]
+        )
 
         result = await get_pdf_from_alternative_endpoint(
             "10.1234/test",
@@ -223,13 +229,22 @@ class TestRetrievePaperContent:
         # Mock OpenAlex returning an abstract
         mock_oa_response = Mock()
         mock_oa_response.status_code = 200
-        mock_oa_response.json = Mock(return_value={
-            "title": "Test Paper",
-            "type": "article",
-            "open_access": {"is_oa": False, "oa_url": None},
-            "ids": {},
-            "abstract_inverted_index": {"Test": [0], "abstract": [1], "text": [2], "for": [3], "testing": [4], "purposes": [5]},
-        })
+        mock_oa_response.json = Mock(
+            return_value={
+                "title": "Test Paper",
+                "type": "article",
+                "open_access": {"is_oa": False, "oa_url": None},
+                "ids": {},
+                "abstract_inverted_index": {
+                    "Test": [0],
+                    "abstract": [1],
+                    "text": [2],
+                    "for": [3],
+                    "testing": [4],
+                    "purposes": [5],
+                },
+            }
+        )
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_oa_response)
@@ -276,32 +291,42 @@ class TestRetrievePaperContent:
         # Mock OpenAlex returning PMCID
         mock_oa_response = Mock()
         mock_oa_response.status_code = 200
-        mock_oa_response.json = Mock(return_value={
-            "title": "PMC Paper",
-            "type": "article",
-            "open_access": {"is_oa": True, "oa_url": None},
-            "ids": {"pmcid": "PMC12345"},
-            "abstract_inverted_index": None,
-        })
+        mock_oa_response.json = Mock(
+            return_value={
+                "title": "PMC Paper",
+                "type": "article",
+                "open_access": {"is_oa": True, "oa_url": None},
+                "ids": {"pmcid": "PMC12345"},
+                "abstract_inverted_index": None,
+            }
+        )
 
         # Mock Unpaywall
         mock_up_response = Mock()
         mock_up_response.status_code = 200
-        mock_up_response.json = Mock(return_value={
-            "is_oa": True,
-            "best_oa_location": None,
-            "oa_locations": [],
-        })
+        mock_up_response.json = Mock(
+            return_value={
+                "is_oa": True,
+                "best_oa_location": None,
+                "oa_locations": [],
+            }
+        )
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=[mock_oa_response, mock_up_response])
 
         # Mock PMC to return structured text
-        with patch(
-            "perspicacite.pipeline.download.unified.get_fulltext_from_pmc",
-            new_callable=AsyncMock,
-            return_value=("This is a long full text from PMC " * 20, {"Introduction": "Some intro text"}),
-        ), patch("perspicacite.pipeline.download.discovery._CACHE_DIR", tmp_path):
+        with (
+            patch(
+                "perspicacite.pipeline.download.unified.get_fulltext_from_pmc",
+                new_callable=AsyncMock,
+                return_value=(
+                    "This is a long full text from PMC " * 20,
+                    {"Introduction": "Some intro text"},
+                ),
+            ),
+            patch("perspicacite.pipeline.download.discovery._CACHE_DIR", tmp_path),
+        ):
             result = await retrieve_paper_content(
                 doi,
                 http_client=mock_client,
@@ -325,15 +350,17 @@ class TestRetrievePaperContent:
         # fresh arXiv preprint that OpenAlex has only partially indexed.
         mock_oa_response = Mock()
         mock_oa_response.status_code = 200
-        mock_oa_response.json = Mock(return_value={
-            "title": "Heterogeneous Scientific Foundation Model Collaboration",
-            "type": "preprint",
-            "open_access": {"is_oa": False, "oa_url": None},
-            "ids": {},
-            "authorships": [],
-            "publication_year": None,
-            "abstract_inverted_index": None,
-        })
+        mock_oa_response.json = Mock(
+            return_value={
+                "title": "Heterogeneous Scientific Foundation Model Collaboration",
+                "type": "preprint",
+                "open_access": {"is_oa": False, "oa_url": None},
+                "ids": {},
+                "authorships": [],
+                "publication_year": None,
+                "abstract_inverted_index": None,
+            }
+        )
 
         # arXiv Atom API returns full metadata for the same paper.
         mock_atom_response = Mock()
@@ -370,15 +397,17 @@ class TestRetrievePaperContent:
 
         mock_oa_response = Mock()
         mock_oa_response.status_code = 200
-        mock_oa_response.json = Mock(return_value={
-            "title": "Already Complete",
-            "type": "preprint",
-            "open_access": {"is_oa": False, "oa_url": None},
-            "ids": {},
-            "authorships": [{"author": {"display_name": "Solo Author"}}],
-            "publication_year": 2025,
-            "abstract_inverted_index": None,
-        })
+        mock_oa_response.json = Mock(
+            return_value={
+                "title": "Already Complete",
+                "type": "preprint",
+                "open_access": {"is_oa": False, "oa_url": None},
+                "ids": {},
+                "authorships": [{"author": {"display_name": "Solo Author"}}],
+                "publication_year": 2025,
+                "abstract_inverted_index": None,
+            }
+        )
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=[mock_oa_response])
@@ -438,18 +467,20 @@ class TestRetrievePaperContent:
 
         mock_oa_response = Mock()
         mock_oa_response.status_code = 200
-        mock_oa_response.json = Mock(return_value={
-            "title": "Example PMC Paper",
-            "type": "article",
-            "publication_year": 2024,
-            "authorships": [
-                {"author": {"display_name": "Alice Author"}},
-                {"author": {"display_name": "Bob Co-Author"}},
-            ],
-            "open_access": {"is_oa": True, "oa_url": None},
-            "ids": {"pmcid": "PMC9999"},
-            "abstract_inverted_index": None,
-        })
+        mock_oa_response.json = Mock(
+            return_value={
+                "title": "Example PMC Paper",
+                "type": "article",
+                "publication_year": 2024,
+                "authorships": [
+                    {"author": {"display_name": "Alice Author"}},
+                    {"author": {"display_name": "Bob Co-Author"}},
+                ],
+                "open_access": {"is_oa": True, "oa_url": None},
+                "ids": {"pmcid": "PMC9999"},
+                "abstract_inverted_index": None,
+            }
+        )
         mock_up_response = Mock()
         mock_up_response.status_code = 200
         mock_up_response.json = Mock(return_value={"is_oa": True, "oa_locations": []})
@@ -457,11 +488,14 @@ class TestRetrievePaperContent:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=[mock_oa_response, mock_up_response])
 
-        with patch(
-            "perspicacite.pipeline.download.unified.get_fulltext_from_pmc",
-            new_callable=AsyncMock,
-            return_value=("Full text body. " * 20, {"Introduction": "intro"}),
-        ), patch("perspicacite.pipeline.download.discovery._CACHE_DIR", tmp_path):
+        with (
+            patch(
+                "perspicacite.pipeline.download.unified.get_fulltext_from_pmc",
+                new_callable=AsyncMock,
+                return_value=("Full text body. " * 20, {"Introduction": "intro"}),
+            ),
+            patch("perspicacite.pipeline.download.discovery._CACHE_DIR", tmp_path),
+        ):
             result = await retrieve_paper_content(doi, http_client=mock_client)
 
         assert result.success is True
@@ -480,13 +514,23 @@ class TestRetrievePaperContent:
         # OpenAlex returns OA URL but no parser
         mock_oa_response = Mock()
         mock_oa_response.status_code = 200
-        mock_oa_response.json = Mock(return_value={
-            "title": "OA Paper",
-            "type": "article",
-            "open_access": {"is_oa": True, "oa_url": "https://publisher.com/paper.pdf"},
-            "ids": {},
-            "abstract_inverted_index": {"This": [0], "is": [1], "a": [2], "longer": [3], "abstract": [4], "for": [5], "testing": [6]},
-        })
+        mock_oa_response.json = Mock(
+            return_value={
+                "title": "OA Paper",
+                "type": "article",
+                "open_access": {"is_oa": True, "oa_url": "https://publisher.com/paper.pdf"},
+                "ids": {},
+                "abstract_inverted_index": {
+                    "This": [0],
+                    "is": [1],
+                    "a": [2],
+                    "longer": [3],
+                    "abstract": [4],
+                    "for": [5],
+                    "testing": [6],
+                },
+            }
+        )
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_oa_response)
@@ -515,12 +559,12 @@ class TestUnpaywall:
     async def test_get_open_access_url_found(self, test_email):
         """Test finding OA URL via Unpaywall."""
         mock_response = Mock()
-        mock_response.json = Mock(return_value={
-            "is_oa": True,
-            "best_oa_location": {
-                "pdf_url": "https://oa.example.com/paper.pdf"
+        mock_response.json = Mock(
+            return_value={
+                "is_oa": True,
+                "best_oa_location": {"pdf_url": "https://oa.example.com/paper.pdf"},
             }
-        })
+        )
         mock_response.raise_for_status = Mock()
 
         mock_client = AsyncMock()
@@ -538,10 +582,7 @@ class TestUnpaywall:
     async def test_get_open_access_url_not_found(self, test_email):
         """Test when no OA version available."""
         mock_response = Mock()
-        mock_response.json = Mock(return_value={
-            "is_oa": False,
-            "best_oa_location": None
-        })
+        mock_response.json = Mock(return_value={"is_oa": False, "best_oa_location": None})
         mock_response.raise_for_status = Mock()
 
         mock_client = AsyncMock()
@@ -554,3 +595,91 @@ class TestUnpaywall:
         )
 
         assert result is None
+
+
+class TestBioRxivInUnifiedPipeline:
+    """Tests for bioRxiv/medRxiv wiring in the unified retrieval pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_retrieve_paper_content_uses_biorxiv(self, respx_mock, monkeypatch):
+        """When DOI is a bioRxiv DOI and discovery returns nothing, the pipeline
+        should call the bioRxiv API and return its abstract."""
+        doi = "10.1101/2021.01.01.425001"
+
+        async def _empty_discovery(*a, **k):
+            return PaperDiscovery(
+                doi=doi,
+                title=None,
+                authors=[],
+                year=None,
+                abstract=None,
+                is_oa=False,
+                work_type=None,
+                pmcid=None,
+                arxiv_id=None,
+                oa_url=None,
+                unpaywall_pdf_url=None,
+            )
+
+        monkeypatch.setattr(
+            "perspicacite.pipeline.download.unified.discover_paper_sources",
+            _empty_discovery,
+        )
+
+        respx_mock.get(url__regex=r"https://api\.biorxiv\.org/details/.*").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "messages": [{"status": "ok"}],
+                    "collection": [
+                        {
+                            "doi": doi,
+                            "title": "BR Preprint",
+                            "authors": "X",
+                            "date": "2021-01-01",
+                            "abstract": "biorxiv abstract text",
+                            "server": "biorxiv",
+                            "jatsxml": "",
+                        }
+                    ],
+                },
+            )
+        )
+
+        result = await retrieve_paper_content(doi)
+
+        assert result.success
+        assert result.content_source in ("biorxiv", "medrxiv")
+        assert result.abstract == "biorxiv abstract text"
+        assert result.content_type in ("abstract", "structured")
+
+    @pytest.mark.asyncio
+    async def test_retrieve_paper_content_skips_biorxiv_for_normal_doi(self, monkeypatch):
+        """For a non-bioRxiv DOI, the pipeline must not call the bioRxiv API
+        and should fall through to discovery's abstract."""
+
+        async def _disc(*a, **k):
+            return PaperDiscovery(
+                doi="10.1/x",
+                title="T",
+                authors=["A"],
+                year=2020,
+                abstract="An abstract longer than twenty chars here.",
+                is_oa=False,
+                work_type=None,
+                pmcid=None,
+                arxiv_id=None,
+                oa_url=None,
+                unpaywall_pdf_url=None,
+            )
+
+        monkeypatch.setattr(
+            "perspicacite.pipeline.download.unified.discover_paper_sources",
+            _disc,
+        )
+
+        result = await retrieve_paper_content("10.1/x")
+
+        # Must NOT route through bioRxiv; falls through to discovery abstract
+        assert result.content_source != "biorxiv"
+        assert result.abstract == "An abstract longer than twenty chars here."
