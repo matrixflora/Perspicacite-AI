@@ -1,4 +1,5 @@
-/* Chat history sidebar: load past conversations, add to list, switch to a past conversation, select-mode for bulk delete. */
+/* Chat history sidebar: load past conversations, add to list, switch to a past conversation, select-mode for bulk delete.
+   Also: conversation search (debounced) and per-conversation export-to-markdown. */
 
 let isSelectMode = false;
 let deleteMode = 'all'; // 'all', 'selected', or 'single'
@@ -432,4 +433,118 @@ async function confirmClearHistory() {
         showToast('Error: ' + e.message);
     }
     hideClearHistoryDialog();
+}
+
+/* ── Conversation search ─────────────────────────────────────────────────── */
+
+let _convSearchTimer = null;
+
+function initConversationSearch() {
+    const input = document.getElementById('conv-search-input');
+    const resultsBox = document.getElementById('conv-search-results');
+    if (!input || !resultsBox) return;
+
+    input.addEventListener('input', function() {
+        clearTimeout(_convSearchTimer);
+        const q = input.value.trim();
+        if (!q) {
+            resultsBox.innerHTML = '';
+            resultsBox.style.display = 'none';
+            return;
+        }
+        _convSearchTimer = setTimeout(function() {
+            runConversationSearch(q, resultsBox);
+        }, 250);
+    });
+}
+
+async function runConversationSearch(q, resultsBox) {
+    try {
+        const resp = await fetch('/api/conversations/search?q=' + encodeURIComponent(q));
+        if (!resp.ok) {
+            resultsBox.innerHTML = '';
+            resultsBox.style.display = 'none';
+            return;
+        }
+        const data = await resp.json();
+        const results = data.results || [];
+        if (results.length === 0) {
+            resultsBox.innerHTML = '<p style="font-size:12px;color:var(--text-muted);padding:4px;">No results.</p>';
+            resultsBox.style.display = 'block';
+            return;
+        }
+
+        let html = '';
+        results.forEach(function(r) {
+            html += '<div class="conv-search-result-item" onclick="loadConversationById(\'' +
+                    escapeAttr(r.id) + '\')">';
+            html += '<div class="conv-search-result-title">' + escapeHtmlConv(r.title || 'Untitled') + '</div>';
+            if (r.snippet) {
+                html += '<div class="conv-search-result-snippet">' + escapeHtmlConv(r.snippet) + '</div>';
+            }
+            html += '</div>';
+        });
+        resultsBox.innerHTML = html;
+        resultsBox.style.display = 'block';
+    } catch (e) {
+        console.error('Conversation search failed:', e);
+    }
+}
+
+async function loadConversationById(convId) {
+    // Clear search box and results
+    const input = document.getElementById('conv-search-input');
+    const resultsBox = document.getElementById('conv-search-results');
+    if (input) input.value = '';
+    if (resultsBox) { resultsBox.innerHTML = ''; resultsBox.style.display = 'none'; }
+
+    // Find the history item in the sidebar if it exists
+    const existing = document.querySelector('.chat-history-item[data-conv-id="' + convId + '"]');
+    if (existing) {
+        loadChatFromHistory(existing);
+        return;
+    }
+
+    // Otherwise load it directly
+    try {
+        const resp = await fetch('/api/conversations/' + convId);
+        if (!resp.ok) { showToast('Could not load conversation'); return; }
+        const conv = await resp.json();
+
+        // Clear chat and load messages
+        const container = document.getElementById('chat-container');
+        container.innerHTML = '';
+        messages = [];
+        conversationId = convId;
+
+        for (const msg of (conv.messages || [])) {
+            addMessage(msg.role, msg.content);
+            messages.push({ role: msg.role, content: msg.content });
+        }
+        // Activate the matching sidebar item if present
+        document.querySelectorAll('.chat-history-item').forEach(function(item) {
+            item.classList.toggle('active', item.dataset.convId === convId);
+        });
+    } catch (e) {
+        showToast('Error loading conversation: ' + e.message);
+    }
+}
+
+function exportConversation(convId) {
+    if (!convId) { showToast('No conversation to export'); return; }
+    window.location.href = '/api/conversations/' + encodeURIComponent(convId) + '/export?format=markdown';
+}
+
+function escapeHtmlConv(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function escapeAttr(str) {
+    if (!str) return '';
+    return String(str).replace(/'/g, "\\'");
 }
