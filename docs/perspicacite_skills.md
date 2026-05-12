@@ -134,7 +134,8 @@ text, relevance score, and DOI.
 ### generate_report
 
 ```
-generate_report(query, kb_name="default", mode="advanced", max_papers=10)
+generate_report(query, kb_name="default", mode="advanced", max_papers=10,
+                recency_weight=0.0, kb_names=None)
 ```
 
 Generates a synthesized research report from a KB using RAG.
@@ -143,6 +144,11 @@ Generates a synthesized research report from a KB using RAG.
 - `"basic"` — fast single-pass, no web search, KB content only
 - `"advanced"` — query expansion, re-ranking (recommended default)
 - `"profound"` — multi-cycle deep analysis (slowest, best quality)
+- `"contradiction"` — clusters claims across papers into agreement / disagreement / open-question buckets; degrades gracefully when <3 papers are retrieved
+
+**Args:**
+- `recency_weight` (float 0..1, default 0.0) — apply exponential recency decay to retrieved chunks; 0 disables it.
+- `kb_names` (list of str, optional) — fan the query across multiple KBs simultaneously (all must share the same embedding model).
 
 **Notes:**
 - The KB must contain relevant papers before generating a report.
