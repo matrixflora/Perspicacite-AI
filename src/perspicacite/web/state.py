@@ -85,6 +85,7 @@ class AppState:
             vector_store=self.vector_store,
             max_iterations=5,
             use_two_pass=getattr(config.knowledge_base, "use_two_pass", True),
+            map_reduce_max_papers=getattr(config.rag_modes.agentic, "map_reduce_max_papers", 8),
         )
         logger.info("Agentic orchestrator initialized")
 

@@ -89,9 +89,7 @@ class EvidenceFacet:
         n = len(self.entries)
         count_score = min(n / 5, 1.0)
 
-        relevance_scores = [
-            e.get("relevance_score", 3) for e in self.entries
-        ]
+        relevance_scores = [e.get("relevance_score", 3) for e in self.entries]
         avg_rel = sum(relevance_scores) / len(relevance_scores) if relevance_scores else 3.0
         rel_score = min(max((avg_rel - 1) / 4, 0.0), 1.0)  # map [1,5] → [0,1]
 
@@ -157,7 +155,9 @@ class EvidenceStore:
             facet._add_entry(h)
 
     # Backward-compat alias
-    def add_kb_hits(self, hits: List[Dict[str, Any]], step_id: str = "", facet_key: str = "main") -> None:
+    def add_kb_hits(
+        self, hits: List[Dict[str, Any]], step_id: str = "", facet_key: str = "main"
+    ) -> None:
         self.add_hits(hits, step_id=step_id, facet_key=facet_key)
 
     @property
@@ -230,7 +230,7 @@ class AgentSession:
     kb_name: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
     last_active: datetime = field(default_factory=datetime.now)
-    
+
     # User preferences for research depth (can be set per query)
     max_papers_to_download: Optional[int] = None  # Override orchestrator default
     evidence: Optional[EvidenceStore] = None
@@ -254,7 +254,7 @@ class AgentSession:
 
 class DocumentQualityAssessor:
     """Assess if retrieved documents are sufficient to answer a query.
-    
+
     Ported from AgenticRAGMode to enable early exit and quality-aware retrieval.
     """
 
@@ -342,7 +342,7 @@ Guidelines:
 class AgenticOrchestrator:
     """
     True agentic orchestrator with LLM-driven planning and execution.
-    
+
     Unified implementation consolidating:
     - Intent classification and dynamic planning
     - Document quality assessment and early exit
@@ -362,6 +362,7 @@ class AgenticOrchestrator:
         early_exit_confidence: float = 0.85,
         relevance_threshold: int = 3,
         max_papers_to_download: int = 10,
+        map_reduce_max_papers: int = 8,
     ):
         self.llm = llm_client
         self.tools = tool_registry
@@ -371,12 +372,15 @@ class AgenticOrchestrator:
         self.use_hybrid = use_hybrid
         self.use_two_pass = True  # Default, overridden from config if available
         self.early_exit_confidence = early_exit_confidence
-        
+
         # Paper download configuration
         # For literature surveys: lower threshold = more papers, higher max = comprehensive coverage
         # For quick answers: higher threshold = only best papers, lower max = faster
         self.relevance_threshold = relevance_threshold  # Min relevance score to download (1-5)
         self.max_papers_to_download = max_papers_to_download  # Safety cap on downloads
+
+        # Cap on per-paper LLM extraction calls during final map-reduce answer synthesis
+        self.map_reduce_max_papers = map_reduce_max_papers
 
         self.intent_classifier = IntentClassifier(llm_client)
         self.planner = ResearchPlanner(llm_client)
@@ -432,23 +436,25 @@ class AgenticOrchestrator:
         logger.info(f"Query: {query}")
         logger.info(f"Session ID (client): {session_id!r}")
         logger.info(f"KB: {kb_name or 'none'}")
-        logger.info(f"Max papers to download: {max_papers_to_download or self.max_papers_to_download}")
+        logger.info(
+            f"Max papers to download: {max_papers_to_download or self.max_papers_to_download}"
+        )
 
         session = self.get_or_create_session(session_id)
         logger.info(f"Resolved session_id: {session.session_id}")
         session.add_message("user", query)
         session.kb_name = kb_name
         session.evidence = EvidenceStore()
-        
+
         # Store user preference for download cap in session
         if max_papers_to_download is not None:
             session.max_papers_to_download = max_papers_to_download
-        
+
         logger.info(f"Session messages count: {len(session.messages)}")
 
         # Clear accumulated papers from previous requests
         self._found_papers = []
-        if not hasattr(session, 'found_papers_archive'):
+        if not hasattr(session, "found_papers_archive"):
             session.found_papers_archive = []
         # Pre-populate with papers from previous turns
         self._found_papers = list(session.found_papers_archive)
@@ -461,10 +467,15 @@ class AgenticOrchestrator:
             yield {"type": "thinking", "message": f"Fetching paper: {title[:80]}..."}
             self._found_papers.append(url_paper)
             yield {"type": "thinking", "message": f"Retrieved: {title[:80]}"}
-            logger.info(f"URL pre-fetch: {title[:80]} ({len(url_paper.get('full_text', ''))} chars)")
+            logger.info(
+                f"URL pre-fetch: {title[:80]} ({len(url_paper.get('full_text', ''))} chars)"
+            )
         else:
             if _URL_RE.search(query):
-                yield {"type": "thinking", "message": "Could not fetch paper directly, searching databases instead..."}
+                yield {
+                    "type": "thinking",
+                    "message": "Could not fetch paper directly, searching databases instead...",
+                }
 
         # Step 1: Classify intent
         yield {"type": "thinking", "message": "Analyzing your query..."}
@@ -476,8 +487,10 @@ class AgenticOrchestrator:
         )
         logger.info(f"Intent classified: {intent_result.intent.name}")
         logger.info(f"Confidence: {intent_result.confidence}")
-        logger.info(f"Query complexity: {getattr(intent_result, 'query_complexity', 'simple')} "
-                    f"({getattr(intent_result, 'query_complexity_source', '')})")
+        logger.info(
+            f"Query complexity: {getattr(intent_result, 'query_complexity', 'simple')} "
+            f"({getattr(intent_result, 'query_complexity_source', '')})"
+        )
         logger.info(f"Suggested tools: {intent_result.suggested_tools}")
 
         yield {
@@ -516,14 +529,14 @@ class AgenticOrchestrator:
             if not has_kb_step:
                 clean_query = ResearchPlanner._clean_query_for_search(query)
                 if qcomp == "composite":
-                    subs = list(dict.fromkeys(
-                        await self.planner.composite_subqueries_with_llm(clean_query)
-                    ))[:3]
+                    subs = list(
+                        dict.fromkeys(await self.planner.composite_subqueries_with_llm(clean_query))
+                    )[:3]
                     for i, sq in enumerate(subs):
                         plan.steps.insert(
                             i,
                             Step(
-                                id=f"inject_kb_{i+1}",
+                                id=f"inject_kb_{i + 1}",
                                 type=StepType.KB_SEARCH,
                                 description=f"Search knowledge base '{kb_name}'",
                                 tool="kb_search",
@@ -559,21 +572,41 @@ class AgenticOrchestrator:
         if plan.can_answer_from_history:
             # Planner decided we have enough — check if pre-fetched paper has full text
             if url_paper and url_paper.get("full_text"):
-                logger.info("Planner says can_answer_from_history + url_paper has full_text → single-paper answer")
+                logger.info(
+                    "Planner says can_answer_from_history + url_paper has full_text → single-paper answer"
+                )
                 yield {"type": "thinking", "message": "Generating answer from retrieved paper..."}
                 papers = [url_paper]
                 is_summary = not any(
-                    w in query.lower() for w in ("what", "how", "why", "which", "method", "approach", "result", "compare", "find")
+                    w in query.lower()
+                    for w in (
+                        "what",
+                        "how",
+                        "why",
+                        "which",
+                        "method",
+                        "approach",
+                        "result",
+                        "compare",
+                        "find",
+                    )
                 )
                 answer, citation_map = await self._generate_single_paper_answer(
-                    query, papers, session, is_summary_request=is_summary,
+                    query,
+                    papers,
+                    session,
+                    is_summary_request=is_summary,
                 )
-                session.add_message("assistant", answer, {
-                    "intent": intent_result.intent.name,
-                    "steps_completed": 0,
-                    "tools_used": [],
-                    "can_answer_from_history": True,
-                })
+                session.add_message(
+                    "assistant",
+                    answer,
+                    {
+                        "intent": intent_result.intent.name,
+                        "steps_completed": 0,
+                        "tools_used": [],
+                        "can_answer_from_history": True,
+                    },
+                )
                 yield {
                     "type": "answer",
                     "content": answer,
@@ -587,7 +620,10 @@ class AgenticOrchestrator:
                 yield {"type": "papers_found", "papers": papers}
                 return
             else:
-                yield {"type": "thinking", "message": "I can answer from our conversation history..."}
+                yield {
+                    "type": "thinking",
+                    "message": "I can answer from our conversation history...",
+                }
 
         # Step 3: Execute plan iteratively
         step_results: Dict[str, Any] = {}
@@ -614,8 +650,7 @@ class AgenticOrchestrator:
 
             if len(to_run) > 1:
                 logger.info(
-                    "Parallel batch: "
-                    + ", ".join(f"{s.id} ({s.type.value})" for s in to_run)
+                    "Parallel batch: " + ", ".join(f"{s.id} ({s.type.value})" for s in to_run)
                 )
 
             async def _run_step(step: Step) -> tuple[Step, Any, float]:
@@ -713,11 +748,7 @@ class AgenticOrchestrator:
                         )
                         break
                     replan_count += 1
-                    ev_summary = (
-                        session.evidence.to_prompt_block()
-                        if session.evidence
-                        else ""
-                    )
+                    ev_summary = session.evidence.to_prompt_block() if session.evidence else ""
                     plan = await self.planner.replan(
                         query,
                         plan,
@@ -727,7 +758,10 @@ class AgenticOrchestrator:
                         evidence_summary=ev_summary or None,
                     )
                     self._register_evidence_facets(session, plan)
-                    yield {"type": "thinking", "message": f"Adjusting research plan (replan {replan_count}/{MAX_REPLANS})..."}
+                    yield {
+                        "type": "thinking",
+                        "message": f"Adjusting research plan (replan {replan_count}/{MAX_REPLANS})...",
+                    }
                     yield {
                         "type": "replan",
                         "iteration": replan_count,
@@ -752,54 +786,67 @@ class AgenticOrchestrator:
         all_from_kb = all(p.get("source") == "kb_search" for p in papers) if papers else False
         if all_from_kb and papers:
             logger.info("All papers from KB (pre-scored at 4); skipping LLM relevance scoring")
-            yield {"type": "thinking", "message": f"Using {len(papers)} KB papers (relevance scoring skipped)"}
+            yield {
+                "type": "thinking",
+                "message": f"Using {len(papers)} KB papers (relevance scoring skipped)",
+            }
         else:
             yield {"type": "thinking", "message": f"Scoring {len(papers)} papers for relevance..."}
             papers = await self._score_papers_for_relevance(query, papers, min_score=3)
             included_count = len([p for p in papers if p.get("relevance_score", 0) >= 3])
-            yield {"type": "thinking", "message": f"Relevance filtering: {included_count}/{len(papers)} papers included"}
-        
+            yield {
+                "type": "thinking",
+                "message": f"Relevance filtering: {included_count}/{len(papers)} papers included",
+            }
+
         # Download full text for relevant papers (threshold-based, not hard limit)
         # For literature surveys, comprehensive coverage is important - download ALL relevant papers
         # up to a safety cap. Configurable via relevance_threshold and max_papers_to_download.
         # Use session-specific limit if user provided it, otherwise use orchestrator default
         max_download = session.max_papers_to_download or self.max_papers_to_download
-        
+
         download_candidates = [
-            p for p in papers 
-            if p.get("relevance_score", 0) >= self.relevance_threshold
+            p for p in papers if p.get("relevance_score", 0) >= self.relevance_threshold
         ][:max_download]
-        
+
         if download_candidates:
-            yield {"type": "thinking", "message": f"Attempting to download {len(download_candidates)} relevant papers for full text analysis..."}
-            
+            yield {
+                "type": "thinking",
+                "message": f"Attempting to download {len(download_candidates)} relevant papers for full text analysis...",
+            }
+
             downloaded_count = 0
             for i, paper in enumerate(download_candidates, 1):
-                title = paper.get('title', 'Unknown')[:50]
-                yield {"type": "thinking", "message": f"Downloading paper {i}/{len(download_candidates)}: {title}..."}
-                
+                title = paper.get("title", "Unknown")[:50]
+                yield {
+                    "type": "thinking",
+                    "message": f"Downloading paper {i}/{len(download_candidates)}: {title}...",
+                }
+
                 enriched = await self._download_single_paper(paper)
                 if enriched.get("pdf_downloaded"):
                     downloaded_count += 1
                     yield {"type": "thinking", "message": f"✓ Downloaded paper {i}: {title}"}
                 else:
                     yield {"type": "thinking", "message": f"✗ Paper {i} not available: {title}"}
-            
-            yield {"type": "thinking", "message": f"Downloaded {downloaded_count}/{len(download_candidates)} papers successfully"}
+
+            yield {
+                "type": "thinking",
+                "message": f"Downloaded {downloaded_count}/{len(download_candidates)} papers successfully",
+            }
         else:
-            yield {"type": "thinking", "message": "No papers met the relevance threshold for full-text download"}
-        
+            yield {
+                "type": "thinking",
+                "message": "No papers met the relevance threshold for full-text download",
+            }
+
         # Generate final answer
         yield {"type": "thinking", "message": "Synthesizing answer..."}
         answer, citation_map = await self._generate_answer(
             query=query, plan=plan, step_results=step_results, session=session, papers=papers
         )
 
-        overall_conf = (
-            session.evidence.overall_confidence()
-            if session.evidence
-            else None
-        )
+        overall_conf = session.evidence.overall_confidence() if session.evidence else None
 
         session.add_message(
             "assistant",
@@ -828,8 +875,7 @@ class AgenticOrchestrator:
         # Default 0: missing score means scoring failed or paper was excluded — do not
         # treat as "passed" (previously default 3 falsely showed all hits as relevant).
         relevant_papers = [
-            p for p in papers
-            if p.get("relevance_score", 0) >= 3 and p.get("source") != "kb_search"
+            p for p in papers if p.get("relevance_score", 0) >= 3 and p.get("source") != "kb_search"
         ]
         if relevant_papers:
             yield {"type": "papers_found", "papers": relevant_papers}
@@ -843,9 +889,7 @@ class AgenticOrchestrator:
         the parallel wave when composite_subqueries_with_llm yields 2+ distinct phrases.
         """
         clean = ResearchPlanner._clean_query_for_search(query)
-        subs = list(dict.fromkeys(
-            await self.planner.composite_subqueries_with_llm(clean)
-        ))[:3]
+        subs = list(dict.fromkeys(await self.planner.composite_subqueries_with_llm(clean)))[:3]
         if len(subs) < 2:
             return
 
@@ -867,7 +911,7 @@ class AgenticOrchestrator:
                 tool_input["top_k"] = top_k
             new_steps.append(
                 Step(
-                    id=f"composite_kb_{i+1}",
+                    id=f"composite_kb_{i + 1}",
                     type=StepType.KB_SEARCH,
                     description=f"Search knowledge base '{kb_name}' (composite facet)",
                     tool="kb_search",
@@ -958,6 +1002,7 @@ class AgenticOrchestrator:
         # Triggered when the unified pipeline returned no full text (very new papers, paywalled
         # publishers we can't access, etc.).
         from perspicacite.search.semantic_scholar import lookup_paper
+
         lookup_id = doi or bare_id or arxiv_id
         if lookup_id:
             logger.info(f"URL pre-fetch fallback: S2 lookup for {lookup_id}")
@@ -1156,10 +1201,12 @@ class AgenticOrchestrator:
                             logger.warning(
                                 f"KB_SEARCH: hybrid retrieval failed: {e}", exc_info=True
                             )
-                    
+
                     # Filter results by minimum relevance score (0.5 = medium relevance)
                     min_relevance_threshold = 0.5
-                    filtered_results = [r for r in results if r.get("score", 0) >= min_relevance_threshold]
+                    filtered_results = [
+                        r for r in results if r.get("score", 0) >= min_relevance_threshold
+                    ]
                     if len(filtered_results) < len(results):
                         logger.info(
                             f"KB_SEARCH: filtered {len(results) - len(filtered_results)} low-relevance results "
@@ -1210,12 +1257,14 @@ class AgenticOrchestrator:
                             if paper_ids:
                                 try:
                                     from perspicacite.rag.utils import deduplicate_chunk_overlaps
+
                                     all_chunks = await self.vector_store.get_chunks_by_paper_ids(
                                         collection_name, paper_ids
                                     )
                                     if all_chunks:
                                         deduped = deduplicate_chunk_overlaps(all_chunks)
                                         from collections import OrderedDict
+
                                         grouped: OrderedDict = OrderedDict()
                                         for d in deduped:
                                             grouped.setdefault(d["paper_id"], []).append(d)
@@ -1227,20 +1276,34 @@ class AgenticOrchestrator:
                                             score = 0.5
                                             for r in results:
                                                 m = r.get("metadata")
-                                                rp = getattr(m, "paper_id", None) if m else r.get("paper_id")
+                                                rp = (
+                                                    getattr(m, "paper_id", None)
+                                                    if m
+                                                    else r.get("paper_id")
+                                                )
                                                 if rp == pid:
                                                     score = r.get("score", 0.5)
                                                     break
-                                            paper_results.append({
-                                                "paper_id": pid,
-                                                "paper_score": score,
-                                                "title": getattr(meta_obj, "title", None) if meta_obj else None,
-                                                "authors": getattr(meta_obj, "authors", None) if meta_obj else None,
-                                                "year": getattr(meta_obj, "year", None) if meta_obj else None,
-                                                "doi": getattr(meta_obj, "doi", None) if meta_obj else None,
-                                                "full_text": full_text,
-                                                "source": "kb_search",
-                                            })
+                                            paper_results.append(
+                                                {
+                                                    "paper_id": pid,
+                                                    "paper_score": score,
+                                                    "title": getattr(meta_obj, "title", None)
+                                                    if meta_obj
+                                                    else None,
+                                                    "authors": getattr(meta_obj, "authors", None)
+                                                    if meta_obj
+                                                    else None,
+                                                    "year": getattr(meta_obj, "year", None)
+                                                    if meta_obj
+                                                    else None,
+                                                    "doi": getattr(meta_obj, "doi", None)
+                                                    if meta_obj
+                                                    else None,
+                                                    "full_text": full_text,
+                                                    "source": "kb_search",
+                                                }
+                                            )
                                         logger.info(
                                             f"KB_SEARCH: two-pass enrichment: {len(paper_ids)} papers, "
                                             f"{len(all_chunks)} chunks total"
@@ -1267,7 +1330,9 @@ class AgenticOrchestrator:
                                 pid = item.get("paper_id")
                             else:
                                 meta = item.get("metadata")
-                                title = getattr(meta, "title", None) or "Unknown" if meta else "Unknown"
+                                title = (
+                                    getattr(meta, "title", None) or "Unknown" if meta else "Unknown"
+                                )
                                 authors = getattr(meta, "authors", None) or "" if meta else ""
                                 year = getattr(meta, "year", None) or "" if meta else ""
                                 doi = getattr(meta, "doi", None) or "" if meta else ""
@@ -1300,20 +1365,26 @@ class AgenticOrchestrator:
                                     formatted_parts.append("   [... content truncated ...]")
                             else:
                                 formatted_parts.append("   Content: [No text content available]")
-                            
+
                             async with self._found_papers_lock:
                                 if hasattr(self, "_found_papers"):
-                                    self._found_papers.append({
-                                        "title": title,
-                                        "authors": [a.strip() for a in authors.split(",")] if authors else [],
-                                        "year": year,
-                                        "doi": doi,
-                                        "abstract": (text_content[:4000] if text_content else ""),
-                                        "full_text": joined_full,
-                                        "source": "kb_search",
-                                        "relevance_score": 4,
-                                        "_step_id": step.id,
-                                    })
+                                    self._found_papers.append(
+                                        {
+                                            "title": title,
+                                            "authors": [a.strip() for a in authors.split(",")]
+                                            if authors
+                                            else [],
+                                            "year": year,
+                                            "doi": doi,
+                                            "abstract": (
+                                                text_content[:4000] if text_content else ""
+                                            ),
+                                            "full_text": joined_full,
+                                            "source": "kb_search",
+                                            "relevance_score": 4,
+                                            "_step_id": step.id,
+                                        }
+                                    )
                                 if session.evidence is None:
                                     session.evidence = EvidenceStore()
                                 fk = self._facet_key_for_step(session, step)
@@ -1322,7 +1393,9 @@ class AgenticOrchestrator:
                                         {
                                             "title": title,
                                             "doi": doi,
-                                            "excerpt": (text_content[:4000] if text_content else ""),
+                                            "excerpt": (
+                                                text_content[:4000] if text_content else ""
+                                            ),
                                             "step_id": step.id,
                                             "source": "kb_search",
                                         }
@@ -1330,7 +1403,7 @@ class AgenticOrchestrator:
                                     step_id=step.id,
                                     facet_key=fk,
                                 )
-                        
+
                         out = "\n".join(formatted_parts)
                         logger.info(f"KB_SEARCH: formatted tool result length={len(out)} chars")
                         return out
@@ -1350,6 +1423,7 @@ class AgenticOrchestrator:
             logger.info(f"PAPER_LOOKUP: paper_id='{paper_id}'")
 
             from perspicacite.search.semantic_scholar import lookup_paper
+
             paper = await lookup_paper(paper_id)
 
             if paper is None:
@@ -1370,7 +1444,9 @@ class AgenticOrchestrator:
                 "_step_id": step.id,
             }
             self._found_papers.append(paper_dict)
-            logger.info(f"PAPER_LOOKUP: found '{paper.title[:60]}' (citations: {paper.citation_count})")
+            logger.info(
+                f"PAPER_LOOKUP: found '{paper.title[:60]}' (citations: {paper.citation_count})"
+            )
 
             parts = [f"Paper: {paper.title}"]
             if paper.authors:
@@ -1516,8 +1592,7 @@ class AgenticOrchestrator:
         result["gap_facets"] = gap_facets
 
         remaining_search = [
-            s for s in remaining_steps
-            if s.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH)
+            s for s in remaining_steps if s.type in (StepType.KB_SEARCH, StepType.LITERATURE_SEARCH)
         ]
 
         if gap_facets and remaining_search:
@@ -1605,7 +1680,9 @@ class AgenticOrchestrator:
 
         return result
 
-    def _get_recent_found_papers(self, step_ids: Optional[List[str]] = None, limit: int = 5) -> List[Dict[str, Any]]:
+    def _get_recent_found_papers(
+        self, step_ids: Optional[List[str]] = None, limit: int = 5
+    ) -> List[Dict[str, Any]]:
         """Return structured documents from _found_papers for quality assessment.
 
         Uses the accumulated structured paper data rather than parsing formatted
@@ -1631,11 +1708,13 @@ class AgenticOrchestrator:
             ft = (p.get("full_text") or "").strip()
             ab = (p.get("abstract") or "").strip()
             content = (ft[:_content_cap] if ft else ab[:_content_cap]) or ab[:500] or ""
-            docs.append({
-                "title": title,
-                "content": content,
-                "source": p.get("source", "unknown"),
-            })
+            docs.append(
+                {
+                    "title": title,
+                    "content": content,
+                    "source": p.get("source", "unknown"),
+                }
+            )
             if len(docs) >= limit:
                 break
         return docs
@@ -1734,9 +1813,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
         )
         return await self.llm.complete(prompt, temperature=0.15)
 
-    async def _map_reduce_paper_bullets(
-        self, query: str, papers: List[Dict[str, Any]]
-    ) -> str:
+    async def _map_reduce_paper_bullets(self, query: str, papers: List[Dict[str, Any]]) -> str:
         """Top-N papers: parallel extraction bullets for final synthesis."""
         indexed: List[tuple[int, Dict[str, Any]]] = []
         for i, p in enumerate(papers, 1):
@@ -1744,7 +1821,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
             ab = (p.get("abstract") or "").strip()
             if len(ft) >= 500 or len(ab) >= 200:
                 indexed.append((i, p))
-        indexed = indexed[:MAP_REDUCE_MAX_PAPERS]
+        indexed = indexed[: self.map_reduce_max_papers]
         if not indexed:
             return ""
 
@@ -1782,12 +1859,16 @@ Provide a synthesized summary that combines the key insights from all sources.""
             n = len(facet.entries)
             titles = [str(e.get("title", ""))[:80] for e in facet.entries[:4]]
             title_list = "; ".join(t for t in titles if t) or "(none)"
-            sections.append(f"  [{status}] \"{facet.query}\" — {n} source(s): {title_list}")
+            sections.append(f'  [{status}] "{facet.query}" — {n} source(s): {title_list}')
         return "\n".join(sections)
 
     async def _generate_answer(
-        self, query: str, plan: Plan, step_results: Dict[str, Any], session: AgentSession,
-        papers: Optional[List[Dict[str, Any]]] = None
+        self,
+        query: str,
+        plan: Plan,
+        step_results: Dict[str, Any],
+        session: AgentSession,
+        papers: Optional[List[Dict[str, Any]]] = None,
     ) -> tuple[str, Dict[str, Any]]:
         """Generate final answer and return ``(answer_text, citation_map)``."""
 
@@ -1801,8 +1882,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
 
         # --- Single-paper fast path: skip map-reduce, pass full text directly ---
         single_paper_with_full_text = (
-            len(papers) == 1
-            and (papers[0].get("full_text") or "").strip()
+            len(papers) == 1 and (papers[0].get("full_text") or "").strip()
         )
         if single_paper_with_full_text:
             return await self._generate_single_paper_answer(query, papers, session)
@@ -1826,7 +1906,9 @@ Provide a synthesized summary that combines the key insights from all sources.""
                 "\n\n---\n\nQuery-focused extractions (per paper; cite using [N] from the numbered list):\n"
                 + map_reduce_block
             )
-            logger.info("Answer context: using map-reduce per-paper extractions (raw step results suppressed)")
+            logger.info(
+                "Answer context: using map-reduce per-paper extractions (raw step results suppressed)"
+            )
         else:
             for step_id, result in step_results.items():
                 if step_id != "lotus" and result:
@@ -1844,8 +1926,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
                     )
             if full_text_parts:
                 context_parts.append(
-                    "\n\n---\n\nDownloaded Full Text:\n"
-                    + "\n\n---\n\n".join(full_text_parts)
+                    "\n\n---\n\nDownloaded Full Text:\n" + "\n\n---\n\n".join(full_text_parts)
                 )
                 logger.info(f"Added {len(full_text_parts)} full text documents to context")
 
@@ -1860,7 +1941,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
         facet_guideline = ""
         if facet_overview:
             facet_guideline = (
-                "10. The query has multiple facets (see \"Research facets investigated\" above). "
+                '10. The query has multiple facets (see "Research facets investigated" above). '
                 "Address EACH facet in your answer. If a facet is marked [GAP] or [PARTIAL], "
                 "acknowledge the limited evidence rather than omitting that aspect.\n"
             )
@@ -1872,7 +1953,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
                 "Answer with a **clear numbered list of stages** (1., 2., …) in the order described "
                 "in the research results, using concrete names and actions from the text (systems, "
                 "data objects, algorithms, repositories). Do **not** replace this with a short "
-                "paragraph of generic themes (e.g. only \"tracking\" and \"prioritization\") when "
+                'paragraph of generic themes (e.g. only "tracking" and "prioritization") when '
                 "the results contain more specific steps—surface those steps.\n"
                 "11. If the research results lack operational detail (only motivation or high-level "
                 "goals), say so explicitly and summarize only what is literally supported; do not "
@@ -1969,6 +2050,7 @@ Generate your answer:"""
         invalid_refs = found_refs - valid_range
 
         if invalid_refs:
+
             def _strip_invalid(m: re.Match) -> str:
                 nums = [int(s.strip()) for s in m.group(1).split(",")]
                 kept = [n for n in nums if n in valid_range]
@@ -1988,12 +2070,15 @@ Generate your answer:"""
 
         citation_map: Dict[str, Any] = {
             "cited": [
-                {"index": i, "title": papers[i - 1].get("title", ""), "doi": papers[i - 1].get("doi", "")}
+                {
+                    "index": i,
+                    "title": papers[i - 1].get("title", ""),
+                    "doi": papers[i - 1].get("doi", ""),
+                }
                 for i in cited_indices
             ],
             "uncited": [
-                {"index": i, "title": papers[i - 1].get("title", "")}
-                for i in uncited_indices
+                {"index": i, "title": papers[i - 1].get("title", "")} for i in uncited_indices
             ],
             "invalid_stripped": sorted(invalid_refs),
             "total_papers": len(papers),
@@ -2080,7 +2165,7 @@ Generate your answer:"""
         prompt = f"""You are a scientific research assistant. You have the full text of a single research paper.
 
 Paper: {title}
-DOI: {doi or 'N/A'}
+DOI: {doi or "N/A"}
 
 {"Previous Conversation Context:" + chr(10) + conversation_context + chr(10) if conversation_context.strip() else ""}
 
@@ -2219,10 +2304,10 @@ Generate your answer:"""
             "Do not infer relevance from the paper's general research area.\n"
             f"- You MUST provide a score for EVERY paper numbered 1 through {n_papers}. "
             "Do not skip any paper.\n\n"
-            "Example calibration: Query \"CRISPR gene editing in wheat\" ->\n"
-            "  Paper \"RNA editing in rice\" = 2 (related technique, wrong organism "
+            'Example calibration: Query "CRISPR gene editing in wheat" ->\n'
+            '  Paper "RNA editing in rice" = 2 (related technique, wrong organism '
             "and mechanism)\n"
-            "  Paper \"CRISPR-Cas9 optimization in bread wheat\" = 5\n\n"
+            '  Paper "CRISPR-Cas9 optimization in bread wheat" = 5\n\n'
             "Respond with ONLY a JSON object:\n"
             '{"scores": {"1": {"score": N, "reason": "..."}, '
             '"2": {"score": N, "reason": "..."}, ...}}'
@@ -2291,13 +2376,11 @@ Generate your answer:"""
                 elif score >= min_score:
                     filtered.append(paper)
                     logger.info(
-                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' "
-                        f"score: {score} - INCLUDED"
+                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - INCLUDED"
                     )
                 else:
                     logger.info(
-                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' "
-                        f"score: {score} - FILTERED"
+                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - FILTERED"
                     )
 
             logger.info(
@@ -2317,8 +2400,7 @@ Generate your answer:"""
                     f"({len(filtered)}/{n_papers} kept). Retrying once."
                 )
                 retry_prompt = (
-                    prompt
-                    + "\n\nIMPORTANT: Your previous response was missing scores for "
+                    prompt + "\n\nIMPORTANT: Your previous response was missing scores for "
                     f"some papers. You MUST return exactly {n_papers} entries with "
                     f'keys "1" through "{n_papers}". Try again.'
                 )
@@ -2423,11 +2505,15 @@ Generate your answer:"""
                 return self._format_paper_list(paper_dicts)
             else:
                 logger.warning("SciLEx returned no results, falling back to OpenAlex")
-                return await self._fallback_openalex_search(query, max_results, step_id=step_id, session=session)
+                return await self._fallback_openalex_search(
+                    query, max_results, step_id=step_id, session=session
+                )
 
         except Exception as e:
             logger.error(f"SciLEx search failed: {e}, falling back to OpenAlex")
-            return await self._fallback_openalex_search(query, max_results, step_id=step_id, session=session)
+            return await self._fallback_openalex_search(
+                query, max_results, step_id=step_id, session=session
+            )
 
     async def _fallback_openalex_search(
         self,
@@ -2627,20 +2713,20 @@ Generate your answer:"""
 
     def _dedupe_paper_dicts(self, papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Merge duplicates (same DOI or same normalized title, e.g. preprint + journal).
-        
+
         Keeps the highest quality version of each paper (more abstract, more citations, newer).
         The winning paper retains its original source (kb_search or literature_search).
         """
         best: Dict[str, Dict[str, Any]] = {}
-        
+
         for p in papers:
             k = self._paper_dedupe_key(p)
             if k.startswith("unknown:") and not p.get("title"):
                 continue
-            
+
             if k not in best or self._paper_quality_tuple(p) > self._paper_quality_tuple(best[k]):
                 best[k] = p
-        
+
         out = list(best.values())
         if len(out) < len(papers):
             logger.info(
@@ -2651,7 +2737,7 @@ Generate your answer:"""
     @staticmethod
     def _normalize_authors(authors: Any) -> List[str]:
         """Normalize authors to a list of strings.
-        
+
         Handles various input formats:
         - List of strings: ["Author One", "Author Two"]
         - Comma-separated string: "Author One, Author Two"
@@ -2670,38 +2756,38 @@ Generate your answer:"""
         """Extract deduplicated paper list from accumulated found papers."""
         if not hasattr(self, "_found_papers") or not self._found_papers:
             return []
-        
+
         # Normalize authors for all papers before deduplication
         for paper in self._found_papers:
             paper["authors"] = self._normalize_authors(paper.get("authors"))
-        
+
         return self._dedupe_paper_dicts(list(self._found_papers))
 
     @staticmethod
     def _reconstruct_abstract(inverted_index: dict | None) -> str:
         """Reconstruct abstract text from OpenAlex inverted index format.
-        
+
         OpenAlex stores abstracts as {"word": [positions]} to save space.
         This reconstructs the original text.
         """
         if not inverted_index:
             return ""
-        
+
         # Build position -> word mapping
         position_words = {}
         for word, positions in inverted_index.items():
             for pos in positions:
                 position_words[pos] = word
-        
+
         # Sort by position and join
         if not position_words:
             return ""
-        
+
         max_pos = max(position_words.keys())
         words = []
         for i in range(max_pos + 1):
             words.append(position_words.get(i, ""))
-        
+
         return " ".join(words).strip()
 
     async def _download_single_paper(self, paper: Dict[str, Any]) -> Dict[str, Any]:
@@ -2743,100 +2829,101 @@ Generate your answer:"""
         return paper
 
     async def _download_and_enrich_papers(
-        self, 
-        papers: List[Dict[str, Any]], 
-        relevance_threshold: int = 3,
-        max_papers: int = 10
+        self, papers: List[Dict[str, Any]], relevance_threshold: int = 3, max_papers: int = 10
     ) -> List[Dict[str, Any]]:
         """Download PDFs for relevant papers and extract full text.
-        
+
         For literature surveys, downloads ALL relevant papers (score >= threshold)
         up to a safety cap. This ensures comprehensive coverage rather than
         arbitrary limits.
-        
+
         Args:
             papers: List of paper dicts with DOI and relevance_score
             relevance_threshold: Minimum relevance score to download (default 3)
             max_papers: Safety cap on downloads (default 10)
-            
+
         Returns:
             Papers with added 'full_text' field where download succeeded
         """
         # Filter to relevant papers only (threshold-based, not hard limit)
         relevant_papers = [
-            p for p in papers 
-            if p.get("relevance_score", 0) >= relevance_threshold and p.get("doi")
+            p for p in papers if p.get("relevance_score", 0) >= relevance_threshold and p.get("doi")
         ][:max_papers]
-        
+
         # Prioritize open access papers first (they're more likely to download successfully)
         download_candidates = sorted(
             relevant_papers,
-            key=lambda p: (not p.get("open_access", {}).get("is_oa", False), p.get("relevance_score", 0)),
-            reverse=True
+            key=lambda p: (
+                not p.get("open_access", {}).get("is_oa", False),
+                p.get("relevance_score", 0),
+            ),
+            reverse=True,
         )
-        
+
         if not download_candidates:
             logger.info("No papers met the relevance threshold for download")
             return papers
-        
-        logger.info(f"Attempting to download {len(download_candidates)} relevant papers (threshold >= {relevance_threshold})")
-        
+
+        logger.info(
+            f"Attempting to download {len(download_candidates)} relevant papers (threshold >= {relevance_threshold})"
+        )
+
         enriched = []
         for paper in papers:
             doi = paper.get("doi", "")
             if not doi or paper not in download_candidates:
                 enriched.append(paper)
                 continue
-            
+
             enriched_paper = await self._download_single_paper(paper)
             enriched.append(enriched_paper)
-        
+
         return enriched
 
     async def _get_citation_network(self, doi: str, direction: str = "both") -> Dict[str, Any]:
         """
         Get citation network for a paper using SciLEx/OpenCitations.
-        
+
         Args:
             doi: DOI of the paper
-            direction: "citations" (papers citing this), "references" (papers cited by this), 
+            direction: "citations" (papers citing this), "references" (papers cited by this),
                       or "both"
-            
+
         Returns:
             Dict with citation network information
         """
         logger.info(f"Getting citation network for DOI: {doi} (direction: {direction})")
-        
+
         # Run in thread pool since SciLEx citation tools are synchronous
         import asyncio
-        
+
         try:
             # Try to import SciLEx citation tools
             from scilex.citations.citations_tools import getRefandCitFormatted
-            
+
             result = await asyncio.to_thread(getRefandCitFormatted, doi)
             citations_data, stats = result
-            
+
             network = {
                 "doi": doi,
                 "citing": [],  # Papers that cite this paper
-                "cited": [],   # Papers that this paper cites (references)
+                "cited": [],  # Papers that this paper cites (references)
                 "stats": stats,
             }
-            
+
             if direction in ("citations", "both"):
                 network["citing"] = citations_data.get("citing", [])
-                
+
             if direction in ("references", "both"):
                 network["cited"] = citations_data.get("cited", [])
-            
+
             logger.info(
                 f"Citation network for {doi}: "
                 f"{len(network['citing'])} citing, {len(network['cited'])} references"
             )
-            
+
             return network
-            
+
         except ImportError:
             logger.warning("SciLEx citation tools not available")
             return {"doi": doi, "citing": [], "cited": [], "error": "Citation tools not available"}
