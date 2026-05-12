@@ -116,6 +116,7 @@ def serve(
 
     # Hand the resolved config path to the web app via env var
     import os
+
     os.environ["PERSPICACITE_CONFIG"] = str(config)
 
     import uvicorn
@@ -345,6 +346,7 @@ def _start_mcp_and_web(config, app) -> None:
     # Initialize MCP state
     from perspicacite.mcp.server import mcp, mcp_state
     import asyncio
+
     asyncio.get_event_loop().run_until_complete(mcp_state.initialize(config))
 
     # Get MCP ASGI app
@@ -424,6 +426,97 @@ async def _run_query(
     """Run query (placeholder)."""
     click.echo("\n📝 Answer:")
     click.echo("  (RAG not implemented yet)")
+
+
+@cli.command(name="screen-papers")
+@click.option(
+    "--input",
+    "input_bib",
+    required=True,
+    type=click.Path(exists=True),
+    help="Reference .bib file (defines the topic)",
+)
+@click.option(
+    "--candidates",
+    "cand_bib",
+    required=True,
+    type=click.Path(exists=True),
+    help="Candidate .bib file to screen",
+)
+@click.option(
+    "--output",
+    "output_bib",
+    required=True,
+    type=click.Path(),
+    help="Output .bib file of kept papers",
+)
+@click.option(
+    "--method",
+    type=click.Choice(["bm25", "llm"]),
+    default="bm25",
+    help="Screening method",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=0.3,
+    help="Keep papers scoring >= this (0..1)",
+)
+@click.option(
+    "--csv",
+    "csv_path",
+    type=click.Path(),
+    default=None,
+    help="Optional CSV report of all candidates + scores",
+)
+def screen_papers_cmd(
+    input_bib: str,
+    cand_bib: str,
+    output_bib: str,
+    method: str,
+    threshold: float,
+    csv_path: str | None,
+) -> None:
+    """Screen candidate papers for relevance to a reference set's topic (BM25)."""
+    import csv as _csv
+
+    import bibtexparser
+
+    from perspicacite.search.screening import screen_papers
+
+    if method == "llm":
+        raise click.ClickException(
+            "LLM screening from the CLI is not wired in this version; "
+            "use --method bm25 (or the screen_papers MCP tool for LLM scoring)."
+        )
+
+    ref_entries = bibtexparser.loads(Path(input_bib).read_text()).entries
+    cand_db = bibtexparser.loads(Path(cand_bib).read_text())
+    cand_entries = cand_db.entries
+    if not cand_entries:
+        raise click.ClickException("No entries found in the candidates .bib file.")
+
+    refs = [f"{e.get('title', '')} {e.get('abstract', '')}".strip() for e in ref_entries]
+    cands = [
+        {"title": e.get("title", ""), "abstract": e.get("abstract", ""), "_entry": e}
+        for e in cand_entries
+    ]
+    results = screen_papers(cands, reference=refs or "", method="bm25", threshold=threshold)
+
+    kept_entries = [r.item["_entry"] for r in results if r.kept]
+    out_db = bibtexparser.bibdatabase.BibDatabase()
+    out_db.entries = kept_entries
+    Path(output_bib).write_text(bibtexparser.dumps(out_db))
+
+    if csv_path:
+        with open(csv_path, "w", newline="") as fh:
+            w = _csv.writer(fh)
+            w.writerow(["id", "title", "score", "kept"])
+            for r in results:
+                e = r.item["_entry"]
+                w.writerow([e.get("ID", ""), r.item.get("title", ""), r.score, r.kept])
+
+    click.echo(f"Kept {len(kept_entries)}/{len(cand_entries)} candidates -> {output_bib}")
 
 
 @cli.command()
