@@ -674,8 +674,9 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
 async def get_paper_detail(doi: str):
     """Discovery metadata + abstract + available content type for a DOI.
 
-    Cheap path: live-fetch via the unified pipeline (no per-DOI PaperContent
-    file cache is implemented yet — discovery + abstract is fast, ~1-2 s).
+    Fast path: discovery + structured XML + abstract only via the unified pipeline.
+    pdf_parser is intentionally not passed so the pipeline skips full PDF download
+    and publisher API stages (no rate-limit pressure, response in ~1-2 s).
     """
     if not doi or not doi.strip():
         raise HTTPException(status_code=400, detail="doi query param required")
@@ -684,7 +685,7 @@ async def get_paper_detail(doi: str):
 
     pdf_kw = _get_pdf_fallback_kwargs(app_state.config.pdf_download if app_state.config else None)
     try:
-        result = await retrieve_paper_content(doi, pdf_parser=app_state.pdf_parser, **pdf_kw)
+        result = await retrieve_paper_content(doi, pdf_parser=None, **pdf_kw)
     except Exception as e:
         return {"doi": doi, "error": str(e), "content_type": "none"}
     md = result.metadata or {}
