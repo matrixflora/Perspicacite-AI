@@ -205,6 +205,7 @@ class SciLexConfig(BaseModel):
 
     enabled: bool = True
     config_path: Optional[Path] = None
+    pubmed_email: str = ""
 
     apis: dict[str, SciLexAPIConfig] = Field(
         default_factory=lambda: {
