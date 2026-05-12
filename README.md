@@ -50,6 +50,8 @@ Open **http://localhost:8000** in your browser.
 
 > The MCP server runs on the same port at `/mcp`. Use `--no-mcp` to disable it.
 
+> **Note for developers:** After editing files in `static/css/` or `static/js/`, force a browser hard-refresh (Ctrl+Shift+R / Cmd+Shift+R) to bypass the cache.
+
 ## How to Use Perspicacité
 
 ### Using the Web Interface
@@ -305,8 +307,11 @@ src/perspicacite/
     tools/                    # Tool registry, KB search, LOTUS
   search/scilex_adapter.py    # Multi-database literature search
   retrieval/                  # ChromaDB vector store + hybrid search
-web_app_full.py               # FastAPI web application
-templates/index.html          # Single-page chat UI
+src/perspicacite/web/         # FastAPI web application (routers, state, app)
+templates/index.html          # Single-page chat UI (markup only)
+static/
+  css/                        # 6 stylesheets: theme, base, layout, chat, kb, survey
+  js/                         # 8 scripts: utils, databases, mode, conversations, chat, kb, survey, main
 ```
 
 ## Privacy & Data

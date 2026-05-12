@@ -1,0 +1,208 @@
+/* Literature survey UI: theme cards, paper checkbox lists, selection counters,
+   generated report rendering. */
+
+/* Literature Survey Styles */
+.survey-container {
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin: 10px 0;
+}
+
+.survey-container h3 {
+    margin: 0 0 10px 0;
+    color: var(--primary);
+}
+
+.survey-actions {
+    display: flex;
+    gap: 10px;
+    margin: 15px 0;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.survey-actions.bottom {
+    border-top: 1px solid var(--border);
+    padding-top: 15px;
+    margin-top: 20px;
+}
+
+.survey-actions button {
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: white;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.survey-actions button:hover {
+    background: var(--bg-primary);
+}
+
+.survey-actions button.primary {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.survey-actions button.primary:hover {
+    background: var(--primary-light);
+}
+
+.survey-actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--bg-secondary);
+}
+
+.survey-themes {
+    margin-top: 15px;
+}
+
+.survey-theme {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+.survey-theme.uncategorized {
+    border-style: dashed;
+    opacity: 0.9;
+}
+
+.theme-header {
+    padding: 12px 16px;
+    background: var(--bg-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    user-select: none;
+}
+
+.theme-header:hover {
+    background: var(--bg-secondary);
+}
+
+.theme-toggle {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.theme-count {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-left: auto;
+}
+
+.theme-content {
+    padding: 16px;
+}
+
+.theme-description {
+    color: var(--text-secondary);
+    margin-bottom: 15px;
+    font-size: 14px;
+}
+
+.theme-papers {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.survey-paper {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    gap: 10px;
+    transition: background 0.2s;
+}
+
+.survey-paper:hover {
+    background: var(--bg-primary);
+}
+
+.survey-paper.selected {
+    background: rgba(27, 68, 121, 0.05);
+    border-color: var(--primary);
+}
+
+.survey-paper input[type="checkbox"] {
+    margin-top: 2px;
+}
+
+.survey-paper label {
+    flex: 1;
+    cursor: pointer;
+}
+
+.paper-title {
+    font-weight: 500;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.recommended-badge {
+    background: #fbbf24;
+    color: #92400e;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+.paper-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.paper-abstract {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.paper-reason {
+    font-size: 12px;
+    color: var(--primary);
+    margin-top: 6px;
+    font-style: italic;
+}
+
+.survey-report {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+}
+
+.report-content {
+    line-height: 1.6;
+}
+
+.report-content h1, .report-content h2, .report-content h3 {
+    color: var(--primary);
+    margin-top: 20px;
+}
+
+.report-meta {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-size: 13px;
+}

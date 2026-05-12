@@ -1,0 +1,91 @@
+/* Theme variables, dark mode, and dark-mode overrides.
+   Loaded first so all other stylesheets can reference --bg-main, --primary, etc. */
+
+@import url('https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;700&family=Libre+Franklin:wght@300;400;500;600&family=Quicksand:wght@400;500;600&display=swap');
+
+:root {
+    --bg-main: #f8fafc;
+    --bg-sidebar: #f1f5f9;
+    --bg-card: #ffffff;
+    --primary: #1b4479;
+    --primary-light: #2d5a9e;
+    --secondary: #04919A;
+    --accent: #61CE70;
+    --text-main: #1e293b;
+    --text-muted: #64748b;
+    --border: #e2e8f0;
+    --input-border: #cbd5e1;
+    --shadow: none;
+    --radius: 0.5rem;
+}
+
+/* Dark theme */
+[data-theme="dark"] {
+    --bg-main: #0f172a;
+    --bg-sidebar: #1e293b;
+    --bg-card: #1e293b;
+    --primary: #60a5fa;
+    --primary-light: #93c5fd;
+    --secondary: #2dd4bf;
+    --accent: #4ade80;
+    --text-main: #f1f5f9;
+    --text-muted: #94a3b8;
+    --border: #334155;
+    --input-border: #475569;
+    --shadow: none;
+}
+
+/* Theme transition */
+*, *::before, *::after {
+    transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+/* Dark theme specific overrides */
+[data-theme="dark"] .message.assistant {
+    background: #27354c;
+    border-color: #334155;
+}
+
+[data-theme="dark"] .chat-input-wrapper {
+    background: #1e293b;
+}
+
+[data-theme="dark"] .chat-input {
+    color: var(--text-main);
+}
+
+[data-theme="dark"] .chat-input::placeholder {
+    color: #64748b;
+}
+
+[data-theme="dark"] .kb-select {
+    background: #1e293b;
+    color: var(--text-main);
+}
+
+[data-theme="dark"] .kb-info {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .kb-create-form {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .kb-tab-content textarea {
+    background: #1e293b;
+    color: var(--text-main);
+    border-color: #475569;
+}
+
+[data-theme="dark"] .chat-history-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .chat-history-item.active {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .message.thinking-message {
+    background: #27354c;
+    border-color: #475569;
+}
