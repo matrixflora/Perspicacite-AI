@@ -29,6 +29,8 @@ EXPECTED_ROUTES: list[tuple[str, set[str]]] = [
     ("/api/kb/{name}/chunks", {"GET"}),
     ("/api/kb/{name}/bibtex", {"POST"}),
     ("/api/kb/{name}/dois", {"POST"}),
+    ("/api/kb/{name}/stats", {"GET"}),
+    ("/api/paper", {"GET"}),
     ("/api/survey/{session_id}", {"GET"}),
     ("/api/survey/{session_id}/select", {"POST"}),
     ("/api/survey/{session_id}/generate", {"POST"}),
@@ -79,5 +81,5 @@ def test_total_route_count_unchanged():
     app = _load_app()
     routes = _route_methods_by_path(app)
     pair_count = sum(len(methods) for methods in routes.values())
-    # 20 (path, method) pairs across the EXPECTED_ROUTES list above.
-    assert pair_count >= 20, f"expected at least 20 (path, method) pairs, got {pair_count}"
+    # 22 (path, method) pairs across the EXPECTED_ROUTES list above.
+    assert pair_count >= 22, f"expected at least 22 (path, method) pairs, got {pair_count}"

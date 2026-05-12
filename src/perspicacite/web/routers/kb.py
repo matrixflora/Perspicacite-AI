@@ -329,6 +329,61 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
     }
 
 
+@router.get("/api/kb/{name}/stats")
+async def get_kb_stats(name: str):
+    """Aggregate statistics for a KB, computed from ChromaDB metadata + the SQLite KB record."""
+    if not app_state.session_store:
+        return {"error": "System not initialized"}
+    kb = await app_state.session_store.get_kb_metadata(name)
+    if not kb:
+        return {"error": f"Knowledge base '{name}' not found"}
+    scan_cap = 20000
+    try:
+        coll = app_state.vector_store.client.get_collection(name=kb.collection_name)
+        total_chunks = coll.count()
+        got = coll.get(
+            limit=min(total_chunks, scan_cap) if total_chunks else 0, include=["metadatas"]
+        )
+        metas = got.get("metadatas") or []
+    except Exception as e:
+        logger.warning(f"kb stats: collection scan failed for {name}: {e}")
+        metas, total_chunks = [], 0
+    by_year: dict[str, int] = {}
+    by_source: dict[str, int] = {}
+    by_content_type: dict[str, int] = {}
+    by_journal: dict[str, int] = {}
+    seen: set = set()
+    for m in metas:
+        m = m or {}
+        pid = m.get("paper_id")
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        year_key = str(m.get("year") or "unknown")
+        by_year[year_key] = by_year.get(year_key, 0) + 1
+        source_key = str(m.get("source") or "unknown")
+        by_source[source_key] = by_source.get(source_key, 0) + 1
+        ct_key = str(m.get("content_type") or "unknown")
+        by_content_type[ct_key] = by_content_type.get(ct_key, 0) + 1
+        j = (m.get("journal") or "").strip()
+        if j:
+            by_journal[j] = by_journal.get(j, 0) + 1
+    top_journals = sorted(by_journal.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    return {
+        "name": kb.name,
+        "paper_count": len(seen) or kb.paper_count,
+        "chunk_count": total_chunks,
+        "by_year": dict(sorted(by_year.items())),
+        "by_source": by_source,
+        "by_content_type": by_content_type,
+        "top_journals": [{"journal": j, "count": c} for j, c in top_journals],
+        "embedding_model": kb.embedding_model,
+        "created_at": kb.created_at.isoformat() if kb.created_at else None,
+        "scanned_chunks": len(metas),
+        "scan_capped": total_chunks > scan_cap if total_chunks else False,
+    }
+
+
 @router.get("/api/kb/{name}/chunks")
 async def get_kb_chunks(
     name: str,
