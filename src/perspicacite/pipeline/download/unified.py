@@ -34,6 +34,7 @@ from .springer import download_from_springer, is_springer_doi
 from .wiley import download_from_wiley_tdm, download_from_wiley_direct
 from .elsevier import get_content_from_elsevier
 from .alternative import download_from_alternative_endpoint
+from .biorxiv import is_biorxiv_doi, get_content_from_biorxiv
 
 logger = get_logger("perspicacite.pipeline.download.unified")
 
@@ -133,9 +134,9 @@ async def retrieve_paper_content(
     if not clean:
         return _none_result(doi)
 
-    client = http_client or httpx.AsyncClient(
-        timeout=60.0, follow_redirects=True
-    )
+    biorxiv_abstract_fallback: PaperContent | None = None
+
+    client = http_client or httpx.AsyncClient(timeout=60.0, follow_redirects=True)
     should_close = http_client is None
 
     try:
@@ -152,9 +153,7 @@ async def retrieve_paper_content(
 
         # ── STEP 2: ALTERNATIVE ENDPOINT (before structured/PDF) ──────
         if alternative_endpoint and pdf_parser is not None:
-            alt_pdf = await download_from_alternative_endpoint(
-                clean, alternative_endpoint, client
-            )
+            alt_pdf = await download_from_alternative_endpoint(clean, alternative_endpoint, client)
             if alt_pdf:
                 text = await _parse_pdf_bytes(alt_pdf, pdf_parser)
                 if text:
@@ -208,6 +207,15 @@ async def retrieve_paper_content(
                     metadata=_metadata_from_discovery(disc, clean, {"arxiv_id": arxiv_id}),
                 )
 
+        # bioRxiv / medRxiv preprints
+        if is_biorxiv_doi(clean):
+            br = await get_content_from_biorxiv(clean, http_client=client)
+            if br is not None and br.success:
+                if br.content_type == "structured":
+                    return br
+                if br.content_type == "abstract":
+                    biorxiv_abstract_fallback = br
+
         # ── STEP 3: PDF FULL TEXT ───────────────────────────────────────
         if pdf_parser is not None:
             pdf_result = await _try_pdf_sources(
@@ -259,6 +267,10 @@ async def retrieve_paper_content(
                 content_source="openalex" if disc.title else "unknown",
                 metadata=_metadata_from_discovery(disc, clean),
             )
+
+        # ── STEP 4b: bioRxiv abstract fallback (when discovery had none) ──
+        if biorxiv_abstract_fallback is not None:
+            return biorxiv_abstract_fallback
 
         # ── STEP 5: DISCARD ─────────────────────────────────────────────
         logger.warning("unified_no_content", doi=clean)
@@ -353,7 +365,7 @@ def _load_cached_references(doi: str) -> list[dict] | None:
     clean_doi = doi.strip().lower()
     for prefix in ("https://doi.org/", "http://doi.org/"):
         if clean_doi.startswith(prefix):
-            clean_doi = clean_doi[len(prefix):]
+            clean_doi = clean_doi[len(prefix) :]
 
     cache_dir = Path("./data/papers")
     if not cache_dir.exists():
