@@ -8,15 +8,16 @@ from perspicacite.llm.client import AsyncLLMClient
 from perspicacite.llm.embeddings import EmbeddingProvider
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, StreamEvent
-from perspicacite.retrieval.chroma_store import ChromaVectorStore
 from perspicacite.rag.modes import (
-    AgenticRAGMode,
     AdvancedRAGMode,
+    AgenticRAGMode,
     BasicRAGMode,
+    ContradictionRAGMode,
     LiteratureSurveyRAGMode,
     ProfoundRAGMode,
 )
 from perspicacite.rag.tools import ToolRegistry
+from perspicacite.retrieval.chroma_store import ChromaVectorStore
 
 logger = get_logger("perspicacite.rag.engine")
 
@@ -59,6 +60,7 @@ class RAGEngine:
             RAGMode.PROFOUND: ProfoundRAGMode(config),
             RAGMode.AGENTIC: AgenticRAGMode(config),
             RAGMode.LITERATURE_SURVEY: LiteratureSurveyRAGMode(config),
+            RAGMode.CONTRADICTION: ContradictionRAGMode(config),
         }
 
     async def query(self, request: RAGRequest) -> RAGResponse:
@@ -147,7 +149,7 @@ class RAGEngine:
             # Yield error event
             yield StreamEvent(
                 event="error",
-                data=f'{{"message": "{str(e)}"}}',
+                data=f'{{"message": "{e!s}"}}',
             )
 
     def _get_mode_handler(self, mode: RAGMode) -> Any:

@@ -35,14 +35,14 @@ If the texts you received are just citations of other articles, please nuance yo
 
 # Generic fallback mandatory prompt (when KB info not available)
 MANDATORY_PROMPT = MANDATORY_PROMPT_TEMPLATE.format(
-    kb_title="a scientific AI-assistant",
-    scope="scientific research and education"
+    kb_title="a scientific AI-assistant", scope="scientific research and education"
 )
 
 
 def get_mandatory_prompt(kb_title: str, scope: str) -> str:
     """Get the mandatory prompt formatted with KB-specific title and scope (v1 compatibility)."""
     return MANDATORY_PROMPT_TEMPLATE.format(kb_title=kb_title, scope=scope)
+
 
 # Format prompt for response formatting (from get_response)
 FORMAT_PROMPT = """You are a scientific writing assistant helping to format a research summary or report. Follow these instructions carefully:
@@ -459,3 +459,42 @@ Be honest and educational about the limits of scientific knowledge or the premis
 Your explanation should be helpful even though it cannot provide a direct answer.
 
 Do not format as JSON - just provide the explanation as regular text."""
+
+# =============================================================================
+# CONTRADICTION RAG PROMPTS
+# =============================================================================
+
+# Prompt to summarise a single paper's claims relevant to the research question.
+CONTRADICTION_CLAIM_SUMMARY_PROMPT = """Summarize this paper's central claims relevant to the question: {query}.
+Give 2-4 short bullet points. Be concise and specific.
+Paper title: {title}
+Excerpts:
+{excerpts}"""
+
+# Prompt to cluster per-paper claim summaries into agreement / disagreement / open buckets.
+# The LLM must return ONLY valid JSON.
+CONTRADICTION_CLUSTER_PROMPT = """Given these per-paper claim summaries about the question '{query}', identify where papers agree, disagree, and where the question remains open or under-determined.
+Respond ONLY with JSON (no markdown, no extra text):
+{{"consensus": ["point of agreement 1", ...], "disagreement": [{{"claim": "contested claim", "papers": ["<doi or paper_id>", ...]}}], "open": ["open question 1", ...]}}
+Summaries:
+{summaries}"""
+
+# Prompt to write the final three-section structured brief.
+CONTRADICTION_SYNTHESIS_PROMPT = """Write a structured research brief answering '{query}' with exactly three markdown sections:
+
+## Points of consensus
+(list what the papers agree on)
+
+## Points of disagreement
+(state who claims what, citing papers by title or DOI)
+
+## Open / under-determined
+(note questions the papers leave unresolved)
+
+Base your answer strictly on these clusters and paper summaries.
+
+Clusters:
+{clusters}
+
+Paper summaries:
+{summaries}"""
