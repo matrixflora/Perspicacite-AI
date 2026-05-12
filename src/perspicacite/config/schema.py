@@ -13,11 +13,13 @@ class ServerConfig(BaseModel):
     port: int = Field(default=5468, ge=1024, le=65535)
     reload: bool = False
 
-    cors_origins: list[str] = Field(default_factory=lambda: [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:5468"
-    ])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://localhost:5468",
+        ]
+    )
 
 
 class MCPConfig(BaseModel):
@@ -51,7 +53,9 @@ class KnowledgeBaseConfig(BaseModel):
     chunking_method: Literal["token", "semantic", "agentic"] = "token"
     default_top_k: int = Field(default=10, ge=1, le=100)
     similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    use_two_pass: bool = Field(default=True, description="Enable two-pass retrieval for full paper context")
+    use_two_pass: bool = Field(
+        default=True, description="Enable two-pass retrieval for full paper context"
+    )
 
 
 class LLMProviderConfig(BaseModel):
@@ -70,34 +74,38 @@ class LLMConfig(BaseModel):
     # v1 core/core.py get_response: truncate mandatory + base system prompt to this length (chars)
     max_context_window: int = Field(default=10000, ge=2000, le=500000)
 
-    providers: dict[str, LLMProviderConfig] = Field(default_factory=lambda: {
-        "anthropic": LLMProviderConfig(
-            base_url="https://api.anthropic.com",
-            timeout=120,
-            max_retries=3,
-        ),
-        "openai": LLMProviderConfig(
-            base_url="https://api.openai.com/v1",
-            timeout=60,
-            max_retries=3,
-        ),
-        "deepseek": LLMProviderConfig(
-            base_url="https://api.deepseek.com",
-            timeout=60,
-            max_retries=3,
-        ),
-        "minimax": LLMProviderConfig(
-            base_url="https://api.minimaxi.com/anthropic",  # Anthropic-compatible API for Chinese users
-            timeout=120,
-            max_retries=3,
-        ),
-    })
+    providers: dict[str, LLMProviderConfig] = Field(
+        default_factory=lambda: {
+            "anthropic": LLMProviderConfig(
+                base_url="https://api.anthropic.com",
+                timeout=120,
+                max_retries=3,
+            ),
+            "openai": LLMProviderConfig(
+                base_url="https://api.openai.com/v1",
+                timeout=60,
+                max_retries=3,
+            ),
+            "deepseek": LLMProviderConfig(
+                base_url="https://api.deepseek.com",
+                timeout=60,
+                max_retries=3,
+            ),
+            "minimax": LLMProviderConfig(
+                base_url="https://api.minimaxi.com/anthropic",  # Anthropic-compatible API for Chinese users
+                timeout=120,
+                max_retries=3,
+            ),
+        }
+    )
 
-    context: dict[str, Any] = Field(default_factory=lambda: {
-        "max_tokens": 8000,
-        "chat_history_turns": 10,
-        "summarize_threshold": 20,
-    })
+    context: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "max_tokens": 8000,
+            "chat_history_turns": 10,
+            "summarize_threshold": 20,
+        }
+    )
 
 
 class RAGModeSettings(BaseModel):
@@ -111,7 +119,9 @@ class RAGModeSettings(BaseModel):
     enable_reflection: bool = False
     build_citation_graph: bool = False
     use_hybrid: bool = False  # Use hybrid retrieval (vector + BM25)
-    max_papers: int = Field(default=10, ge=1, le=50)  # Max papers to include in response (agentic mode)
+    max_papers: int = Field(
+        default=10, ge=1, le=50
+    )  # Max papers to include in response (agentic mode)
     # v1 core: optional separate model for refine_response / evaluate_response
     evaluator_provider: Optional[str] = None
     evaluator_model: Optional[str] = None
@@ -126,46 +136,59 @@ class RAGModeSettings(BaseModel):
 class RAGModesConfig(BaseModel):
     """RAG mode configurations for benchmark comparison."""
 
+    reranker_model: str = Field(
+        default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        description="HuggingFace cross-encoder model used for reranking",
+    )
+
     # Basic: Single query, no refinement, fastest
-    basic: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
-        max_iterations=1,
-        tools=["kb_search"],
-        rerank=False,
-        query_expansion=False,
-        enable_planning=False,
-        enable_reflection=False,
-    ))
+    basic: RAGModeSettings = Field(
+        default_factory=lambda: RAGModeSettings(
+            max_iterations=1,
+            tools=["kb_search"],
+            rerank=False,
+            query_expansion=False,
+            enable_planning=False,
+            enable_reflection=False,
+        )
+    )
 
     # Advanced: Query rephrasing, WRRF scoring, optional refinement
-    advanced: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
-        max_iterations=1,
-        tools=["kb_search"],
-        rerank=True,
-        query_expansion=True,  # Generate similar queries
-        enable_planning=False,
-        enable_reflection=True,  # Optional refinement
-        use_hybrid=True,  # Enable hybrid retrieval by default
-    ))
+    advanced: RAGModeSettings = Field(
+        default_factory=lambda: RAGModeSettings(
+            max_iterations=1,
+            tools=["kb_search"],
+            rerank=True,
+            query_expansion=True,  # Generate similar queries
+            enable_planning=False,
+            enable_reflection=True,  # Optional refinement
+            use_hybrid=True,  # Enable hybrid retrieval by default
+        )
+    )
 
     # Profound: Multi-cycle research with planning (from v1)
-    profound: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
-        max_iterations=3,
-        tools=["kb_search", "web_search"],
-        rerank=True,
-        query_expansion=True,
-        enable_planning=True,  # Research planning
-        enable_reflection=True,  # Plan review and adjustment
-    ))
+    profound: RAGModeSettings = Field(
+        default_factory=lambda: RAGModeSettings(
+            max_iterations=3,
+            tools=["kb_search", "web_search"],
+            rerank=True,
+            query_expansion=True,
+            enable_planning=True,  # Research planning
+            enable_reflection=True,  # Plan review and adjustment
+        )
+    )
 
     # Agentic: Intent-based with tool selection
-    agentic: RAGModeSettings = Field(default_factory=lambda: RAGModeSettings(
-        max_iterations=5,
-        tools=["kb_search", "lotus_search", "literature_search", "fetch_pdf"],
-        rerank=True,
-        query_expansion=True,
-        enable_planning=True,
-        enable_reflection=True,
-    ))
+    agentic: RAGModeSettings = Field(
+        default_factory=lambda: RAGModeSettings(
+            max_iterations=5,
+            tools=["kb_search", "lotus_search", "literature_search", "fetch_pdf"],
+            rerank=True,
+            query_expansion=True,
+            enable_planning=True,
+            enable_reflection=True,
+        )
+    )
 
 
 class SciLexAPIConfig(BaseModel):
@@ -181,33 +204,35 @@ class SciLexConfig(BaseModel):
     enabled: bool = True
     config_path: Optional[Path] = None
 
-    apis: dict[str, SciLexAPIConfig] = Field(default_factory=lambda: {
-        "semantic_scholar": SciLexAPIConfig(enabled=True, rate_limit=100),
-        "openalex": SciLexAPIConfig(enabled=True, rate_limit=100),
-        "pubmed": SciLexAPIConfig(enabled=True, rate_limit=10),
-        "arxiv": SciLexAPIConfig(enabled=True, rate_limit=100),
-        "ieee": SciLexAPIConfig(enabled=False, rate_limit=100),
-        "springer": SciLexAPIConfig(enabled=False, rate_limit=100),
-        "elsevier": SciLexAPIConfig(enabled=False, rate_limit=100),
-        "hal": SciLexAPIConfig(enabled=True, rate_limit=100),
-        "dblp": SciLexAPIConfig(enabled=True, rate_limit=100),
-        "istex": SciLexAPIConfig(enabled=True, rate_limit=100),
-    })
+    apis: dict[str, SciLexAPIConfig] = Field(
+        default_factory=lambda: {
+            "semantic_scholar": SciLexAPIConfig(enabled=True, rate_limit=100),
+            "openalex": SciLexAPIConfig(enabled=True, rate_limit=100),
+            "pubmed": SciLexAPIConfig(enabled=True, rate_limit=10),
+            "arxiv": SciLexAPIConfig(enabled=True, rate_limit=100),
+            "ieee": SciLexAPIConfig(enabled=False, rate_limit=100),
+            "springer": SciLexAPIConfig(enabled=False, rate_limit=100),
+            "elsevier": SciLexAPIConfig(enabled=False, rate_limit=100),
+            "hal": SciLexAPIConfig(enabled=True, rate_limit=100),
+            "dblp": SciLexAPIConfig(enabled=True, rate_limit=100),
+            "istex": SciLexAPIConfig(enabled=True, rate_limit=100),
+        }
+    )
 
-    collection: dict[str, Any] = Field(default_factory=lambda: {
-        "default_max_papers": 100,
-        "quality_threshold": 0.7,
-        "deduplicate": True,
-        "download_pdfs": True,
-    })
+    collection: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "default_max_papers": 100,
+            "quality_threshold": 0.7,
+            "deduplicate": True,
+            "download_pdfs": True,
+        }
+    )
 
 
 class WebSearchConfig(BaseModel):
     """Web search configuration."""
 
-    providers: list[str] = Field(default_factory=lambda: [
-        "google_scholar", "semantic_scholar"
-    ])
+    providers: list[str] = Field(default_factory=lambda: ["google_scholar", "semantic_scholar"])
     cache_ttl: int = Field(default=3600, ge=0)  # seconds
 
 
@@ -215,44 +240,42 @@ class PDFDownloadConfig(BaseModel):
     """PDF download configuration."""
 
     unpaywall_email: Optional[str] = Field(
-        default=None,
-        description="Email for Unpaywall API. Required for querying open access PDFs."
+        default=None, description="Email for Unpaywall API. Required for querying open access PDFs."
     )
     alternative_endpoint: Optional[str] = Field(
         default=None,
-        description="Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror). User must provide their own."
+        description="Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror). User must provide their own.",
     )
-    
+
     # Publisher API keys for institutional access
     # Open access (no key needed)
     # - arXiv: fully open, no registration needed
-    
+
     # Institutional access (API keys needed)
     wiley_tdm_token: Optional[str] = Field(
         default=None,
-        description="Wiley TDM (Text and Data Mining) API client token. Register at https://developer.wiley.com/"
+        description="Wiley TDM (Text and Data Mining) API client token. Register at https://developer.wiley.com/",
     )
     elsevier_api_key: Optional[str] = Field(
         default=None,
-        description="Elsevier ScienceDirect API key. Register at https://dev.elsevier.com/"
+        description="Elsevier ScienceDirect API key. Register at https://dev.elsevier.com/",
     )
     aaas_api_key: Optional[str] = Field(
-        default=None,
-        description="AAAS (Science) API key for institutional access."
+        default=None, description="AAAS (Science) API key for institutional access."
     )
     rsc_api_key: Optional[str] = Field(
         default=None,
-        description="Royal Society of Chemistry API key. Register at https://api.rsc.org/"
+        description="Royal Society of Chemistry API key. Register at https://api.rsc.org/",
     )
     springer_api_key: Optional[str] = Field(
         default=None,
-        description="Springer Nature API key. Register at https://dev.springernature.com/"
+        description="Springer Nature API key. Register at https://dev.springernature.com/",
     )
     # ACS typically uses IP-based access, no API key
 
     semantic_scholar_api_key: Optional[str] = Field(
         default=None,
-        description="Semantic Scholar API key. Register at https://www.semanticscholar.org/product/api#api-key"
+        description="Semantic Scholar API key. Register at https://www.semanticscholar.org/product/api#api-key",
     )
 
     timeout: float = Field(default=30.0, gt=0)
