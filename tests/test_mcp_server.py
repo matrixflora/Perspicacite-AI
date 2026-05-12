@@ -415,5 +415,30 @@ async def test_add_dois_to_kb_oversize():
         s.mcp_state.initialized = saved
 
 
+@pytest.mark.asyncio
+async def test_generate_report_kb_names_mismatch(monkeypatch):
+    from perspicacite.mcp import server as s
+
+    saved = s.mcp_state.initialized
+    s.mcp_state.initialized = True
+
+    class _KB:
+        def __init__(self, n, m):
+            self.name = n
+            self.collection_name = f"c_{n}"
+            self.embedding_model = m
+
+    class _SS:
+        async def get_kb_metadata(self, name):
+            return {"a": _KB("a", "m1"), "b": _KB("b", "m2")}.get(name)
+
+    s.mcp_state.session_store = _SS()
+    try:
+        out = json.loads(await s.generate_report(query="q", kb_names=["a", "b"]))
+        assert out["success"] is False and "embedding" in out["error"].lower()
+    finally:
+        s.mcp_state.initialized = saved
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -408,32 +408,86 @@ async def search_knowledge_base(
     query: str,
     kb_name: str = "default",
     top_k: int = 5,
+    kb_names: list[str] | None = None,
 ) -> str:
     """
-    Search within a specific knowledge base using semantic similarity.
+    Search within a specific knowledge base (or multiple KBs) using semantic similarity.
 
     Args:
         query: Search query
-        kb_name: Knowledge base name
+        kb_name: Knowledge base name (single-KB path)
         top_k: Number of top results to return
+        kb_names: Optional list of KBs to query together. All KBs must share the same
+            embedding model. When provided and len > 1, supersedes kb_name and returns
+            chunks tagged with their source KB. When exactly 1 entry, treated as
+            single KB via kb_name.
 
     Returns:
-        JSON with matching chunks including paper title, section, relevance score.
+        JSON with matching chunks including paper_id, chunk_text, relevance_score,
+        and (in multi-KB mode) kb_name per chunk.
     """
     state = _require_state()
     if isinstance(state, str):
         return state
 
     try:
+        # Multi-KB path
+        if kb_names and len(kb_names) > 1:
+            from perspicacite.retrieval.multi_kb import MultiKBRetriever, check_embedding_compat
+
+            metas = [await state.session_store.get_kb_metadata(n) for n in kb_names]
+            for i, meta in enumerate(metas):
+                if meta is None:
+                    return _json_error(f"Knowledge base not found: {kb_names[i]}")
+            compat_msg = check_embedding_compat(metas)
+            if compat_msg:
+                return _json_error(compat_msg)
+
+            retr = MultiKBRetriever(
+                vector_store=state.vector_store,
+                embedding_service=state.embedding_provider,
+                kb_metas=metas,
+            )
+            results = await retr.search(query, top_k=top_k)
+
+            chunks = []
+            for r in results:
+                meta_obj = r.get("metadata")
+                meta_dict = meta_obj.__dict__ if hasattr(meta_obj, "__dict__") else (meta_obj or {})
+                chunks.append(
+                    {
+                        "paper_id": r.get("paper_id"),
+                        "title": meta_dict.get("title") if isinstance(meta_dict, dict) else None,
+                        "section": meta_dict.get("section")
+                        if isinstance(meta_dict, dict)
+                        else None,
+                        "chunk_text": r.get("text", ""),
+                        "relevance_score": r.get("score"),
+                        "doi": meta_dict.get("doi") if isinstance(meta_dict, dict) else None,
+                        "kb_name": r.get("kb_name"),
+                    }
+                )
+
+            return _json_ok(
+                {
+                    "query": query,
+                    "kb_names": kb_names,
+                    "results": chunks,
+                }
+            )
+
+        # Single-KB path (original behaviour, unchanged)
+        effective_kb_name = kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
+
         from perspicacite.models.kb import chroma_collection_name_for_kb
         from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase, KnowledgeBaseConfig
 
-        collection_name = chroma_collection_name_for_kb(kb_name)
+        collection_name = chroma_collection_name_for_kb(effective_kb_name)
 
         # Verify KB exists
-        kb_meta = await state.session_store.get_kb_metadata(kb_name)
+        kb_meta = await state.session_store.get_kb_metadata(effective_kb_name)
         if not kb_meta:
-            return _json_error(f"Knowledge base '{kb_name}' not found")
+            return _json_error(f"Knowledge base '{effective_kb_name}' not found")
 
         dkb = DynamicKnowledgeBase(
             state.vector_store,
@@ -464,7 +518,7 @@ async def search_knowledge_base(
         return _json_ok(
             {
                 "query": query,
-                "kb_name": kb_name,
+                "kb_name": effective_kb_name,
                 "results": chunks,
             }
         )
@@ -711,6 +765,7 @@ async def generate_report(
     mode: str = "advanced",
     max_papers: int = 10,
     recency_weight: float = 0.0,
+    kb_names: list[str] | None = None,
 ) -> str:
     """
     Generate a synthesized research report from a knowledge base.
@@ -720,7 +775,10 @@ async def generate_report(
 
     Args:
         query: Research question to answer
-        kb_name: Knowledge base to query
+        kb_name: Knowledge base to query (single-KB path)
+        kb_names: Optional list of KBs to query together. All KBs must share the same
+            embedding model. When provided and len > 1, supersedes kb_name.
+            When exactly 1 entry, treated as single KB via kb_name.
         mode: RAG mode - "basic" (fast), "advanced" (query expansion), "profound" (multi-cycle),
             or "contradiction" (agreement/disagreement analysis)
         max_papers: Maximum papers to reference in the report
@@ -735,14 +793,32 @@ async def generate_report(
         return state
 
     try:
-        from perspicacite.models.kb import chroma_collection_name_for_kb
+        from perspicacite.models.rag import RAGMode, RAGRequest
         from perspicacite.rag.engine import RAGEngine
-        from perspicacite.models.rag import RAGRequest, RAGMode
 
-        collection_name = chroma_collection_name_for_kb(kb_name)
-        kb_meta = await state.session_store.get_kb_metadata(kb_name)
-        if not kb_meta:
-            return _json_error(f"Knowledge base '{kb_name}' not found")
+        # Resolve effective kb_name / kb_names
+        effective_kb_name = kb_name
+        effective_kb_names: list[str] | None = None
+
+        if kb_names and len(kb_names) > 1:
+            from perspicacite.retrieval.multi_kb import check_embedding_compat
+
+            metas = [await state.session_store.get_kb_metadata(n) for n in kb_names]
+            for i, meta in enumerate(metas):
+                if meta is None:
+                    return _json_error(f"Knowledge base not found: {kb_names[i]}")
+            compat_msg = check_embedding_compat(metas)
+            if compat_msg:
+                return _json_error(compat_msg)
+            effective_kb_names = kb_names
+        elif kb_names and len(kb_names) == 1:
+            effective_kb_name = kb_names[0]
+
+        if effective_kb_names is None:
+            # Single-KB: verify it exists
+            kb_meta = await state.session_store.get_kb_metadata(effective_kb_name)
+            if not kb_meta:
+                return _json_error(f"Knowledge base '{effective_kb_name}' not found")
 
         engine = RAGEngine(
             llm_client=state.llm_client,
@@ -766,7 +842,8 @@ async def generate_report(
 
         rag_request = RAGRequest(
             query=query,
-            kb_name=kb_name,
+            kb_name=effective_kb_name,
+            kb_names=effective_kb_names,
             mode=rag_mode,
             recency_weight=recency_weight if recency_weight > 0 else None,
         )
@@ -789,15 +866,17 @@ async def generate_report(
                         "doi": src.get("doi"),
                         "relevance_score": src.get("relevance_score"),
                         "section": src.get("section"),
+                        "kb_name": src.get("kb_name"),
                     }
                 )
 
-        logger.info("mcp_generate_report", query=query, kb_name=kb_name, mode=mode)
+        logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
 
         return _json_ok(
             {
                 "query": query,
-                "kb_name": kb_name,
+                "kb_name": effective_kb_name,
+                "kb_names": effective_kb_names,
                 "mode": mode,
                 "report": report_text,
                 "sources": sources,

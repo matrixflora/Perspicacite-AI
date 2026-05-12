@@ -53,6 +53,10 @@ class ChatRequest(BaseModel):
         default=None, description="Conversation ID for persistent chat thread"
     )
     kb_name: Optional[str] = Field(default=None, description="Knowledge base to search first")
+    kb_names: Optional[List[str]] = Field(
+        default=None,
+        description="Multiple knowledge bases to query together (embedding-model-compatible KBs only)",
+    )
     mode: str = Field(
         default="basic",
         description=(
@@ -319,10 +323,31 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
         else None
     )
 
+    # Determine effective kb_name / kb_names for the RAG request
+    effective_kb_name = request.kb_name or "default"
+    effective_kb_names: Optional[List[str]] = None
+
+    if request.kb_names and len(request.kb_names) > 1 and app_state.session_store:
+        from perspicacite.retrieval.multi_kb import check_embedding_compat
+
+        metas = [await app_state.session_store.get_kb_metadata(n) for n in request.kb_names]
+        missing = next((request.kb_names[i] for i, m in enumerate(metas) if m is None), None)
+        if missing is not None:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Knowledge base not found: {missing}'})}\n\n"
+            return
+        compat_msg = check_embedding_compat(metas)
+        if compat_msg:
+            yield f"data: {json.dumps({'type': 'error', 'message': compat_msg})}\n\n"
+            return
+        effective_kb_names = request.kb_names
+    elif request.kb_names and len(request.kb_names) == 1:
+        effective_kb_name = request.kb_names[0]
+
     # Create RAG request
     rag_request = RAGReq(
         query=request.query,
-        kb_name=request.kb_name or "default",
+        kb_name=effective_kb_name,
+        kb_names=effective_kb_names,
         mode=rag_mode,
         stream=True,
         databases=request.databases,
