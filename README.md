@@ -1,16 +1,53 @@
+<div align="center">
+
 # Perspicacité — AI-Powered Scientific Literature Research Assistant
 
-**Perspicacité** (French for "insight") helps scientists, researchers, and students search, understand, and organize academic literature using AI grounded in real research papers.
+*Local-first RAG system for searching, understanding, and organizing academic literature*
+
+**5 RAG modes** &nbsp;·&nbsp; **Unified content pipeline** &nbsp;·&nbsp; **Hybrid vector+BM25 retrieval** &nbsp;·&nbsp; **MCP server** &nbsp;·&nbsp; **REST API**
+
+[![Paper](https://img.shields.io/badge/Paper-ISWC--C%202025-blue?style=flat-square)](https://iswc2025.semanticweb.org/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square)](https://opensource.org/licenses/Apache-2.0)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+
+</div>
+
+---
+
+**Perspicacité** (French for "insight") helps scientists, researchers, and students search, understand, and organize academic literature using AI grounded in real research papers. It works entirely on your machine — only LLM inference calls leave your environment.
+
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [How to Use Perspicacité](#how-to-use-perspicacité)
+- [RAG Modes](#rag-modes)
+- [Content Retrieval Pipeline](#content-retrieval-pipeline)
+- [MCP Server](#mcp-server)
+- [REST API](#rest-api)
+- [Integration with AI Agents](#integration-with-ai-agents)
+- [CLI Commands](#cli-commands)
+- [Configuration](#configuration)
+- [Knowledge Bases](#knowledge-bases)
+- [Development](#development)
+- [Privacy & Data](#privacy--data)
+- [Contributing](#contributing)
+- [License](#license)
+- [Citation](#citation)
+
+---
 
 ## Features
 
-- **Multi-database search** — Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP, and more
+- **Multi-database search** — Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP, and more via SciLEx
 - **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
 - **5 RAG modes** — From fast KB retrieval to multi-cycle agentic research and systematic literature surveys
 - **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
-- **MCP server** — 8 tools exposed via Model Context Protocol for integration with AI agents (Mimosa, SmolAgents, etc.)
+- **MCP server** — 8 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
 - **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
 - **Local-first** — Data stays on your machine; only API calls go to LLM providers
+
+---
 
 ## Quick Start
 
@@ -22,14 +59,15 @@
 ### Install
 
 ```bash
-git clone <repository-url>
-cd perspicacite_v2
-uv sync --dev
+git clone https://github.com/HolobiomicsLab/Perspicacite-AI.git
+cd Perspicacite-AI
+uv sync
 ```
 
 ### Configure
 
 ```bash
+cp config.example.yml config.yml
 cp .env.example .env
 # Edit .env — add at least one LLM API key
 ```
@@ -46,120 +84,83 @@ cp .env.example .env
 uv run perspicacite -c config.yml serve
 ```
 
-Open **http://localhost:8000** in your browser.
+Open **http://localhost:8000** in your browser. The MCP server runs on the same port at `/mcp`. Use `--no-mcp` to disable it.
 
-> The MCP server runs on the same port at `/mcp`. Use `--no-mcp` to disable it.
-
-> **Note for developers:** After editing files in `static/css/` or `static/js/`, force a browser hard-refresh (Ctrl+Shift+R / Cmd+Shift+R) to bypass the cache.
+---
 
 ## How to Use Perspicacité
 
-### Using the Web Interface
+### 1. Choose Your Knowledge Base (or Don't)
 
-#### 1. Choose Your Knowledge Base (or Don't!)
+In the left sidebar, under **"Knowledge Base"**:
 
-In the left sidebar, you'll see a "Knowledge Base" section:
+- **"No KB (web search only)"** — searches academic databases live for every query
+- **Your own KBs** — searches only papers you have added
 
-- **"No KB (web search only)"** — Searches the entire web for papers
-- **Your own KBs** — Searches only papers you've added
-
-**To create a new Knowledge Base:**
+**Create a Knowledge Base:**
 1. Click "+ Create new KB"
-2. Enter a KB name and drag-and-drop a `.bib` file
-3. Click "Create from BibTeX" to import papers
+2. Enter a name and drag-and-drop a `.bib` file
+3. Click "Create from BibTeX" to import papers and index them
 
-#### 2. Ask a Question
+### 2. Ask a Question
 
 Type your research question in the chat box. Examples:
-- "What are the effects of green tea extract on metabolism?"
-- "How is feature-based molecular networking used in metabolomics?"
-- "Compare transformer models to CNNs for medical imaging"
 
-#### 3. Choose a Mode
+- *"What are the effects of green tea extract on metabolism?"*
+- *"How is feature-based molecular networking used in metabolomics?"*
+- *"Compare transformer models to CNNs for medical imaging"*
 
-Select a mode from the dropdown. See the RAG Modes table below for details.
+### 3. Choose a Mode
 
-#### 4. Review the Answer
+Select a RAG mode from the dropdown. See the [RAG Modes](#rag-modes) table below for guidance on which to use.
+
+### 4. Review the Answer
 
 Perspicacité will:
-1. Show its "thinking process" (click to expand)
-2. Search relevant papers
-3. Filter and score them for relevance
-4. Download full texts when possible
-5. Generate an answer with citations
+1. Show its thinking process (click to expand)
+2. Search and score relevant papers
+3. Download full texts when possible
+4. Generate an answer with citations
 
-#### 5. Save Interesting Papers
+### 5. Save Interesting Papers
 
-At the bottom of each response, you'll see papers found during research. Click "Add to KB" to save them to your knowledge base.
+At the bottom of each response, click **"Add to KB"** on any paper to save it to your knowledge base.
 
-### Building Your Knowledge Base
-
-**Method 1: Import from BibTeX**
-1. Export your references as BibTeX from Zotero, Mendeley, or EndNote
-2. Click "+ Create new KB", drag your `.bib` file, enter a name
-3. Click "Create from BibTeX"
-
-**Method 2: Add Papers from Search Results**
-When Perspicacité finds papers during research, click "Add to KB" on any paper.
-
-**Method 3: Add via MCP or API**
-```python
-# Via MCP tool
-add_papers_to_kb(kb_name="my-kb", papers=[{"title": "...", "doi": "..."}])
-
-# Via REST API
-POST /api/kb/my-kb/papers  [{"title": "...", "doi": "..."}]
-```
-
-### Tips for Best Results
-
-**Writing good questions:**
-- Be specific: "What are the antioxidant properties of green tea catechins?" over "Tell me about tea"
-- Ask research-focused questions — Perspicacité summarizes literature, it doesn't write original content
-
-**Managing KBs:**
-- Keep KBs focused — create separate ones for different projects
-- Start with 10-20 key papers, expand as needed
-- Pay attention to relevance scores — high-scoring papers are most useful
-
-**When to use each mode:**
-- **Basic**: You have a well-curated KB and want quick answers
-- **Advanced**: Your KB might need broader search
-- **Profound**: Complex questions needing multiple perspectives
-- **Agentic**: Questions requiring web search beyond your KB
-- **Literature Survey**: Mapping a research field with AI-identified themes
-
-
+---
 
 ## RAG Modes
 
-| Mode | Description | Speed |
-|------|-------------|-------|
-| **Basic** | Single-query retrieval from your KB with hybrid vector+BM25 search | Fast |
-| **Advanced** | Query expansion, WRRF fusion scoring, reranking | Medium |
-| **Profound** | Multi-cycle research (up to 3 iterations) with planning and self-evaluation | Slower |
-| **Agentic** | Intent-based agent with tool use (web search, PDF download), up to 5 iterations | Variable |
-| **Literature Survey** | Systematic field mapping: broad search, theme clustering, AI recommendations, paper selection | Slowest |
+| Mode | Description | Best For | Speed |
+|------|-------------|----------|-------|
+| **Basic** | Single-query hybrid vector+BM25 retrieval from your KB | Well-curated KB, quick answers | Fast |
+| **Advanced** | Query expansion, WRRF fusion scoring, reranking | Broader KB search, better precision | Medium |
+| **Profound** | Multi-cycle research (up to 3 iterations) with planning and self-evaluation | Complex questions, multiple perspectives | Slower |
+| **Agentic** | Intent-based agent with tool use (web search, PDF download), up to 5 iterations | Questions requiring live discovery beyond your KB | Variable |
+| **Literature Survey** | Systematic field mapping: broad search, theme clustering, AI recommendations | Mapping a research field, exploring a new topic | Slowest |
+
+---
 
 ## Content Retrieval Pipeline
 
-Paper content is retrieved through a unified pipeline with quality-based priority:
+Paper content is retrieved through a unified pipeline with quality-based priority routing:
 
 ```
-1. Discovery — OpenAlex + Unpaywall → learn PMCID, arXiv ID, OA status, abstract
-2. Structured full text — PMC JATS XML (sections + references) or arXiv HTML
-3. PDF full text — OA PDF, arXiv PDF, Unpaywall, publisher APIs (Springer, Wiley, Elsevier, etc.)
-4. Abstract only — from discovery metadata
-5. Discard — papers with no retrievable content
+1. Discovery      — OpenAlex + Unpaywall → PMCID, arXiv ID, OA status, abstract
+2. Structured     — PMC JATS XML (sections + references) or arXiv HTML
+3. PDF full text  — OA PDF, arXiv PDF, Unpaywall, publisher APIs (ACS, Springer, Wiley, Elsevier, …)
+4. Abstract only  — from discovery metadata when no full text is available
+5. Discard        — returns failure for papers with no retrievable content
 ```
 
-Structured content (PMC, arXiv) provides sections and references. PDF content provides raw text via PyMuPDF. Papers behind paywalls with no OA version are served as abstracts.
+Structured content (PMC, arXiv) provides sections and references. PDF content provides raw text via PyMuPDF. Papers behind paywalls with no OA version are served as abstracts. The `content_type` field in results is `"structured"` > `"full_text"` > `"abstract"` > `"none"`.
+
+---
 
 ## MCP Server
 
-Perspicacité exposes an MCP server with 8 tools, accessible via:
+Perspicacité exposes an MCP server with 8 tools at `http://localhost:8000/mcp`, accessible via:
 - **MCP protocol** — native tool discovery and invocation
-- **HTTP JSON-RPC** — `POST /mcp` with `{"method": "tools/call", "params": {"name": "...", "arguments": {...}}}`
+- **HTTP JSON-RPC** — `POST /mcp` with standard JSON-RPC 2.0 envelope
 
 ### Tools
 
@@ -173,6 +174,8 @@ Perspicacité exposes an MCP server with 8 tools, accessible via:
 | `search_knowledge_base` | Semantic search within a KB |
 | `list_knowledge_bases` | List all KBs with stats |
 | `generate_report` | Synthesize a research report using RAG |
+
+Full usage details and parameter documentation: [`docs/perspicacite_skills.md`](docs/perspicacite_skills.md)
 
 ### Example: JSON-RPC Call
 
@@ -195,6 +198,8 @@ r = httpx.post("http://localhost:8000/mcp", json={
             "Mcp-Session-Id": session_id})
 ```
 
+---
+
 ## REST API
 
 | Method | Path | Description |
@@ -213,12 +218,28 @@ r = httpx.post("http://localhost:8000/mcp", json={
 | `GET` | `/api/survey/{session_id}` | Get literature survey status |
 | `POST` | `/api/survey/{session_id}/generate` | Generate survey report |
 
-Non-streaming chat: pass `"stream": false` to `/api/chat` to get a JSON response instead of SSE.
+Pass `"stream": false` to `/api/chat` to get a JSON response instead of server-sent events.
+
+---
+
+## Integration with AI Agents
+
+Perspicacité is designed to be used as a scientific grounding companion by autonomous AI agents:
+
+**[Mimosa-AI](https://github.com/HolobiomicsLab/Mimosa-AI)** — a self-evolving multi-agent framework for autonomous scientific research — integrates natively with Perspicacité via its MCP interface. When Perspicacité is running, Mimosa automatically calls its literature search and KB tools to ground workflow creation and evaluation in peer-reviewed literature.
+
+To use Perspicacité with Mimosa:
+1. Start Perspicacité: `uv run perspicacite -c config.yml serve`
+2. Start Mimosa separately and point it at `http://localhost:8000/mcp`
+
+For **SmolAgents** or any MCP-compatible agent framework, add the MCP server URL to your agent's tool discovery configuration.
+
+---
 
 ## CLI Commands
 
 ```bash
-# Start the server (web + MCP)
+# Start the server (web UI + MCP)
 perspicacite -c config.yml serve [--host 0.0.0.0] [--port 8000] [--no-mcp] [--reload]
 
 # Create a KB from BibTeX
@@ -227,6 +248,8 @@ perspicacite -c config.yml create-kb my-kb --from-bibtex papers.bib
 # Show version
 perspicacite version
 ```
+
+---
 
 ## Configuration
 
@@ -254,89 +277,117 @@ mcp:
   enabled: true
 ```
 
-Academic database search APIs are configured under `scilex:` — enabled sources include Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP by default.
+Academic database search APIs are configured under `scilex:` — enabled sources include Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, and DBLP by default.
+
+---
 
 ## Knowledge Bases
 
 **Create from BibTeX:**
-- In the web UI: click "+ Create new KB", drag a `.bib` file, enter a name
-- Via CLI: `perspicacite create-kb my-kb --from-bibtex refs.bib`
-- Via MCP: `create_knowledge_base` then `add_papers_to_kb`
+- Web UI: click "+ Create new KB", drag a `.bib` file, enter a name
+- CLI: `perspicacite create-kb my-kb --from-bibtex refs.bib`
+- MCP: `create_knowledge_base` then `add_papers_to_kb`
 
 **Add papers during research:**
 - Agentic mode finds and downloads papers — click "Add to KB" to save
 - Literature Survey mode lets you select recommended papers and add in bulk
 
 **Chunking strategies:**
-- `token` — fixed-size token chunks (default)
-- `semantic` — splits at semantic boundaries
-- `agentic` — AI-driven chunking optimized for RAG
+
+| Strategy | Description |
+|----------|-------------|
+| `token` | Fixed-size token chunks (default) |
+| `semantic` | Splits at semantic boundaries |
+| `agentic` | AI-driven chunking optimized for RAG |
+
+**Tips:**
+- Keep KBs focused — create separate ones for different projects
+- Start with 10–20 key papers and expand as needed
+- Pay attention to relevance scores — higher-scoring papers are most useful
+
+---
 
 ## Development
 
 ### Run Tests
 
 ```bash
-# Unit tests
+# Unit tests (no external services needed)
 uv run pytest tests/unit/ -v
 
-# Live MCP tests (requires running server)
+# Skip tests requiring live API keys
+uv run pytest tests/unit/ -m "not live" -v
+
+# Live MCP tests (requires running server on port 8000)
 uv run python tests/test_mcp_live.py --all --port 8000
 uv run python tests/test_mcp_live.py --test search
-uv run python tests/test_mcp_live.py --test kb
+```
+
+### Lint and Type Check
+
+```bash
+uv run ruff check src/ tests/
+uv run ruff format src/ tests/
+uv run mypy src/
 ```
 
 ### Project Structure
 
 ```
 src/perspicacite/
-  cli.py                      # CLI commands (serve, create-kb, version)
-  config/schema.py            # Configuration model
-  mcp/server.py               # MCP server with 8 tools
+  cli.py                        # CLI commands (serve, create-kb, version)
+  config/schema.py              # Pydantic configuration model
+  mcp/server.py                 # MCP server with 8 tools
   pipeline/
-    download/                 # Content retrieval pipeline
-      discovery.py            # OpenAlex + Unpaywall discovery
-      unified.py              # Unified retrieve_paper_content()
-      europepmc.py            # PMC JATS XML fetcher
-      arxiv.py                # arXiv HTML + PDF
-    parsers/pdf.py            # PyMuPDF-based parser
-    bibtex_kb.py              # BibTeX → KB pipeline
+    download/                   # Content retrieval pipeline
+      discovery.py              # OpenAlex + Unpaywall discovery
+      unified.py                # retrieve_paper_content() — main entry point
+      europepmc.py              # PMC JATS XML fetcher
+      arxiv.py                  # arXiv HTML + PDF
+    parsers/pdf.py              # PyMuPDF-based parser
+    bibtex_kb.py                # BibTeX → KB pipeline
   rag/
-    engine.py                 # RAGEngine (routes to mode handlers)
-    modes/                    # basic, advanced, profound, agentic, literature_survey
-    tools/                    # Tool registry, KB search, LOTUS
-  search/scilex_adapter.py    # Multi-database literature search
-  retrieval/                  # ChromaDB vector store + hybrid search
-src/perspicacite/web/         # FastAPI web application (routers, state, app)
-templates/index.html          # Single-page chat UI (markup only)
-static/
-  css/                        # 6 stylesheets: theme, base, layout, chat, kb, survey
-  js/                         # 8 scripts: utils, databases, mode, conversations, chat, kb, survey, main
-old_tools/                    # Vendored legacy scripts staged for future porting
+    engine.py                   # RAGEngine (routes to mode handlers)
+    modes/                      # basic, advanced, profound, agentic, literature_survey
+    tools/                      # Tool registry, KB search, LOTUS
+  retrieval/                    # ChromaDB vector store + hybrid BM25 search
+  search/scilex_adapter.py      # Multi-database literature search
+  web/                          # FastAPI app, routers, AppState singleton
+templates/index.html            # Single-page chat UI
+static/css/                     # 6 stylesheets: theme, base, layout, chat, kb, survey
+static/js/                      # 8 scripts: utils, databases, mode, conversations, chat, kb, survey, main
 ```
+
+> **Developer note:** After editing files in `static/css/` or `static/js/`, force a browser hard-refresh (Ctrl+Shift+R / Cmd+Shift+R) to bypass the cache.
+
+---
 
 ## Privacy & Data
 
 - **Your data stays local** — KBs are stored in ChromaDB and SQLite on your machine
-- **API calls only** — Questions are sent to your configured LLM provider
-- **No tracking** — No usage data collected
+- **API calls only** — Queries are sent to your configured LLM provider; no data is sent elsewhere
+- **No tracking** — No usage analytics are collected
+
+---
 
 ## Contributing
 
-See `CONTRIBUTING.md` for guidelines.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for guidelines.
+
+---
 
 ## License
 
-Apache License 2.0 — see `LICENSE` and `NOTICE`.
+Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
-## Acknowledgments
+---
 
-- **ChromaDB** for vector storage
-- **OpenAlex** and **Semantic Scholar** for academic search
-- **Unpaywall** for open access discovery
-- **SciLEx** for literature exploration toolkit
+## Citation
 
-## References
+<p align="center">
+<b>Citation:</b> <em>An AI Pipeline for Scientific Literacy and Discovery: a Demonstration of Perspicacité-AI Integration with Knowledge Graphs</em><br>
+L. Pradi, T. Jiang, M. Feraud, M. Bekbergenova, Y. Taghzouti, L.-F. Nothias — <em>ISWC-C 2025</em>
+</p>
 
 ```bibtex
 @inproceedings{pradi2025perspicacite,
@@ -349,9 +400,18 @@ Apache License 2.0 — see `LICENSE` and `NOTICE`.
 
 ```bibtex
 @softwareversion{scilex2026,
-  title = {SciLEx, Science Literature Exploration Toolkit},
+  title  = {SciLEx, Science Literature Exploration Toolkit},
   author = {Ringwald, C\'{e}lian and Navet, Benjamin},
-  url = {https://github.com/Wimmics/SciLEx},
-  year = {2026}
+  url    = {https://github.com/Wimmics/SciLEx},
+  year   = {2026}
 }
 ```
+
+---
+
+## Acknowledgments
+
+- **[SciLEx](https://github.com/Wimmics/SciLEx)** — literature exploration toolkit powering multi-database search
+- **[ChromaDB](https://www.trychroma.com/)** — local vector storage
+- **[OpenAlex](https://openalex.org/)** and **[Semantic Scholar](https://www.semanticscholar.org/)** — academic search
+- **[Unpaywall](https://unpaywall.org/)** — open access discovery
