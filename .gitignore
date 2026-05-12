@@ -87,6 +87,7 @@ packages_to_use/
 !NOTICE
 !perspicacite_skills.md
 !docs/superpowers/**/*.md
+!MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
 # Image files (except logo/screenshots)
