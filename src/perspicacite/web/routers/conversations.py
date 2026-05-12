@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Optional
 
+import json as _json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import PlainTextResponse
 
 from perspicacite.web.state import app_state
 
@@ -141,3 +144,95 @@ async def delete_all_conversations():
 
     count = await app_state.session_store.delete_all_conversations()
     return {"status": "deleted", "count": count}
+
+
+def _parse_sources(raw) -> list[dict]:
+    """Return a list of source dicts; tolerates list-of-dicts or a JSON string."""
+    if isinstance(raw, str):
+        try:
+            raw = _json.loads(raw)
+        except Exception:
+            return []
+    if isinstance(raw, list):
+        return [s for s in raw if isinstance(s, dict)]
+    return []
+
+
+@router.get("/api/conversations/{conv_id}/export")
+async def export_conversation(conv_id: str, format: str = "markdown"):
+    """Export a conversation as Markdown (Q&A turns + cited sources)."""
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    if format != "markdown":
+        raise HTTPException(status_code=400, detail="Only format=markdown is supported")
+    conv = await app_state.session_store.get_conversation(conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    lines: list[str] = []
+    title = getattr(conv, "title", None) or f"Conversation {conv_id}"
+    lines.append(f"# {title}\n")
+    created = getattr(conv, "created_at", None)
+    if created:
+        lines.append(f"_Exported from Perspicacité — created {created}_\n")
+
+    all_sources: list[dict] = []
+    msgs = list(getattr(conv, "messages", []) or [])
+
+    i = 0
+    while i < len(msgs):
+        m = msgs[i]
+        role = getattr(m, "role", "")
+        if role == "user":
+            lines.append(f"## {getattr(m, 'content', '').strip()}\n")
+            # find next assistant message
+            j = i + 1
+            ans = None
+            while j < len(msgs):
+                if getattr(msgs[j], "role", "") == "assistant":
+                    ans = msgs[j]
+                    break
+                j += 1
+            if ans is not None:
+                lines.append(getattr(ans, "content", "").rstrip() + "\n")
+                srcs = _parse_sources(getattr(ans, "sources", []))
+                if srcs:
+                    cited = ", ".join(
+                        (
+                            f"[{s.get('title') or s.get('doi') or '?'}](https://doi.org/{s['doi']})"
+                            if s.get("doi")
+                            else f"{s.get('title') or '?'}"
+                        )
+                        for s in srcs
+                    )
+                    lines.append(f"**Sources:** {cited}\n")
+                    all_sources.extend(srcs)
+                i = j + 1
+                continue
+        elif role == "assistant":
+            # standalone assistant message — render as a section
+            lines.append(getattr(m, "content", "").rstrip() + "\n")
+            srcs = _parse_sources(getattr(m, "sources", []))
+            all_sources.extend(srcs)
+        i += 1
+
+    if all_sources:
+        lines.append("\n## References\n")
+        seen: set[str] = set()
+        for s in all_sources:
+            key = s.get("doi") or s.get("title")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            doi = s.get("doi")
+            entry = s.get("title") or doi or "?"
+            if doi:
+                entry += f" — https://doi.org/{doi}"
+            lines.append(f"- {entry}")
+
+    md = "\n".join(lines) + "\n"
+    return PlainTextResponse(
+        md,
+        media_type="text/markdown",
+        headers={"Content-Disposition": (f'attachment; filename="conversation-{conv_id}.md"')},
+    )
