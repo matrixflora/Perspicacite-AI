@@ -214,3 +214,18 @@ def test_contradiction_mode_enum():
 
     assert RAGMode.CONTRADICTION.value == "contradiction"
     assert RAGMode("contradiction") is RAGMode.CONTRADICTION
+
+
+def test_ragrequest_kb_names_default_none():
+    from perspicacite.models.rag import RAGRequest
+
+    assert RAGRequest(query="x").kb_names is None
+    r = RAGRequest(query="x", kb_names=["a", "b"])
+    assert r.kb_names == ["a", "b"]
+
+
+def test_source_reference_kb_name():
+    from perspicacite.models.rag import SourceReference
+
+    assert SourceReference(title="T").kb_name is None
+    assert SourceReference(title="T", kb_name="my_kb").kb_name == "my_kb"
