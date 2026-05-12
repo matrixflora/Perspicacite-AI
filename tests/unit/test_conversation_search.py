@@ -88,3 +88,27 @@ async def test_search_conversations_route_no_store(monkeypatch):
 
     out = await conv_router.search_conversations(q="anything")
     assert out == {"results": []}
+
+
+@pytest.mark.asyncio
+async def test_search_excludes_deleted_conversations(tmp_path):
+    """Deleted conversations must not appear in FTS search results."""
+    from perspicacite.memory.session_store import SessionStore
+    from perspicacite.models.messages import Message
+
+    store = SessionStore(tmp_path / "t.db")
+    await store.init_db()
+
+    conv = await store.create_conversation(session_id="s1", title="Algae", kb_name="default")
+    cid = conv.id
+
+    await store.add_message(cid, Message(role="user", content="photosynthesis in algae"))
+
+    # Conversation should be findable before deletion
+    assert any(r["id"] == cid for r in await store.search_conversations("photosynthesis"))
+
+    # Delete conversation — FTS index must be purged too
+    await store.delete_conversation(cid)
+
+    # Deleted conversation must not appear in search results
+    assert all(r["id"] != cid for r in await store.search_conversations("photosynthesis"))
