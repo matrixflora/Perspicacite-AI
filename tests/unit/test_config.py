@@ -114,6 +114,17 @@ def test_config_map_reduce_max_papers_default(tmp_path):
     assert cfg.rag_modes.agentic.map_reduce_max_papers == 8
 
 
+def test_config_has_contradiction_settings():
+    from perspicacite.config.schema import Config
+
+    cfg = Config()
+    assert cfg.rag_modes.contradiction is not None
+    # mirrors `advanced`: hybrid on, rerank on, no planning
+    assert cfg.rag_modes.contradiction.use_hybrid is True
+    assert cfg.rag_modes.contradiction.rerank is True
+    assert cfg.rag_modes.contradiction.enable_planning is False
+
+
 class TestEnvironmentOverrides:
     """Tests for environment variable overrides."""
 

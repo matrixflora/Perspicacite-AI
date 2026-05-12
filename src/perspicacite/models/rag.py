@@ -16,6 +16,7 @@ class RAGMode(str, Enum):
     PROFOUND: Multi-cycle research with planning, web search, reflection (from v1)
     AGENTIC: Intent-based agentic RAG with tool use
     LITERATURE_SURVEY: Systematic field mapping with theme identification and structured output
+    CONTRADICTION: Identify agreement / disagreement / open questions across papers
     """
 
     BASIC = "basic"
@@ -23,6 +24,7 @@ class RAGMode(str, Enum):
     PROFOUND = "profound"
     AGENTIC = "agentic"
     LITERATURE_SURVEY = "literature_survey"
+    CONTRADICTION = "contradiction"
 
 
 class SourceReference(BaseModel):
