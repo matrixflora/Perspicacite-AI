@@ -519,6 +519,79 @@ def screen_papers_cmd(
     click.echo(f"Kept {len(kept_entries)}/{len(cand_entries)} candidates -> {output_bib}")
 
 
+@cli.command(name="pubmed-search")
+@click.argument("query")
+@click.option("--max", "max_results", type=int, default=20, help="Max results")
+@click.option("--year-min", type=int, default=None, help="Earliest publication year")
+@click.option("--year-max", type=int, default=None, help="Latest publication year")
+@click.option(
+    "--email",
+    default=None,
+    help="NCBI email (else taken from config: scilex.pubmed_email or pdf_download.unpaywall_email)",
+)
+@click.option(
+    "--output",
+    "output_bib",
+    type=click.Path(),
+    default=None,
+    help="Write results to a .bib file",
+)
+@click.pass_context
+def pubmed_search_cmd(
+    ctx: click.Context,
+    query: str,
+    max_results: int,
+    year_min: int | None,
+    year_max: int | None,
+    email: str | None,
+    output_bib: str | None,
+) -> None:
+    """Deep PubMed search via NCBI Entrez."""
+    import bibtexparser
+
+    import perspicacite.search.pubmed as _pm
+
+    cfg = ctx.obj.get("config") if isinstance(ctx.obj, dict) else None
+    eff_email = (
+        email
+        or (getattr(getattr(cfg, "scilex", None), "pubmed_email", "") if cfg else "")
+        or (getattr(getattr(cfg, "pdf_download", None), "unpaywall_email", "") if cfg else "")
+        or ""
+    )
+    try:
+        adapter = _pm.PubMedSearchAdapter(email=eff_email)
+    except _pm.PubMedConfigError as e:
+        raise click.ClickException(str(e)) from e
+
+    papers = asyncio.run(
+        adapter.search(query, max_results=max_results, year_min=year_min, year_max=year_max)
+    )
+    click.echo(f"Found {len(papers)} papers")
+    for p in papers[:10]:
+        click.echo(f"  - {p.year or '????'}  {(p.title or '')[:90]}")
+
+    if output_bib:
+        db = bibtexparser.bibdatabase.BibDatabase()
+        db.entries = [
+            {
+                "ENTRYTYPE": "article",
+                "ID": (p.doi or f"pmid{p.metadata.get('pmid', '')}")
+                .replace("/", "_")
+                .replace(".", "_")
+                or f"entry{i}",
+                "title": p.title or "",
+                "year": str(p.year or ""),
+                "doi": p.doi or "",
+                "journal": p.journal or "",
+                "abstract": p.abstract or "",
+                "author": " and ".join(a.name for a in (p.authors or [])),
+            }
+            for i, p in enumerate(papers)
+        ]
+        Path(output_bib).write_text(bibtexparser.dumps(db))
+        click.echo(f"Wrote {len(papers)} entries to {output_bib}")
+
+
 @cli.command()
 def version() -> None:
     """Print version information."""
