@@ -23,6 +23,12 @@ logger = get_logger("perspicacite.search.scilex")
 class SciLExAdapter:
     """Adapter to use SciLEx as a search provider."""
 
+    name = "scilex"
+    description = (
+        "SciLEx multi-database academic literature search "
+        "(Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP)"
+    )
+
     def __init__(self, api_config: dict[str, Any] | None = None):
         self._scilex_available = self._check_scilex()
         self.api_config = api_config or {}

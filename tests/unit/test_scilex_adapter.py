@@ -30,11 +30,11 @@ class TestSciLExAdapter:
         assert results == []
 
     def test_build_api_config(self):
-        """Test API config building."""
+        """Test API config building — keys are CamelCase SciLEx names."""
         adapter = SciLExAdapter()
         config = adapter._build_api_config(["semantic_scholar", "ieee"])
 
-        assert "SEMANTIC_SCHOLAR" in config
+        assert "SemanticScholar" in config
         assert "IEEE" in config
 
     def test_map_single_record(self):
@@ -76,12 +76,12 @@ class TestSciLExAdapter:
 
 
 class TestSciLExSearchProvider:
-    """Tests for SciLExSearchProvider."""
+    """Tests for SciLExSearchProvider (alias for SciLExAdapter)."""
 
     def test_init(self):
-        """Test provider initialization."""
+        """Test provider is an SciLExAdapter instance."""
         provider = SciLExSearchProvider()
-        assert provider.adapter is not None
+        assert isinstance(provider, SciLExAdapter)
 
     def test_name(self):
         """Test provider name."""
