@@ -934,7 +934,7 @@ async def screen_papers(
                         doi = c.strip().replace("https://doi.org/", "")
                         try:
                             r = await retrieve_paper_content(
-                                doi, http_client=client, pdf_parser=state.pdf_parser
+                                doi, http_client=client, pdf_parser=None
                             )
                             md = r.metadata or {}
                             items.append(

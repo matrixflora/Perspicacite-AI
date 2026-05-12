@@ -198,3 +198,35 @@ async def test_get_paper_detail_exception_returns_error_dict(monkeypatch):
     assert result["doi"] == "10.1/x", result
     assert result["error"] == "boom", result
     assert result["content_type"] == "none", result
+
+
+@pytest.mark.asyncio
+async def test_paper_detail_does_not_pass_pdf_parser(monkeypatch):
+    """get_paper_detail must pass pdf_parser=None (fast metadata lookup, no PDF fetch)."""
+    from perspicacite.pipeline.download.base import PaperContent
+    from perspicacite.web.routers import kb as kb_router
+
+    captured: dict = {}
+
+    async def _fake(doi, **kw):
+        captured.update(kw)
+        return PaperContent(
+            success=True,
+            doi=doi,
+            content_type="abstract",
+            content_source="openalex",
+            abstract="a",
+            metadata={"title": "T"},
+        )
+
+    fake_state = _make_fake_app_state()
+
+    with (
+        patch.object(kb_router, "app_state", fake_state),
+        patch("perspicacite.pipeline.download.retrieve_paper_content", _fake),
+    ):
+        await kb_router.get_paper_detail(doi="10.1/x")
+
+    assert captured.get("pdf_parser") is None, (
+        f"get_paper_detail must pass pdf_parser=None, got {captured.get('pdf_parser')!r}"
+    )
