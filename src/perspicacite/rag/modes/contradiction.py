@@ -62,7 +62,16 @@ class ContradictionRAGMode(BaseRAGMode):
         )
         dkb.collection_name = chroma_collection_name_for_kb(request.kb_name)
         dkb._initialized = True
-        return await dkb.search(request.query, top_k=RETRIEVAL_TOP_K)
+        results = await dkb.search(request.query, top_k=RETRIEVAL_TOP_K)
+        if getattr(request, "recency_weight", None):
+            from perspicacite.retrieval.recency import apply_recency_weighting
+
+            results = apply_recency_weighting(
+                results,
+                request.recency_weight,
+                getattr(request, "recency_half_life_years", None),
+            )
+        return results
 
     # ------------------------------------------------------------------
     # Grouping

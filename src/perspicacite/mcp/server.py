@@ -710,6 +710,7 @@ async def generate_report(
     kb_name: str = "default",
     mode: str = "advanced",
     max_papers: int = 10,
+    recency_weight: float = 0.0,
 ) -> str:
     """
     Generate a synthesized research report from a knowledge base.
@@ -723,6 +724,8 @@ async def generate_report(
         mode: RAG mode - "basic" (fast), "advanced" (query expansion), "profound" (multi-cycle),
             or "contradiction" (agreement/disagreement analysis)
         max_papers: Maximum papers to reference in the report
+        recency_weight: Optional recency bias (0.0 = disabled, 1.0 = full recency). When > 0,
+            retrieved chunks are re-scored toward more recent papers using exponential decay.
 
     Returns:
         JSON with the report text, cited sources, and metadata.
@@ -765,6 +768,7 @@ async def generate_report(
             query=query,
             kb_name=kb_name,
             mode=rag_mode,
+            recency_weight=recency_weight if recency_weight > 0 else None,
         )
 
         async for event in engine.query_stream(rag_request):

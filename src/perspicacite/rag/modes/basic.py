@@ -79,7 +79,12 @@ class BasicRAGMode(BaseRAGMode):
 
         Ported from: core/core.py::retrieve_documents() and get_response()
         """
-        logger.info("basic_rag_start", query=request.query, use_hybrid=self.use_hybrid, use_two_pass=self.use_two_pass)
+        logger.info(
+            "basic_rag_start",
+            query=request.query,
+            use_hybrid=self.use_hybrid,
+            use_two_pass=self.use_two_pass,
+        )
 
         collection = chroma_collection_name_for_kb(request.kb_name)
         retrieval_query, refined = await compute_retrieval_query(request, llm)
@@ -126,27 +131,41 @@ class BasicRAGMode(BaseRAGMode):
             paper_results = []
             for r in chunk_results:
                 meta = r.get("metadata")
-                paper_results.append({
-                    "paper_id": getattr(meta, "paper_id", None) if meta else None,
-                    "paper_score": r.get("score", 0.0),
-                    "title": getattr(meta, "title", None) if meta else None,
-                    "authors": getattr(meta, "authors", None) if meta else None,
-                    "year": getattr(meta, "year", None) if meta else None,
-                    "doi": getattr(meta, "doi", None) if meta else None,
-                    "full_text": r.get("text", ""),
-                })
+                paper_results.append(
+                    {
+                        "paper_id": getattr(meta, "paper_id", None) if meta else None,
+                        "paper_score": r.get("score", 0.0),
+                        "title": getattr(meta, "title", None) if meta else None,
+                        "authors": getattr(meta, "authors", None) if meta else None,
+                        "year": getattr(meta, "year", None) if meta else None,
+                        "doi": getattr(meta, "doi", None) if meta else None,
+                        "full_text": r.get("text", ""),
+                    }
+                )
             logger.info("basic_chunk_retrieval", chunks=len(chunk_results))
+
+        # Apply optional recency weighting
+        if getattr(request, "recency_weight", None):
+            from perspicacite.retrieval.recency import apply_recency_weighting
+
+            paper_results = apply_recency_weighting(
+                paper_results,
+                request.recency_weight,
+                getattr(request, "recency_half_life_years", None),
+            )
 
         # Build sources from paper results
         sources = []
         for p in paper_results:
-            sources.append(SourceReference(
-                title=p.get("title") or "Untitled",
-                authors=p.get("authors"),
-                year=p.get("year"),
-                doi=p.get("doi"),
-                relevance_score=p.get("paper_score", 0.0),
-            ))
+            sources.append(
+                SourceReference(
+                    title=p.get("title") or "Untitled",
+                    authors=p.get("authors"),
+                    year=p.get("year"),
+                    doi=p.get("doi"),
+                    relevance_score=p.get("paper_score", 0.0),
+                )
+            )
 
         # Step 2: Generate response using full paper context
         if paper_results:
@@ -231,26 +250,40 @@ class BasicRAGMode(BaseRAGMode):
             paper_results = []
             for r in chunk_results:
                 meta = r.get("metadata")
-                paper_results.append({
-                    "paper_id": getattr(meta, "paper_id", None) if meta else None,
-                    "paper_score": r.get("score", 0.0),
-                    "title": getattr(meta, "title", None) if meta else None,
-                    "authors": getattr(meta, "authors", None) if meta else None,
-                    "year": getattr(meta, "year", None) if meta else None,
-                    "doi": getattr(meta, "doi", None) if meta else None,
-                    "full_text": r.get("text", ""),
-                })
+                paper_results.append(
+                    {
+                        "paper_id": getattr(meta, "paper_id", None) if meta else None,
+                        "paper_score": r.get("score", 0.0),
+                        "title": getattr(meta, "title", None) if meta else None,
+                        "authors": getattr(meta, "authors", None) if meta else None,
+                        "year": getattr(meta, "year", None) if meta else None,
+                        "doi": getattr(meta, "doi", None) if meta else None,
+                        "full_text": r.get("text", ""),
+                    }
+                )
+
+        # Apply optional recency weighting
+        if getattr(request, "recency_weight", None):
+            from perspicacite.retrieval.recency import apply_recency_weighting
+
+            paper_results = apply_recency_weighting(
+                paper_results,
+                request.recency_weight,
+                getattr(request, "recency_half_life_years", None),
+            )
 
         # Prepare sources
         sources = []
         for p in paper_results:
-            sources.append(SourceReference(
-                title=p.get("title") or "Untitled",
-                authors=p.get("authors"),
-                year=p.get("year"),
-                doi=p.get("doi"),
-                relevance_score=p.get("paper_score", 0.0),
-            ))
+            sources.append(
+                SourceReference(
+                    title=p.get("title") or "Untitled",
+                    authors=p.get("authors"),
+                    year=p.get("year"),
+                    doi=p.get("doi"),
+                    relevance_score=p.get("paper_score", 0.0),
+                )
+            )
         for source in sources:
             yield StreamEvent.source(source)
 
