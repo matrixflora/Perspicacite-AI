@@ -115,3 +115,6 @@ chat_no_answer.png
 exposomics/
 create_exposomics_kb.py
 enrich_kb_metadata.py
+
+# Scratch / per-paper experiment dirs under old_tools (hack scripts, intermediate bibs, downloaded PDFs)
+old_tools/library_expansion_with_abstract/expand*/
