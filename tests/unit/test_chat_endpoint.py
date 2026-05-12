@@ -22,15 +22,15 @@ import pytest
 async def _fake_sse_stream(*, include_answer=True, include_sources=True):
     """Generate fake SSE events mimicking agentic_chat_stream output."""
     if include_sources:
-        yield f'data: {json.dumps({"type": "source", "source": {"title": "Test Paper", "doi": "10.1234/test"}})}\n\n'
-        yield f'data: {json.dumps({"type": "papers_found", "count": 2})}\n\n'
+        yield f"data: {json.dumps({'type': 'source', 'source': {'title': 'Test Paper', 'doi': '10.1234/test'}})}\n\n"
+        yield f"data: {json.dumps({'type': 'papers_found', 'count': 2})}\n\n"
 
     if include_answer:
         answer = "This is the LLM answer about the test query."
         answer_b64 = base64.b64encode(answer.encode("utf-8")).decode("ascii")
-        yield f'data: {json.dumps({"type": "answer", "content_b64": answer_b64})}\n\n'
+        yield f"data: {json.dumps({'type': 'answer', 'content_b64': answer_b64})}\n\n"
 
-    yield f'data: {json.dumps({"type": "done"})}\n\n'
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
 async def _collect_non_streaming(stream_gen):
@@ -83,9 +83,10 @@ class TestNonStreamingCollection:
     @pytest.mark.asyncio
     async def test_answer_without_b64(self):
         """Answer can be plain content (no base64)."""
+
         async def stream():
-            yield f'data: {json.dumps({"type": "answer", "content": "Plain text answer"})}\n\n'
-            yield f'data: {json.dumps({"type": "done"})}\n\n'
+            yield f"data: {json.dumps({'type': 'answer', 'content': 'Plain text answer'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         result = await _collect_non_streaming(stream())
         assert result["answer"] == "Plain text answer"
@@ -93,9 +94,10 @@ class TestNonStreamingCollection:
     @pytest.mark.asyncio
     async def test_no_answer(self):
         """When stream has no answer event, answer is empty string."""
+
         async def stream():
-            yield f'data: {json.dumps({"type": "source", "source": {"title": "Paper"}})}\n\n'
-            yield f'data: {json.dumps({"type": "done"})}\n\n'
+            yield f"data: {json.dumps({'type': 'source', 'source': {'title': 'Paper'}})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         result = await _collect_non_streaming(stream())
         assert result["answer"] == ""
@@ -104,12 +106,13 @@ class TestNonStreamingCollection:
     @pytest.mark.asyncio
     async def test_stops_at_done(self):
         """Events after 'done' should be ignored."""
+
         async def stream():
             answer_b64 = base64.b64encode(b"Final answer").decode("ascii")
-            yield f'data: {json.dumps({"type": "answer", "content_b64": answer_b64})}\n\n'
-            yield f'data: {json.dumps({"type": "done"})}\n\n'
+            yield f"data: {json.dumps({'type': 'answer', 'content_b64': answer_b64})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
             # This should be ignored
-            yield f'data: {json.dumps({"type": "source", "source": {"title": "Ignored"}})}\n\n'
+            yield f"data: {json.dumps({'type': 'source', 'source': {'title': 'Ignored'}})}\n\n"
 
         result = await _collect_non_streaming(stream())
         assert result["answer"] == "Final answer"
@@ -118,11 +121,12 @@ class TestNonStreamingCollection:
     @pytest.mark.asyncio
     async def test_skips_non_data_lines(self):
         """Lines not starting with 'data:' are ignored."""
+
         async def stream():
             yield "This is not a data line\n"
             answer_b64 = base64.b64encode(b"Answer").decode("ascii")
-            yield f'data: {json.dumps({"type": "answer", "content_b64": answer_b64})}\n\n'
-            yield f'data: {json.dumps({"type": "done"})}\n\n'
+            yield f"data: {json.dumps({'type': 'answer', 'content_b64': answer_b64})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         result = await _collect_non_streaming(stream())
         assert result["answer"] == "Answer"
@@ -130,14 +134,22 @@ class TestNonStreamingCollection:
     @pytest.mark.asyncio
     async def test_handles_malformed_json(self):
         """Malformed JSON in data lines is skipped gracefully."""
+
         async def stream():
             yield "data: {invalid json}\n"
             answer_b64 = base64.b64encode(b"Still works").decode("ascii")
-            yield f'data: {json.dumps({"type": "answer", "content_b64": answer_b64})}\n\n'
-            yield f'data: {json.dumps({"type": "done"})}\n\n'
+            yield f"data: {json.dumps({'type': 'answer', 'content_b64': answer_b64})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         result = await _collect_non_streaming(stream())
         assert result["answer"] == "Still works"
+
+
+def test_chat_rag_mode_map_includes_contradiction():
+    from perspicacite.models.rag import RAGMode
+    from perspicacite.web.routers import chat
+
+    assert chat.RAG_MODE_MAP.get("contradiction") is RAGMode.CONTRADICTION
 
 
 if __name__ == "__main__":

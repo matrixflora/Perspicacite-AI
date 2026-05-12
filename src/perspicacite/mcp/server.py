@@ -720,7 +720,8 @@ async def generate_report(
     Args:
         query: Research question to answer
         kb_name: Knowledge base to query
-        mode: RAG mode - "basic" (fast), "advanced" (query expansion), or "profound" (multi-cycle)
+        mode: RAG mode - "basic" (fast), "advanced" (query expansion), "profound" (multi-cycle),
+            or "contradiction" (agreement/disagreement analysis)
         max_papers: Maximum papers to reference in the report
 
     Returns:
@@ -756,6 +757,7 @@ async def generate_report(
             "basic": RAGMode.BASIC,
             "advanced": RAGMode.ADVANCED,
             "profound": RAGMode.PROFOUND,
+            "contradiction": RAGMode.CONTRADICTION,
         }
         rag_mode = mode_map.get(mode, RAGMode.ADVANCED)
 
