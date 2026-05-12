@@ -131,6 +131,8 @@ class RAGModeSettings(BaseModel):
     enable_plan_review: bool = True
     # v1 get_response / profonde relevancy features
     use_relevancy_optimization: bool = True
+    # Cap on per-paper LLM extraction calls during final map-reduce answer synthesis
+    map_reduce_max_papers: int = Field(default=8, ge=1, le=64)
 
 
 class RAGModesConfig(BaseModel):
