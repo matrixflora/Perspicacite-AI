@@ -20,7 +20,6 @@ from perspicacite.logging import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.models.rag import (
     RAGMode,
     RAGRequest,
@@ -29,7 +28,6 @@ from perspicacite.models.rag import (
     StreamEvent,
 )
 from perspicacite.rag import prompts as _prompts
-from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 from perspicacite.rag.modes.base import BaseRAGMode
 
 logger = get_logger("perspicacite.rag.modes.contradiction")
@@ -55,13 +53,8 @@ class ContradictionRAGMode(BaseRAGMode):
         vector_store: Any,
         embedding_provider: Any,
     ) -> list[dict[str, Any]]:
-        """Retrieve chunks from the KB, returning raw dicts from dkb.search()."""
-        dkb = DynamicKnowledgeBase(
-            vector_store=vector_store,
-            embedding_service=embedding_provider,
-        )
-        dkb.collection_name = chroma_collection_name_for_kb(request.kb_name)
-        dkb._initialized = True
+        """Retrieve chunks from the KB (or multiple KBs), returning raw dicts from search()."""
+        dkb = self._build_kb_retriever(request, vector_store, embedding_provider)
         results = await dkb.search(request.query, top_k=RETRIEVAL_TOP_K)
         if getattr(request, "recency_weight", None):
             from perspicacite.retrieval.recency import apply_recency_weighting
@@ -118,6 +111,12 @@ class ContradictionRAGMode(BaseRAGMode):
             except AttributeError:
                 return dict(vars(meta))
         return dict(meta)
+
+    def _chunk_kb_name(self, chunk: Any) -> str | None:
+        """Extract the originating KB display name from a chunk, if present."""
+        if isinstance(chunk, dict):
+            return chunk.get("kb_name")
+        return getattr(chunk, "kb_name", None)
 
     # ------------------------------------------------------------------
     # Per-paper claim summarisation
@@ -301,6 +300,7 @@ class ContradictionRAGMode(BaseRAGMode):
         for pid in real_papers:
             chunks = by_paper[pid]
             meta = self._chunk_meta(chunks[0])
+            kb_name = self._chunk_kb_name(chunks[0])
             sources.append(
                 SourceReference(
                     title=meta.get("title") or pid,
@@ -308,6 +308,7 @@ class ContradictionRAGMode(BaseRAGMode):
                     year=meta.get("year"),
                     doi=meta.get("doi"),
                     relevance_score=min(1.0, max(0.0, self._chunk_score(chunks[0]))),
+                    kb_name=kb_name,
                 )
             )
         return sources
@@ -343,7 +344,9 @@ class ContradictionRAGMode(BaseRAGMode):
                     yield ev
                 # Emit source events for what we have
                 for pid in real_papers:
-                    meta = self._chunk_meta(by_paper[pid][0])
+                    first_chunk = by_paper[pid][0]
+                    meta = self._chunk_meta(first_chunk)
+                    kb_name = self._chunk_kb_name(first_chunk)
                     yield StreamEvent.source(
                         SourceReference(
                             title=meta.get("title") or pid,
@@ -352,8 +355,9 @@ class ContradictionRAGMode(BaseRAGMode):
                             doi=meta.get("doi"),
                             relevance_score=min(
                                 1.0,
-                                max(0.0, self._chunk_score(by_paper[pid][0])),
+                                max(0.0, self._chunk_score(first_chunk)),
                             ),
+                            kb_name=kb_name,
                         )
                     )
                 yield StreamEvent.done(

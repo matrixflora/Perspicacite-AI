@@ -86,7 +86,8 @@ class BasicRAGMode(BaseRAGMode):
             use_two_pass=self.use_two_pass,
         )
 
-        collection = chroma_collection_name_for_kb(request.kb_name)
+        dkb = self._build_kb_retriever(request, vector_store, embedding_provider)
+        collection = dkb.collection_name
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
             request.refined_query = refined  # type: ignore[misc]
@@ -100,15 +101,6 @@ class BasicRAGMode(BaseRAGMode):
 
         if self.use_two_pass:
             # Two-pass retrieval — identify papers, then fetch all their chunks
-            from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-
-            dkb = DynamicKnowledgeBase(
-                vector_store=vector_store,
-                embedding_service=embedding_provider,
-            )
-            dkb.collection_name = collection
-            dkb._initialized = True
-
             paper_results = await dkb.search_two_pass(
                 retrieval_query,
                 top_k=self.final_max_docs,
@@ -118,15 +110,6 @@ class BasicRAGMode(BaseRAGMode):
             logger.info("basic_two_pass", papers=len(paper_results))
         else:
             # Legacy chunk-level retrieval (no two-pass)
-            from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-
-            dkb = DynamicKnowledgeBase(
-                vector_store=vector_store,
-                embedding_service=embedding_provider,
-            )
-            dkb.collection_name = collection
-            dkb._initialized = True
-
             chunk_results = await dkb.search(retrieval_query, top_k=self.final_max_docs)
             paper_results = []
             for r in chunk_results:
@@ -140,6 +123,7 @@ class BasicRAGMode(BaseRAGMode):
                         "year": getattr(meta, "year", None) if meta else None,
                         "doi": getattr(meta, "doi", None) if meta else None,
                         "full_text": r.get("text", ""),
+                        "kb_name": r.get("kb_name"),
                     }
                 )
             logger.info("basic_chunk_retrieval", chunks=len(chunk_results))
@@ -164,6 +148,7 @@ class BasicRAGMode(BaseRAGMode):
                     year=p.get("year"),
                     doi=p.get("doi"),
                     relevance_score=p.get("paper_score", 0.0),
+                    kb_name=p.get("kb_name"),
                 )
             )
 
@@ -208,7 +193,8 @@ class BasicRAGMode(BaseRAGMode):
         """Execute Basic RAG with true streaming output."""
         yield StreamEvent.status("Basic RAG: Retrieving documents...")
 
-        collection = chroma_collection_name_for_kb(request.kb_name)
+        dkb = self._build_kb_retriever(request, vector_store, embedding_provider)
+        collection = dkb.collection_name
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
             request.refined_query = refined  # type: ignore[misc]
@@ -221,15 +207,6 @@ class BasicRAGMode(BaseRAGMode):
         cap = min(5, getattr(request, "max_papers_retrieval", None) or 5)
 
         if self.use_two_pass:
-            from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-
-            dkb = DynamicKnowledgeBase(
-                vector_store=vector_store,
-                embedding_service=embedding_provider,
-            )
-            dkb.collection_name = collection
-            dkb._initialized = True
-
             paper_results = await dkb.search_two_pass(
                 retrieval_query,
                 top_k=self.final_max_docs,
@@ -237,15 +214,6 @@ class BasicRAGMode(BaseRAGMode):
                 max_papers_cap=cap,
             )
         else:
-            from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-
-            dkb = DynamicKnowledgeBase(
-                vector_store=vector_store,
-                embedding_service=embedding_provider,
-            )
-            dkb.collection_name = collection
-            dkb._initialized = True
-
             chunk_results = await dkb.search(retrieval_query, top_k=self.final_max_docs)
             paper_results = []
             for r in chunk_results:
@@ -259,6 +227,7 @@ class BasicRAGMode(BaseRAGMode):
                         "year": getattr(meta, "year", None) if meta else None,
                         "doi": getattr(meta, "doi", None) if meta else None,
                         "full_text": r.get("text", ""),
+                        "kb_name": r.get("kb_name"),
                     }
                 )
 
@@ -282,6 +251,7 @@ class BasicRAGMode(BaseRAGMode):
                     year=p.get("year"),
                     doi=p.get("doi"),
                     relevance_score=p.get("paper_score", 0.0),
+                    kb_name=p.get("kb_name"),
                 )
             )
         for source in sources:
