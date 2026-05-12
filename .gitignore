@@ -115,3 +115,6 @@ chat_no_answer.png
 exposomics/
 create_exposomics_kb.py
 enrich_kb_metadata.py
+
+# Vendored / scratch tooling staged for future porting
+old_tools/
