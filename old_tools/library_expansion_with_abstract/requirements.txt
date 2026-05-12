@@ -1,0 +1,19 @@
+# BM25-based Paper Relevance Screening Tool - Requirements
+
+# BibTeX parsing
+bibtexparser>=1.4.0
+
+# PubMed API access
+biopython>=1.80
+
+# BM25 implementation
+rank-bm25>=0.2.2
+
+# Text processing
+nltk>=3.8
+
+# Data manipulation and CSV export
+pandas>=1.5.0
+
+# Progress bars
+tqdm>=4.65.0

@@ -116,5 +116,9 @@ exposomics/
 create_exposomics_kb.py
 enrich_kb_metadata.py
 
-# Vendored / scratch tooling staged for future porting
+# Vendored / scratch tooling staged for future porting.
+# Tracked files under old_tools/ (e.g. the library-expansion-with-abstract
+# vendored scripts) remain tracked; this rule only affects new untracked
+# scratch artifacts (per-paper experiment dirs, hack scripts, intermediate
+# .bib files, downloaded PDFs).
 old_tools/

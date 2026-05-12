@@ -312,6 +312,7 @@ templates/index.html          # Single-page chat UI (markup only)
 static/
   css/                        # 6 stylesheets: theme, base, layout, chat, kb, survey
   js/                         # 8 scripts: utils, databases, mode, conversations, chat, kb, survey, main
+old_tools/                    # Vendored legacy scripts staged for future porting
 ```
 
 ## Privacy & Data
