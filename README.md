@@ -4,7 +4,7 @@
 
 *Local-first RAG system for searching, understanding, and organizing academic literature*
 
-**5 RAG modes** &nbsp;·&nbsp; **Unified content pipeline** &nbsp;·&nbsp; **Hybrid vector+BM25 retrieval** &nbsp;·&nbsp; **MCP server** &nbsp;·&nbsp; **REST API**
+**6 RAG modes** &nbsp;·&nbsp; **Unified content pipeline** &nbsp;·&nbsp; **Hybrid vector+BM25 retrieval** &nbsp;·&nbsp; **MCP server** &nbsp;·&nbsp; **REST API**
 
 [![Paper](https://img.shields.io/badge/Paper-ISWC--C%202025-blue?style=flat-square)](https://iswc2025.semanticweb.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square)](https://opensource.org/licenses/Apache-2.0)
@@ -41,7 +41,7 @@
 
 - **Multi-database search** — Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP, and more via SciLEx
 - **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
-- **5 RAG modes** — From fast KB retrieval to multi-cycle agentic research and systematic literature surveys
+- **6 RAG modes** — From fast KB retrieval to multi-cycle agentic research, systematic literature surveys, and cross-paper contradiction detection
 - **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
 - **MCP server** — 10 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
 - **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
@@ -137,6 +137,7 @@ At the bottom of each response, click **"Add to KB"** on any paper to save it to
 | **Profound** | Multi-cycle research (up to 3 iterations) with planning and self-evaluation | Complex questions, multiple perspectives | Slower |
 | **Agentic** | Intent-based agent with tool use (web search, PDF download), up to 5 iterations | Questions requiring live discovery beyond your KB | Variable |
 | **Literature Survey** | Systematic field mapping: broad search, theme clustering, AI recommendations | Mapping a research field, exploring a new topic | Slowest |
+| **Contradiction** | Multi-paper claim clustering into agreement / disagreement / open-question buckets | Comparing conflicting findings across papers | Medium |
 
 ---
 
@@ -211,12 +212,17 @@ r = httpx.post("http://localhost:8000/mcp", json={
 | `GET` | `/api/conversations` | List conversations |
 | `POST` | `/api/conversations` | Create conversation |
 | `DELETE` | `/api/conversations/{id}` | Delete conversation |
+| `GET` | `/api/conversations/search?q=...` | Full-text search across conversations (FTS5) |
+| `GET` | `/api/conversations/{id}/export?format=markdown` | Download conversation as Markdown |
 | `GET` | `/api/kb` | List knowledge bases |
 | `POST` | `/api/kb` | Create KB |
 | `GET` | `/api/kb/{name}` | Get KB details |
 | `DELETE` | `/api/kb/{name}` | Delete KB |
+| `GET` | `/api/kb/{name}/stats` | KB statistics (paper/chunk counts, year histogram, sources) |
 | `POST` | `/api/kb/{name}/papers` | Add papers to KB |
 | `POST` | `/api/kb/{name}/bibtex` | Import from BibTeX |
+| `POST` | `/api/kb/{name}/dois` | Bulk-add papers by DOI list |
+| `GET` | `/api/paper?doi=...` | Fetch discovery metadata + content-type availability for a DOI |
 | `GET` | `/api/survey/{session_id}` | Get literature survey status |
 | `POST` | `/api/survey/{session_id}/generate` | Generate survey report |
 
@@ -246,6 +252,12 @@ perspicacite -c config.yml serve [--host 0.0.0.0] [--port 8000] [--no-mcp] [--re
 
 # Create a KB from BibTeX
 perspicacite -c config.yml create-kb my-kb --from-bibtex papers.bib
+
+# Screen candidate papers by relevance (BM25; no server needed)
+perspicacite -c config.yml screen-papers --input refs.bib --candidates cand.bib --output out.bib [--threshold 0.3] [--csv]
+
+# Search PubMed and export to BibTeX (no server needed)
+perspicacite -c config.yml pubmed-search --query "microbiome" --max-results 50 --output hits.bib
 
 # Show version
 perspicacite version
@@ -302,6 +314,8 @@ Academic database search APIs are configured under `scilex:` — enabled sources
 | `semantic` | Splits at semantic boundaries |
 | `agentic` | AI-driven chunking optimized for RAG |
 
+**Multi-KB queries:** Pass `kb_names` (a list of KB names) in the chat advanced options or the `generate_report` MCP tool to fan a query across multiple KBs simultaneously. All queried KBs must share the same embedding model.
+
 **Tips:**
 - Keep KBs focused — create separate ones for different projects
 - Start with 10–20 key papers and expand as needed
@@ -337,30 +351,37 @@ uv run mypy src/
 
 ```
 src/perspicacite/
-  cli.py                        # CLI commands (serve, create-kb, version)
+  cli.py                        # CLI commands (serve, create-kb, screen-papers, pubmed-search, version)
   config/schema.py              # Pydantic configuration model
-  mcp/server.py                 # MCP server with 8 tools
+  mcp/server.py                 # MCP server with 10 tools
   pipeline/
     download/                   # Content retrieval pipeline
       discovery.py              # OpenAlex + Unpaywall discovery
       unified.py                # retrieve_paper_content() — main entry point
       europepmc.py              # PMC JATS XML fetcher
       arxiv.py                  # arXiv HTML + PDF
+      biorxiv.py                # bioRxiv/medRxiv JATS XML fetcher
+      crossref.py               # Crossref metadata enrichment
     parsers/pdf.py              # PyMuPDF-based parser
     bibtex_kb.py                # BibTeX → KB pipeline
   rag/
     engine.py                   # RAGEngine (routes to mode handlers)
-    modes/                      # basic, advanced, profound, agentic, literature_survey
+    modes/                      # basic, advanced, profound, agentic, literature_survey, contradiction
     tools/                      # Tool registry, KB search, LOTUS
   retrieval/                    # ChromaDB vector store + hybrid BM25 search
-  search/scilex_adapter.py      # Multi-database literature search
+    multi_kb.py                 # MultiKBRetriever — fan-out across multiple KB collections
+    recency.py                  # apply_recency_weighting() — exponential decay by year
+  search/
+    scilex_adapter.py           # Multi-database literature search
+    screening.py                # screen_papers() BM25 + LLM relevance scoring
+    pubmed.py                   # PubMedSearchAdapter (Biopython Entrez)
   web/                          # FastAPI app, routers, AppState singleton
 templates/index.html            # Single-page chat UI
 static/css/                     # 6 stylesheets: theme, base, layout, chat, kb, survey
-static/js/                      # 8 scripts: utils, databases, mode, conversations, chat, kb, survey, main
+static/js/                      # 10 scripts: utils, databases, mode, conversations, chat, kb, kb_stats, paper_detail, survey, main
 ```
 
-> **Developer note:** After editing files in `static/css/` or `static/js/`, force a browser hard-refresh (Ctrl+Shift+R / Cmd+Shift+R) to bypass the cache.
+> **Developer note:** After editing files in `static/css/` or `static/js/`, force a browser hard-refresh (Ctrl+Shift+R / Cmd+Shift+R) to bypass the cache. A `MANUAL_QA.md` checklist at the repo root covers the Phase 5 UI features.
 
 ---
 
