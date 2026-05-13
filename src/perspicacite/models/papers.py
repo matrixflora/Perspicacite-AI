@@ -15,6 +15,7 @@ class PaperSource(str, Enum):
     WEB_SEARCH = "web_search"
     USER_UPLOAD = "user_upload"
     CITATION_FOLLOW = "citation_follow"
+    LOCAL = "local"
 
 
 class Author(BaseModel):
