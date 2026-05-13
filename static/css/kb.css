@@ -193,6 +193,59 @@
 .modal-confirm { background: #dc2626; color: white; border: none; }
 .modal-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ── Build KBs from Zotero modal ─────────────────────────────────────────── */
+.hidden { display: none !important; }
+.zotero-build-modal-content {
+    max-width: 80vw;
+    width: 720px;
+    max-height: 80vh;
+    overflow: auto;
+}
+.zotero-plan-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13px;
+}
+.zotero-plan-table th,
+.zotero-plan-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border, #e2e8f0);
+    text-align: left;
+    vertical-align: middle;
+}
+.zotero-plan-table th {
+    font-weight: 600;
+    color: var(--text-main);
+    background: rgba(27, 68, 121, 0.04);
+}
+.zotero-plan-table input[type="text"] {
+    width: 100%;
+    padding: 4px 6px;
+    border: 1px solid var(--input-border, #cbd5e1);
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: inherit;
+}
+.zotero-progress {
+    white-space: pre-wrap;
+    font-family: 'Menlo', 'Monaco', monospace;
+    font-size: 12px;
+    padding: 8px;
+    background: rgba(27, 68, 121, 0.04);
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: var(--radius);
+    max-height: 50vh;
+    overflow: auto;
+    margin: 8px 0;
+}
+.zotero-execute-btn {
+    background: var(--secondary, #1b4479);
+    color: white;
+    border: none;
+}
+.zotero-execute-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ── KB Statistics Panel ─────────────────────────────────────────────────── */
 
 /* Tab strip inside the KB detail area (Stats tab) */

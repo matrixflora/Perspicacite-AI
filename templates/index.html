@@ -96,11 +96,19 @@
                     </div>
                     <div id="kb-info" class="kb-info" style="display:none;"></div>
                     <div id="kb-stats-container" style="display:none;"></div>
-                    <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                    <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap;">
                         <button id="kb-add-bibtex-btn" class="kb-create-toggle" style="display:none;" onclick="document.getElementById('kb-add-bibtex-file').click()">Add from BibTeX</button>
                         <input type="file" id="kb-add-bibtex-file" accept=".bib" style="display:none" onchange="addToKBFromBibtex(this.files[0])">
                         <button id="kb-add-dois-btn" class="kb-create-toggle" style="display:none;" onclick="toggleAddDoisPanel()">Add DOIs</button>
                         <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <button id="build-kbs-from-zotero-btn"
+                                data-testid="build-kbs-from-zotero"
+                                class="kb-create-toggle"
+                                title="Build KBs from your Zotero library">
+                            Build KBs from Zotero
+                        </button>
                     </div>
                     <!-- DOI add panel (shown when "Add DOIs" is clicked) -->
                     <div id="kb-dois-panel" class="kb-dois-panel">
@@ -248,6 +256,33 @@
             <div class="modal-buttons">
                 <button class="modal-cancel" onclick="hideDeleteKBDialog()">Cancel</button>
                 <button class="modal-confirm" id="delete-kb-confirm" onclick="confirmDeleteKB()" disabled>Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Build KBs from Zotero Modal -->
+    <div id="zotero-build-modal" class="modal-overlay zotero-build-overlay" data-testid="zotero-build-modal">
+        <div class="modal zotero-build-modal-content">
+            <h3>Build KBs from Zotero</h3>
+            <div id="zotero-plan-loading">Loading plan…</div>
+            <table id="zotero-plan-table" class="zotero-plan-table hidden">
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th>KB name</th>
+                        <th>Source</th>
+                        <th>Items</th>
+                        <th>w/ DOI</th>
+                        <th>w/ PDF</th>
+                        <th>w/ Notes</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <div id="zotero-progress" class="zotero-progress hidden"></div>
+            <div class="modal-buttons">
+                <button id="zotero-build-cancel" class="modal-cancel">Cancel</button>
+                <button id="zotero-build-execute" class="modal-confirm zotero-execute-btn">Execute</button>
             </div>
         </div>
     </div>

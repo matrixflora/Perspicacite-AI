@@ -738,3 +738,165 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     });
 });
+
+/* ── Build KBs from Zotero ────────────────────────────────────────────────── */
+
+/**
+ * Open the "Build KBs from Zotero" modal: fetches the plan from
+ * GET /api/zotero/plan, renders a table of would-be KBs with editable
+ * names + checkboxes, then on Execute POSTs to
+ * /api/zotero/build-kbs/async and streams progress via SSE.
+ */
+async function openZoteroBuildModal() {
+    const modal = document.getElementById('zotero-build-modal');
+    const loading = document.getElementById('zotero-plan-loading');
+    const table = document.getElementById('zotero-plan-table');
+    const progress = document.getElementById('zotero-progress');
+    const executeBtn = document.getElementById('zotero-build-execute');
+
+    // Reset state each time the modal opens.
+    modal.classList.add('visible');
+    loading.classList.remove('hidden');
+    loading.textContent = 'Loading plan…';
+    table.classList.add('hidden');
+    progress.classList.add('hidden');
+    progress.textContent = '';
+    executeBtn.disabled = false;
+
+    let plan = [];
+    try {
+        const r = await fetch('/api/zotero/plan');
+        if (r.status === 503) {
+            loading.textContent =
+                'Zotero is not configured (set zotero.enabled in config.yml).';
+            executeBtn.disabled = true;
+            return;
+        }
+        if (!r.ok) {
+            loading.textContent = `Error: HTTP ${r.status}`;
+            executeBtn.disabled = true;
+            return;
+        }
+        const body = await r.json();
+        plan = body.plan || [];
+    } catch (e) {
+        loading.textContent = `Error: ${e}`;
+        executeBtn.disabled = true;
+        return;
+    }
+
+    if (!plan.length) {
+        loading.textContent = 'No collections found in your Zotero library.';
+        executeBtn.disabled = true;
+        return;
+    }
+
+    const tbody = document.querySelector('#zotero-plan-table tbody');
+    tbody.innerHTML = '';
+    plan.forEach((p, i) => {
+        const tr = document.createElement('tr');
+        const source = p.source_collection_name || 'Unfiled';
+        // Build cells without innerHTML interpolation of user-controlled
+        // strings to avoid XSS via Zotero collection names.
+        const tdCheck = document.createElement('td');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = true;
+        cb.dataset.i = String(i);
+        tdCheck.appendChild(cb);
+
+        const tdName = document.createElement('td');
+        const nameIn = document.createElement('input');
+        nameIn.type = 'text';
+        nameIn.value = p.kb_name || '';
+        nameIn.dataset.name = String(i);
+        tdName.appendChild(nameIn);
+
+        const tdSource = document.createElement('td');
+        tdSource.textContent = source;
+        const tdItems = document.createElement('td');
+        tdItems.textContent = p.item_count ?? 0;
+        const tdDoi = document.createElement('td');
+        tdDoi.textContent = p.with_doi_count ?? 0;
+        const tdPdf = document.createElement('td');
+        tdPdf.textContent = p.with_pdf_count ?? 0;
+        const tdNotes = document.createElement('td');
+        tdNotes.textContent = p.with_notes_count ?? 0;
+
+        tr.appendChild(tdCheck);
+        tr.appendChild(tdName);
+        tr.appendChild(tdSource);
+        tr.appendChild(tdItems);
+        tr.appendChild(tdDoi);
+        tr.appendChild(tdPdf);
+        tr.appendChild(tdNotes);
+        tbody.appendChild(tr);
+    });
+    loading.classList.add('hidden');
+    table.classList.remove('hidden');
+
+    executeBtn.onclick = async () => {
+        const selected = [];
+        document.querySelectorAll('#zotero-plan-table tbody tr').forEach((tr, i) => {
+            const cb = tr.querySelector('input[type="checkbox"]');
+            const nameIn = tr.querySelector('input[type="text"]');
+            if (cb && cb.checked) {
+                selected.push({ ...plan[i], kb_name: (nameIn ? nameIn.value : plan[i].kb_name) });
+            }
+        });
+        if (!selected.length) {
+            showToast('Select at least one KB to build.');
+            return;
+        }
+        executeBtn.disabled = true;
+        progress.classList.remove('hidden');
+        progress.textContent = `Submitting ${selected.length} KB build job(s)…\n`;
+        try {
+            const r = await fetch('/api/zotero/build-kbs/async', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ plan: selected }),
+            });
+            const body = await r.json();
+            if (!r.ok || body.error) {
+                const msg = body.detail
+                    ? (Array.isArray(body.detail) ? body.detail.map(d => d.msg || d).join('; ') : body.detail)
+                    : (body.error || `HTTP ${r.status}`);
+                throw new Error(msg);
+            }
+            table.classList.add('hidden');
+            progress.textContent += `Job ${body.job_id} started.\n`;
+            const sseUrl = body.sse_url || `/api/jobs/${body.job_id}/events`;
+            const ev = new EventSource(sseUrl);
+            ev.onmessage = (m) => {
+                progress.textContent += m.data + '\n';
+                progress.scrollTop = progress.scrollHeight;
+            };
+            ev.addEventListener('done', () => {
+                ev.close();
+                progress.textContent += '\nDone. KB list refreshed.';
+                if (typeof loadKBs === 'function') loadKBs();
+            });
+            ev.onerror = () => {
+                progress.textContent += '\n(SSE stream closed)';
+                ev.close();
+                if (typeof loadKBs === 'function') loadKBs();
+            };
+        } catch (e) {
+            progress.textContent += `\nError: ${e.message || e}`;
+            executeBtn.disabled = false;
+        }
+    };
+}
+
+function closeZoteroBuildModal() {
+    const modal = document.getElementById('zotero-build-modal');
+    if (modal) modal.classList.remove('visible');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('build-kbs-from-zotero-btn');
+    if (btn) btn.addEventListener('click', openZoteroBuildModal);
+    const cancel = document.getElementById('zotero-build-cancel');
+    if (cancel) cancel.addEventListener('click', closeZoteroBuildModal);
+});
