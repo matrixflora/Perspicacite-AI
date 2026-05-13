@@ -1,5 +1,6 @@
 """Async LLM client using LiteLLM."""
 
+import time
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
@@ -117,6 +118,8 @@ class AsyncLLMClient:
         if model is None:
             model = self.config.default_model
 
+        stage_label = kwargs.pop("stage", "llm")
+
         provider_config = self._get_provider_config(provider)
         model_str = self._build_model_string(provider, model)
 
@@ -130,7 +133,7 @@ class AsyncLLMClient:
 
         try:
             litellm = self._get_litellm()
-            
+
             # Prepare API call parameters
             completion_kwargs = {
                 "model": model_str,
@@ -139,7 +142,7 @@ class AsyncLLMClient:
                 "max_tokens": max_tokens,
                 "timeout": provider_config.timeout,
             }
-            
+
             # TODO: Minimax implementation needs fixes
             # There are response parsing issues with the Anthropic-compatible API
             # Consider using DeepSeek or other providers as alternative
@@ -151,7 +154,8 @@ class AsyncLLMClient:
                 minimax_api_key = os.environ.get("MINIMAX_API_KEY")
                 if not minimax_api_key:
                     raise ValueError("MINIMAX_API_KEY environment variable not set")
-                
+
+                t0 = time.monotonic()
                 response = await litellm.acompletion(
                     model=f"minimax/{model}",  # Use minimax/MiniMax-M2.7 format
                     messages=messages,
@@ -162,10 +166,11 @@ class AsyncLLMClient:
                     api_base=provider_config.base_url,
                     **kwargs,
                 )
+                latency_ms = (time.monotonic() - t0) * 1000.0
                 # Standard OpenAI-compatible response format
                 content = response.choices[0].message.content
                 usage = response.get("usage", {})
-                
+
                 logger.info(
                     "llm_completion_success",
                     provider=provider,
@@ -174,11 +179,26 @@ class AsyncLLMClient:
                     output_tokens=usage.get("completion_tokens", 0),
                     content_length=len(content),
                 )
+                from perspicacite.provenance.context import get_collector
+                _c = get_collector()
+                if _c is not None:
+                    _c.add_llm_call(
+                        stage_label=stage_label,
+                        provider=provider,
+                        model=model,
+                        prompt_messages=messages,
+                        response_text=content or "",
+                        prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                        completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+                        latency_ms=latency_ms,
+                    )
                 return content
-            
+
             completion_kwargs.update(kwargs)
-            
+
+            t0 = time.monotonic()
             response = await litellm.acompletion(**completion_kwargs)
+            latency_ms = (time.monotonic() - t0) * 1000.0
 
             content = response.choices[0].message.content
             usage = response.get("usage", {})
@@ -191,6 +211,19 @@ class AsyncLLMClient:
                 output_tokens=usage.get("completion_tokens", 0),
                 content_length=len(content),
             )
+            from perspicacite.provenance.context import get_collector
+            _c = get_collector()
+            if _c is not None:
+                _c.add_llm_call(
+                    stage_label=stage_label,
+                    provider=provider,
+                    model=model,
+                    prompt_messages=messages,
+                    response_text=content or "",
+                    prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+                    latency_ms=latency_ms,
+                )
 
             return content
 
@@ -230,6 +263,8 @@ class AsyncLLMClient:
         if provider is None:
             provider = self.config.default_provider
 
+        stage_label = kwargs.pop("stage", "llm")
+
         provider_config = self._get_provider_config(provider)
         model_str = self._build_model_string(provider, model)
 
@@ -242,7 +277,7 @@ class AsyncLLMClient:
 
         try:
             litellm = self._get_litellm()
-            
+
             # TODO: Minimax implementation needs fixes
             # Special handling for Minimax
             if provider == "minimax":
@@ -251,7 +286,8 @@ class AsyncLLMClient:
                 minimax_api_key = os.environ.get("MINIMAX_API_KEY")
                 if not minimax_api_key:
                     raise ValueError("MINIMAX_API_KEY environment variable not set")
-                
+
+                t0 = time.monotonic()
                 stream = await litellm.acompletion(
                     model=f"minimax/{model}",
                     messages=messages,
@@ -263,14 +299,31 @@ class AsyncLLMClient:
                     stream=True,
                     **kwargs,
                 )
-                
+
+                accum: list[str] = []
                 async for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content
-                
+                    piece = chunk.choices[0].delta.content
+                    if piece:
+                        accum.append(piece)
+                        yield piece
+
+                latency_ms = (time.monotonic() - t0) * 1000.0
                 logger.info("llm_stream_complete", provider=provider, model=model)
+                from perspicacite.provenance.context import get_collector
+                _c = get_collector()
+                if _c is not None:
+                    _c.add_llm_call(
+                        stage_label=stage_label,
+                        provider=provider,
+                        model=model,
+                        prompt_messages=messages,
+                        response_text="".join(accum),
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        latency_ms=latency_ms,
+                    )
                 return
-            
+
             # Standard OpenAI-compatible streaming
             completion_kwargs = {
                 "model": model_str,
@@ -281,14 +334,32 @@ class AsyncLLMClient:
                 "stream": True,
             }
             completion_kwargs.update(kwargs)
-            
+
+            t0 = time.monotonic()
             response = await litellm.acompletion(**completion_kwargs)
 
+            accum2: list[str] = []
             async for chunk in response:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                piece = chunk.choices[0].delta.content
+                if piece:
+                    accum2.append(piece)
+                    yield piece
 
+            latency_ms = (time.monotonic() - t0) * 1000.0
             logger.info("llm_stream_complete", provider=provider, model=model)
+            from perspicacite.provenance.context import get_collector
+            _c = get_collector()
+            if _c is not None:
+                _c.add_llm_call(
+                    stage_label=stage_label,
+                    provider=provider,
+                    model=model,
+                    prompt_messages=messages,
+                    response_text="".join(accum2),
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    latency_ms=latency_ms,
+                )
 
         except Exception as e:
             logger.error(
