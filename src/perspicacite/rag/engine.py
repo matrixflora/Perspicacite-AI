@@ -8,6 +8,8 @@ from perspicacite.llm.client import AsyncLLMClient
 from perspicacite.llm.embeddings import EmbeddingProvider
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, StreamEvent
+from perspicacite.provenance.collector import ProvenanceCollector
+from perspicacite.provenance.context import collecting
 from perspicacite.rag.modes import (
     AdvancedRAGMode,
     AgenticRAGMode,
@@ -52,6 +54,7 @@ class RAGEngine:
         self.embedding_provider = embedding_provider
         self.tool_registry = tool_registry
         self.config = config
+        self.provenance_store: Any | None = None
 
         # Initialize mode handlers for all supported modes
         self._modes: dict[RAGMode, Any] = {
@@ -63,12 +66,20 @@ class RAGEngine:
             RAGMode.CONTRADICTION: ContradictionRAGMode(config),
         }
 
-    async def query(self, request: RAGRequest) -> RAGResponse:
+    async def query(
+        self,
+        request: RAGRequest,
+        *,
+        message_id: str | None = None,
+        conversation_id: str | None = None,
+    ) -> RAGResponse:
         """
         Execute a RAG query (non-streaming).
 
         Args:
             request: RAG request
+            message_id: Optional message ID for provenance tracking
+            conversation_id: Optional conversation ID for provenance tracking
 
         Returns:
             RAG response
@@ -80,15 +91,19 @@ class RAGEngine:
         )
 
         handler = self._get_mode_handler(request.mode)
+        collector = self._build_collector(request, message_id, conversation_id)
 
         try:
-            response = await handler.execute(
-                request=request,
-                llm=self.llm_client,
-                vector_store=self.vector_store,
-                embedding_provider=self.embedding_provider,
-                tools=self.tool_registry,
-            )
+            with collecting(collector):
+                response = await handler.execute(
+                    request=request,
+                    llm=self.llm_client,
+                    vector_store=self.vector_store,
+                    embedding_provider=self.embedding_provider,
+                    tools=self.tool_registry,
+                )
+
+            await self._save_provenance(collector, message_id)
 
             logger.info(
                 "rag_query_complete",
@@ -110,12 +125,17 @@ class RAGEngine:
     async def query_stream(
         self,
         request: RAGRequest,
+        *,
+        message_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Execute a RAG query with streaming.
 
         Args:
             request: RAG request
+            message_id: Optional message ID for provenance tracking
+            conversation_id: Optional conversation ID for provenance tracking
 
         Yields:
             Stream events
@@ -127,16 +147,20 @@ class RAGEngine:
         )
 
         handler = self._get_mode_handler(request.mode)
+        collector = self._build_collector(request, message_id, conversation_id)
 
         try:
-            async for event in handler.execute_stream(
-                request=request,
-                llm=self.llm_client,
-                vector_store=self.vector_store,
-                embedding_provider=self.embedding_provider,
-                tools=self.tool_registry,
-            ):
-                yield event
+            with collecting(collector):
+                async for event in handler.execute_stream(
+                    request=request,
+                    llm=self.llm_client,
+                    vector_store=self.vector_store,
+                    embedding_provider=self.embedding_provider,
+                    tools=self.tool_registry,
+                ):
+                    yield event
+
+            await self._save_provenance(collector, message_id)
 
             logger.info("rag_stream_complete", mode=request.mode.value)
 
@@ -151,6 +175,42 @@ class RAGEngine:
                 event="error",
                 data=f'{{"message": "{e!s}"}}',
             )
+
+    def _build_collector(
+        self,
+        request: RAGRequest,
+        message_id: str | None,
+        conversation_id: str | None,
+    ) -> ProvenanceCollector:
+        """Build a ProvenanceCollector for the given request."""
+        mode_val = request.mode.value if hasattr(request.mode, "value") else str(request.mode)
+        return ProvenanceCollector(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            rag_mode=mode_val,
+            request_params={
+                "kb_name": request.kb_name,
+                "kb_names": getattr(request, "kb_names", None),
+                "top_k": getattr(request, "top_k", None),
+                "recency_weight": getattr(request, "recency_weight", None),
+                "recency_half_life_years": getattr(request, "recency_half_life_years", None),
+                "bm25_weight": getattr(request, "bm25_weight", None),
+                "vector_weight": getattr(request, "vector_weight", None),
+            },
+        )
+
+    async def _save_provenance(
+        self,
+        collector: ProvenanceCollector,
+        message_id: str | None,
+    ) -> None:
+        """Persist provenance record (best-effort — never raises)."""
+        if self.provenance_store is None or not message_id:
+            return
+        try:
+            await self.provenance_store.save(collector.finalize())
+        except Exception as exc:  # best-effort: never break the stream
+            logger.warning("provenance_save_failed", error=str(exc))
 
     def _get_mode_handler(self, mode: RAGMode) -> Any:
         """Get handler for the given mode."""
