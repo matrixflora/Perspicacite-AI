@@ -14,7 +14,9 @@ from typing import Any
 
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
+from perspicacite.provenance.context import get_collector
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
     MANDATORY_PROMPT,
@@ -323,6 +325,34 @@ Sources:
                         }
                     )
 
+        # Apply optional recency weighting
+        if getattr(request, "recency_weight", None):
+            paper_results = apply_recency_weighting_to_papers(
+                paper_results,
+                recency_weight=getattr(request, "recency_weight", None),
+                half_life_years=getattr(request, "recency_half_life_years", None),
+            )
+
+        # Provenance
+        _c = get_collector()
+        if _c is not None:
+            _c.add_trace(
+                "wrrf_retrieve",
+                detail={"papers": len(paper_results), "kb_name": request.kb_name},
+            )
+            for rank, p in enumerate(paper_results):
+                _c.add_retrieval(
+                    paper_id=p.get("paper_id"),
+                    doi=p.get("doi"),
+                    title=p.get("title"),
+                    score=float(p.get("paper_score", p.get("score", 0.0)) or 0.0),
+                    kb_name=p.get("kb_name"),
+                    content_type=None,
+                    pipeline_step=None,
+                    rank=rank,
+                    stage_label="advanced.wrrf_pass2",
+                )
+
         # Step 3: Generate response using full paper context
         if paper_results:
             context = format_paper_results_for_prompt(paper_results, max_chars_per_paper=4000)
@@ -550,6 +580,34 @@ Sources:
                         }
                     )
 
+        # Apply optional recency weighting
+        if getattr(request, "recency_weight", None):
+            paper_results = apply_recency_weighting_to_papers(
+                paper_results,
+                recency_weight=getattr(request, "recency_weight", None),
+                half_life_years=getattr(request, "recency_half_life_years", None),
+            )
+
+        # Provenance
+        _c = get_collector()
+        if _c is not None:
+            _c.add_trace(
+                "wrrf_retrieve",
+                detail={"papers": len(paper_results), "kb_name": request.kb_name},
+            )
+            for rank, p in enumerate(paper_results):
+                _c.add_retrieval(
+                    paper_id=p.get("paper_id"),
+                    doi=p.get("doi"),
+                    title=p.get("title"),
+                    score=float(p.get("paper_score", p.get("score", 0.0)) or 0.0),
+                    kb_name=p.get("kb_name"),
+                    content_type=None,
+                    pipeline_step=None,
+                    rank=rank,
+                    stage_label="advanced.wrrf_pass2",
+                )
+
         # Step 3: Prepare sources
         if paper_results:
             sources = []
@@ -604,6 +662,7 @@ Sources:
                 "model": request.model,
                 "provider": request.provider,
                 "max_tokens": 2000,
+                "stage": "advanced.answer",
             }
             if not is_o_series:
                 stream_kwargs["temperature"] = temperature
