@@ -182,3 +182,24 @@ MCP:
 Language tags in provenance:
 - Open a conversation that retrieved a code chunk.
 - Open the provenance JSONL sidecar; confirm the chunk row carries `language` and `content_type`.
+
+## Capsule build (2026-05-13, cycle A)
+
+Auto-build on ingest:
+1. Ingest a paper via BibTeX, DOIs, local PDF, or Zotero with `capsule.auto_build_on_ingest: true`.
+2. Confirm `<data_root>/capsules/<paper_id>/metadata.json` exists with `"producer": "perspicacite"` and `"capsule_version": "0.1"`.
+3. Confirm `figures/index.json` exists (empty list for paths without a tracked PDF — only the local-PDF ingest extracts figures in Cycle A).
+4. Confirm `text/blocks.jsonl` has one row per paragraph with a `section` field (or `full_text` fallback).
+5. Confirm `resources.json` has entries if the paper mentions DOIs / GitHub / Zenodo / PRIDE / GEO / etc.
+
+Retro-build (full capsule with chunks gaining provenance):
+- CLI: `uv run perspicacite build-capsules --kb mykb` — confirm one line per paper and a summary.
+- MCP: `build_capsules_for_kb(kb_name="mykb")` — confirm `per_paper` summary.
+- UI: KB panel → "Build capsules" button → confirm SSE progress stream renders one event per paper, ending with "Done".
+
+Idempotency:
+- Re-run the same retro-build with no `--force`; confirm every paper's status is `skipped`.
+- Re-run with `--force`; confirm every paper's status is `built` again.
+
+Provenance:
+- After retro-build, inspect the provenance JSONL sidecar; confirm chunks now carry `source_section`, `char_span`, and `figure_refs`/`resource_refs` when applicable.
