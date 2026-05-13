@@ -64,6 +64,9 @@ class JobRegistry:
         if q is not None:
             await q.put({"type": "done", "result": result})
             await q.put(None)
+        # Remove dict entry so _queues doesn't grow unbounded; active subscribers
+        # already hold a local reference to q and continue draining it fine.
+        self._queues.pop(job_id, None)
 
     async def fail(self, job_id: str, err: str) -> None:
         async with aiosqlite.connect(self.db_path) as db:
@@ -76,8 +79,20 @@ class JobRegistry:
         if q is not None:
             await q.put({"type": "error", "error": err})
             await q.put(None)
+        # Remove dict entry so _queues doesn't grow unbounded.
+        self._queues.pop(job_id, None)
 
     async def subscribe(self, job_id: str) -> AsyncIterator[dict[str, Any]]:
+        # For already-terminal jobs (finished/failed before subscriber arrived),
+        # yield a single synthesised final frame and return immediately so callers
+        # never hang on an empty queue created by setdefault below.
+        row = await self.get(job_id)
+        if row is not None and row.get("status") in ("done", "error"):
+            if row["status"] == "done":
+                yield {"type": "done", "result": row.get("result") or {}}
+            else:
+                yield {"type": "error", "error": row.get("error") or ""}
+            return
         q = self._queues.setdefault(job_id, asyncio.Queue())
         while True:
             ev = await q.get()
