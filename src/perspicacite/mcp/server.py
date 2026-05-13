@@ -1301,6 +1301,52 @@ async def build_kbs_from_zotero(
     return reg.result or {"per_kb": []}
 
 
+@mcp.tool
+async def ingest_local_documents(
+    kb_name: str,
+    paths: list[str],
+    recursive: bool = True,
+) -> dict:
+    """Ingest local files or directories into a KB.
+
+    Files must be absolute paths under one of `local_docs.allowed_roots`.
+    If allowed_roots is empty, this tool refuses all calls.
+    """
+    from pathlib import Path
+
+    from perspicacite.integrations.local_docs import (
+        LocalDocsDisabledError,
+        LocalDocsValidationError,
+        ingest_local_documents as _ingest,
+        validate_local_path,
+    )
+
+    allowed = list(getattr(mcp_state.config.local_docs, "allowed_roots", []) or [])
+    validated: list[Path] = []
+    try:
+        for raw in paths:
+            validated.append(validate_local_path(raw, allowed_roots=allowed))
+    except LocalDocsDisabledError as exc:
+        return {"error": str(exc)}
+    except LocalDocsValidationError as exc:
+        return {"error": str(exc)}
+
+    class _Reg:
+        async def publish(self, jid, ev): pass
+        async def finish(self, jid, res): self._res = res
+        async def fail(self, jid, err): self._err = err
+
+    reg = _Reg()
+    return await _ingest(
+        kb_name=kb_name,
+        paths=validated,
+        app_state=mcp_state,
+        registry=reg,
+        job_id="mcp-inline",
+        recursive=recursive,
+    )
+
+
 # =============================================================================
 # Resource
 # =============================================================================
@@ -1319,6 +1365,7 @@ _TOOL_NAMES: list[str] = [
     "add_dois_to_kb",
     "push_to_zotero",
     "build_kbs_from_zotero",
+    "ingest_local_documents",
 ]
 
 
