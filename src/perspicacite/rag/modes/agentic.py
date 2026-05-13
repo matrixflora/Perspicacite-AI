@@ -24,6 +24,7 @@ from typing import Any
 
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
+from perspicacite.rag.agentic.context import agentic_request_overrides
 from perspicacite.rag.modes.base import BaseRAGMode
 
 logger = get_logger("perspicacite.rag.modes.agentic")
@@ -96,22 +97,15 @@ class AgenticRAGMode(BaseRAGMode):
             )
         return self._orchestrator
 
-    def _apply_request_recency(self, orchestrator: Any, request: RAGRequest) -> tuple:
-        """Set recency/kb_metas on the shared orchestrator; return previous values for restore."""
-        prev = (
-            orchestrator.recency_weight,
-            orchestrator.recency_half_life_years,
-            orchestrator.kb_metas,
-        )
-        orchestrator.recency_weight = getattr(request, "recency_weight", None)
-        orchestrator.recency_half_life_years = getattr(request, "recency_half_life_years", None)
+    def _build_kb_metas_for_request(self, request: RAGRequest) -> list:
+        """Build a kb_metas list from the request's kb_names (used with agentic_request_overrides)."""
         kb_names = getattr(request, "kb_names", None) or []
         if len(kb_names) > 1:
             from types import SimpleNamespace
 
             from perspicacite.models.kb import chroma_collection_name_for_kb
 
-            orchestrator.kb_metas = [
+            return [
                 SimpleNamespace(
                     name=n,
                     collection_name=chroma_collection_name_for_kb(n),
@@ -119,9 +113,7 @@ class AgenticRAGMode(BaseRAGMode):
                 )
                 for n in kb_names
             ]
-        else:
-            orchestrator.kb_metas = []
-        return prev
+        return []
 
     async def execute(
         self,
@@ -140,15 +132,17 @@ class AgenticRAGMode(BaseRAGMode):
 
         logger.info("AgenticRAGMode delegating to AgenticOrchestrator", query=request.query)
 
-        prev = self._apply_request_recency(orchestrator, request)
-
         # Collect all events from orchestrator
         iterations = 0
         research_plan = []
         final_answer = ""
         papers_found = []
 
-        try:
+        with agentic_request_overrides(
+            recency_weight=getattr(request, "recency_weight", None),
+            recency_half_life_years=getattr(request, "recency_half_life_years", None),
+            kb_metas=self._build_kb_metas_for_request(request),
+        ):
             async for event in orchestrator.chat(
                 query=request.query,
                 session_id=None,  # Stateless mode
@@ -172,12 +166,6 @@ class AgenticRAGMode(BaseRAGMode):
                 elif event_type == "papers_found":
                     papers = event.get("papers", [])
                     papers_found.extend(papers)
-        finally:
-            (
-                orchestrator.recency_weight,
-                orchestrator.recency_half_life_years,
-                orchestrator.kb_metas,
-            ) = prev
 
         # Convert papers to SourceReference format
         sources = []
@@ -225,11 +213,13 @@ class AgenticRAGMode(BaseRAGMode):
 
         logger.info("AgenticRAGMode streaming via AgenticOrchestrator", query=request.query)
 
-        prev = self._apply_request_recency(orchestrator, request)
-
         yield StreamEvent.status("Initializing agentic research...")
 
-        try:
+        with agentic_request_overrides(
+            recency_weight=getattr(request, "recency_weight", None),
+            recency_half_life_years=getattr(request, "recency_half_life_years", None),
+            kb_metas=self._build_kb_metas_for_request(request),
+        ):
             async for event in orchestrator.chat(
                 query=request.query,
                 session_id=None,
@@ -261,12 +251,6 @@ class AgenticRAGMode(BaseRAGMode):
                 elif event_type == "papers_found":
                     papers = event.get("papers", [])
                     yield StreamEvent.status(f"Found {len(papers)} relevant papers")
-        finally:
-            (
-                orchestrator.recency_weight,
-                orchestrator.recency_half_life_years,
-                orchestrator.kb_metas,
-            ) = prev
 
         yield StreamEvent.done()
 
