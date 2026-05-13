@@ -82,6 +82,18 @@ Open the UI at http://localhost:8000 and hard-refresh (Cmd+Shift+R) to bypass ca
 
 ---
 
+## Provenance UI (Phase 2)
+
+- [ ] After asking a question, the assistant message shows a "Provenance" disclosure.
+- [ ] Expanding it shows Request (mode/kb/top_k/recency/weights), Retrieval (rank/score/KB/type/source), and Reasoning & LLM calls sections.
+- [ ] LLM-call rows expand to show full prompt messages + response text.
+- [ ] The conversation header shows a "RO-Crate bundle" link whenever a conversation is loaded.
+- [ ] Clicking "RO-Crate bundle" downloads a .zip containing ro-crate-metadata.json, conversation.md, provenance/, sources.json.
+- [ ] The provenance disclosure is absent for conversations loaded from history (no message_id available) — no JS error in console.
+- [ ] The "RO-Crate bundle" link is hidden when no conversation is active (new chat).
+
+---
+
 ## Backend Smoke Tests (Optional)
 
 These do not require the web UI.

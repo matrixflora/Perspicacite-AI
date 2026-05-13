@@ -10,6 +10,7 @@ function startNewChat() {
     sessionId = null;
     conversationId = null;
     messages = [];
+    updateRoCrateLink(null);
 
     // Clear chat container except welcome message
     const container = document.getElementById('chat-container');
@@ -83,6 +84,7 @@ async function loadChatFromHistory(item) {
 
     // Set conversation ID
     conversationId = item.dataset.convId || null;
+    updateRoCrateLink(conversationId);
 
     // Restore the KB that was used for this chat
     const kbName = item.dataset.kb;
@@ -533,6 +535,22 @@ async function loadConversationById(convId) {
 function exportConversation(convId) {
     if (!convId) { showToast('No conversation to export'); return; }
     window.location.href = '/api/conversations/' + encodeURIComponent(convId) + '/export?format=markdown';
+}
+
+function downloadRoCrate(convId) {
+    if (!convId) { showToast('No conversation to export'); return; }
+    window.location.href = '/api/conversations/' + encodeURIComponent(convId) + '/export?format=ro-crate';
+}
+
+function updateRoCrateLink(convId) {
+    const link = document.getElementById('ro-crate-link');
+    if (!link) return;
+    if (convId) {
+        link.href = '/api/conversations/' + encodeURIComponent(convId) + '/export?format=ro-crate';
+        link.style.display = 'inline';
+    } else {
+        link.style.display = 'none';
+    }
 }
 
 function escapeHtmlConv(str) {

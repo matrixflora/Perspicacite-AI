@@ -222,6 +222,10 @@ async function sendQuery() {
                             activeItem.dataset.convId = conversationId;
                         }
                     }
+                    // Stash message_id for provenance disclosure
+                    if (data.message_id && assistantDiv) {
+                        assistantDiv.dataset.messageId = data.message_id;
+                    }
                 } else if (data.type === 'papers_found' && data.papers && data.papers.length > 0) {
                     lastFoundPapers = data.papers;
                     if (assistantDiv) {
@@ -245,6 +249,13 @@ async function sendQuery() {
                 }
             }
             if (done) break;
+        }
+
+        // Attach provenance disclosure once stream is complete
+        if (assistantDiv && assistantDiv.dataset.messageId && conversationId) {
+            if (typeof window.attachProvenance === 'function') {
+                window.attachProvenance(assistantDiv, assistantDiv.dataset.messageId, conversationId);
+            }
         }
 
         if (assistantMessage) {

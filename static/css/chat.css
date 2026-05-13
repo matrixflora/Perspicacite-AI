@@ -815,3 +815,15 @@ details[open] .advanced-options-summary::before { content: '▼ '; }
     margin-left: 2px;
 }
 .chat-export-btn:hover { opacity: 1; }
+
+/* ── Provenance disclosure (per-assistant-message) ───────────────────────── */
+.provenance-disclosure { margin-top: 8px; font-size: 0.9em; }
+.provenance-disclosure summary { cursor: pointer; color: var(--accent, #4a90e2); }
+.prov-table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+.prov-table th, .prov-table td { border: 1px solid #ddd; padding: 2px 6px; text-align: left; }
+.prov-prompt, .prov-response { background: #f5f5f5; padding: 6px; max-height: 240px; overflow: auto; font-size: 0.85em; }
+.prov-trace { margin: 0 0 8px 1em; }
+.prov-block { padding: 4px 0; font-family: monospace; font-size: 0.85em; }
+
+/* RO-Crate bundle download link */
+.ro-crate-link { font-size: 0.85em; margin-left: 8px; }
