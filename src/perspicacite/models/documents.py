@@ -27,6 +27,15 @@ class ChunkMetadata(BaseModel):
     language: Optional[str] = None  # python | typescript | ...
     heading_path: Optional[list[str]] = None  # markdown heading stack
     source_file_path: Optional[str] = None  # absolute path for local files
+    # ASB-aligned provenance (Cycle A 2026-05-13) — all optional, additive.
+    source_section: Optional[str] = None
+    page: Optional[int] = None
+    char_span: Optional[tuple[int, int]] = None
+    figure_refs: list[str] = Field(default_factory=list)
+    table_refs: list[str] = Field(default_factory=list)
+    resource_refs: list[str] = Field(default_factory=list)
+    parent_paper_id: Optional[str] = None
+    is_external: bool = False
 
     def __repr__(self) -> str:
         return (
