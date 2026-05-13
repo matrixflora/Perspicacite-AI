@@ -18,6 +18,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from perspicacite.models.rag import RAGMode
+from perspicacite.provenance.collector import ProvenanceCollector
+from perspicacite.provenance.context import collecting
 from perspicacite.web.state import app_state
 
 
@@ -285,30 +287,51 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
 
 async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] = None):
     """Stream using AgenticOrchestrator."""
-    async for event in app_state.orchestrator.chat(
-        query=request.query,
-        session_id=request.session_id,
-        kb_name=request.kb_name,
-        stream=True,
-        max_papers_to_download=request.max_papers_to_download,
-    ):
-        # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
-        # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
-        if event.get("type") == "answer":
-            content = event.get("content") or ""
-            safe = {
-                "type": "answer",
-                "session_id": event.get("session_id"),
-                "conversation_id": conversation_id,
-                "content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-            }
-            data = json.dumps(safe, separators=(",", ":"))
-        else:
-            data = json.dumps(event, separators=(",", ":"))
-        yield f"data: {data}\n\n"
+    assistant_message_id = str(uuid.uuid4())
+
+    collector = ProvenanceCollector(
+        conversation_id=conversation_id,
+        message_id=assistant_message_id,
+        rag_mode="agentic",
+        request_params={
+            "kb_name": request.kb_name,
+            "kb_names": getattr(request, "kb_names", None),
+        },
+    )
+
+    with collecting(collector):
+        async for event in app_state.orchestrator.chat(
+            query=request.query,
+            session_id=request.session_id,
+            kb_name=request.kb_name,
+            stream=True,
+            max_papers_to_download=request.max_papers_to_download,
+        ):
+            # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
+            # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
+            if event.get("type") == "answer":
+                content = event.get("content") or ""
+                safe = {
+                    "type": "answer",
+                    "session_id": event.get("session_id"),
+                    "conversation_id": conversation_id,
+                    "message_id": assistant_message_id,
+                    "content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+                }
+                data = json.dumps(safe, separators=(",", ":"))
+            else:
+                data = json.dumps(event, separators=(",", ":"))
+            yield f"data: {data}\n\n"
 
     # End of stream
-    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
+
+    # Persist provenance record — best-effort, never raise
+    if app_state.provenance_store is not None:
+        try:
+            await app_state.provenance_store.save(collector.finalize())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"provenance_save_failed (agentic): {exc}")
 
 
 async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] = None):
