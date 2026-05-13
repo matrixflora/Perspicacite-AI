@@ -16,6 +16,7 @@ from typing import Any
 
 from perspicacite.models.papers import Paper
 from perspicacite.pipeline.parsers.figures import RawFigure
+from perspicacite.pipeline.parsers.section_splitter import split_sections
 
 CAPSULE_VERSION = "0.1"
 
@@ -80,3 +81,54 @@ def write_figures(capsule_dir: Path, *, figures: list[RawFigure]) -> int:
         encoding="utf-8",
     )
     return len(records)
+
+
+def write_blocks(capsule_dir: Path, *, text: str) -> int:
+    """Section-split ``text`` and emit one paragraph-block per row into
+    ``text/blocks.jsonl``.
+
+    V1 block type is always ``paragraph``. Schema reserves ``heading`` /
+    ``caption`` / ``table_latex`` / ``equation_latex`` for V2. ``char_span``
+    is the offsets of the block content within ``text``.
+    """
+    text_dir = capsule_dir / "text"
+    text_dir.mkdir(parents=True, exist_ok=True)
+    out_path = text_dir / "blocks.jsonl"
+
+    if not text:
+        out_path.write_text("", encoding="utf-8")
+        return 0
+
+    sm = split_sections(text)
+    rows: list[dict] = []
+    block_idx = 0
+    for section, section_text in sm.sections.items():
+        if not section_text.strip():
+            continue
+        for paragraph in _split_paragraphs(section_text):
+            start = text.find(paragraph)
+            end = start + len(paragraph) if start >= 0 else None
+            rows.append({
+                "block_id": f"b{block_idx:06d}",
+                "page": None,
+                "bbox": None,
+                "type": "paragraph",
+                "content": paragraph,
+                "section": section,
+                "char_span": [start, end] if start >= 0 else None,
+                "figure_refs": [],
+                "table_refs": [],
+                "resource_refs": [],
+            })
+            block_idx += 1
+
+    out_path.write_text(
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + ("\n" if rows else ""),
+        encoding="utf-8",
+    )
+    return len(rows)
+
+
+def _split_paragraphs(text: str) -> list[str]:
+    """Split a section's text on blank lines; trim each paragraph."""
+    return [p.strip() for p in text.split("\n\n") if p.strip()]
