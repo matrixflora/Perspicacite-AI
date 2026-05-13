@@ -240,3 +240,19 @@ def strip_unknown_figure_ids(text: str, *, known: set[str]) -> str:
     def _repl(m):
         return m.group(0) if m.group(0) in known else ""
     return _FIG_ID_TOKEN_RE.sub(_repl, text or "")
+
+
+def annotate_figure_ids_for_ui(
+    text: str, *, fig_to_paper: dict[str, str],
+) -> str:
+    """Rewrite each ``pdf_p<page>_i<idx>`` token to ``[[fig:<paper_id>:<token>]]``
+    when ``token`` is in ``fig_to_paper``; leave unknown tokens unchanged.
+
+    Future per-mode wiring can use this to emit a UI-renderable form. Until
+    then, the UI does naive lookup against retrieved sources.
+    """
+    def _repl(m):
+        token = m.group(0)
+        paper = fig_to_paper.get(token)
+        return f"[[fig:{paper}:{token}]]" if paper else token
+    return _FIG_ID_TOKEN_RE.sub(_repl, text or "")

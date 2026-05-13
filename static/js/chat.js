@@ -5,6 +5,12 @@
 let currentThinkingMessage = null;
 let thinkingSteps = [];
 
+// Per-turn state for inline figure-id resolution (Task 13).
+let currentTurnPapers = new Set();   // paper_id strings ("doi:<doi>")
+let figureIndexByPaper = {};         // paperId -> list of figure records
+let activeAssistantDiv = null;
+let activeAssistantText = "";
+
 function decodeUtf8FromBase64(b64) {
     try {
         const bin = atob(b64);
@@ -66,6 +72,11 @@ async function sendQuery() {
     input.style.height = 'auto';
     input.disabled = true;
     document.getElementById('send-btn').disabled = true;
+
+    // Reset per-turn figure-id resolution state (Task 13)
+    currentTurnPapers = new Set();
+    activeAssistantDiv = null;
+    activeAssistantText = "";
 
     // Add user message
     addMessage('user', query);
@@ -153,6 +164,9 @@ async function sendQuery() {
                     // Source from RAG modes (basic, advanced, profound)
                     if (data.source) {
                         const src = data.source;
+                        if (src.doi) {
+                            currentTurnPapers.add("doi:" + src.doi);
+                        }
                         const ct = src.content_type || 'none';
                         const ctLabels = { structured: 'Structured', full_text: 'Full text', abstract: 'Abstract', none: '—' };
                         const ctLabel = ctLabels[ct] || ct;
@@ -192,8 +206,10 @@ async function sendQuery() {
                     if (delta) {
                         if (!assistantDiv) {
                             assistantDiv = addMessage('assistant', '');
+                            activeAssistantDiv = assistantDiv;
                         }
                         assistantMessage += delta;
+                        activeAssistantText = assistantMessage;
                         assistantDiv.innerHTML = formatMessage(assistantMessage);
                         if (data.session_id) sessionId = data.session_id;
                         if (data.conversation_id) {
@@ -207,10 +223,12 @@ async function sendQuery() {
                 } else if (data.type === 'answer') {
                     if (!assistantDiv) {
                         assistantDiv = addMessage('assistant', '');
+                        activeAssistantDiv = assistantDiv;
                     }
                     assistantMessage = data.content_b64
                         ? decodeUtf8FromBase64(data.content_b64)
                         : (data.content || '');
+                    activeAssistantText = assistantMessage;
                     assistantDiv.innerHTML = formatMessage(assistantMessage);
                     sessionId = data.session_id || sessionId;
                     // Capture conversation_id from response
@@ -249,6 +267,13 @@ async function sendQuery() {
                 }
             }
             if (done) break;
+        }
+
+        // Resolve any pdf_pN_iM figure-id tokens into inline thumbnails (Task 13)
+        try {
+            await resolveFigureIdsInAssistantMessage();
+        } catch (e) {
+            console.warn('figure-id resolution failed', e);
         }
 
         // Attach provenance disclosure once stream is complete
@@ -561,4 +586,76 @@ function showPapersCuration(parentDiv, papers) {
 
     const container = document.getElementById('chat-container');
     container.scrollTop = container.scrollHeight;
+}
+
+/* ── Inline capsule figure thumbnails (Task 13) ─────────────────────────── */
+
+async function resolveFigureIdsInAssistantMessage() {
+    if (!activeAssistantDiv) return;
+    const tokenRe = /pdf_p\d+_i\d+/g;
+    const tokens = [...new Set((activeAssistantText || '').match(tokenRe) || [])];
+    if (tokens.length === 0) return;
+
+    const papers = Array.from(currentTurnPapers);
+    if (papers.length === 0) return;
+
+    // Fetch figure index for each paper in scope (cached across turns)
+    await Promise.all(papers.map(async (paperId) => {
+        if (figureIndexByPaper[paperId]) return;
+        try {
+            const r = await fetch(
+                "/api/capsule/" + encodeURIComponent(paperId) + "/figures"
+            );
+            figureIndexByPaper[paperId] = r.ok ? await r.json() : [];
+        } catch (e) {
+            figureIndexByPaper[paperId] = [];
+        }
+    }));
+
+    // Build token -> paperId map (only when token appears in exactly one paper)
+    const tokenToPaper = {};
+    for (const tok of tokens) {
+        const matches = [];
+        for (const paperId of papers) {
+            const recs = figureIndexByPaper[paperId] || [];
+            const found = recs.some(
+                (r) => ("pdf_p" + (r.page || 0) + "_i" + (r.index || 0)) === tok
+            );
+            if (found) matches.push(paperId);
+        }
+        if (matches.length === 1) tokenToPaper[tok] = matches[0];
+    }
+
+    if (Object.keys(tokenToPaper).length === 0) return;
+
+    // Rewrite plain-text tokens in the rendered HTML to <img> thumbnails.
+    let rewritten = activeAssistantDiv.innerHTML;
+    for (const [tok, paperId] of Object.entries(tokenToPaper)) {
+        const enc = encodeURIComponent(paperId);
+        const safeTok = tok.replace(/[^A-Za-z0-9_]/g, "");
+        const re = new RegExp("\\b" + safeTok + "\\b", "g");
+        const safePaperAttr = paperId.replace(/"/g, '&quot;');
+        rewritten = rewritten.replace(re,
+            '<img class="inline-figure" data-paper="' + safePaperAttr +
+            '" data-fig="' + safeTok +
+            '" src="/api/capsule/' + enc + '/figure/' + safeTok +
+            '" alt="Figure ' + safeTok + '" loading="lazy" />'
+        );
+    }
+    activeAssistantDiv.innerHTML = rewritten;
+    activeAssistantDiv.querySelectorAll(".inline-figure").forEach((img) => {
+        img.addEventListener("click", openFigureLightbox);
+    });
+}
+
+function openFigureLightbox(ev) {
+    const img = ev.currentTarget;
+    const lightbox = document.createElement("div");
+    lightbox.className = "figure-lightbox";
+    const full = document.createElement("img");
+    full.src = img.src;
+    full.alt = "";
+    lightbox.appendChild(full);
+    lightbox.addEventListener("click", () => lightbox.remove());
+    document.body.appendChild(lightbox);
 }
