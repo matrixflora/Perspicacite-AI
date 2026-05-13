@@ -17,6 +17,7 @@ from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.provenance.context import get_collector
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
@@ -994,11 +995,18 @@ Additional information:
 Provide a comprehensive answer based on the documents above."""
 
         try:
+            base_messages = [
+                {"role": "system", "content": combined_prompt},
+                {"role": "user", "content": template},
+            ]
+            messages = wrap_messages_for_chunks(
+                base_messages=base_messages,
+                chunks=documents,
+                model=request.model,
+                config=self.config,
+            )
             response = await llm.complete(
-                messages=[
-                    {"role": "system", "content": combined_prompt},
-                    {"role": "user", "content": template},
-                ],
+                messages=messages,
                 model=request.model,
                 provider=request.provider,
                 max_tokens=2000,
@@ -1097,13 +1105,21 @@ Sources:
             temperature = 0.7 if qc > 0.7 else 0.3
         else:
             temperature = 0.3
+        chunks_for_mm = source_documents or []
         if is_o_series:
             try:
+                base_messages = [
+                    {"role": "system", "content": combined_prompt},
+                    {"role": "user", "content": template},
+                ]
+                messages = wrap_messages_for_chunks(
+                    base_messages=base_messages,
+                    chunks=chunks_for_mm,
+                    model=request.model,
+                    config=self.config,
+                )
                 return await llm.complete(
-                    messages=[
-                        {"role": "system", "content": combined_prompt},
-                        {"role": "user", "content": template},
-                    ],
+                    messages=messages,
                     model=request.model,
                     provider=request.provider,
                     max_tokens=2000,
@@ -1113,11 +1129,18 @@ Sources:
                 return f"Error generating response: {e}"
 
         try:
+            base_messages = [
+                {"role": "system", "content": combined_prompt},
+                {"role": "user", "content": template},
+            ]
+            messages = wrap_messages_for_chunks(
+                base_messages=base_messages,
+                chunks=chunks_for_mm,
+                model=request.model,
+                config=self.config,
+            )
             return await llm.complete(
-                messages=[
-                    {"role": "system", "content": combined_prompt},
-                    {"role": "user", "content": template},
-                ],
+                messages=messages,
                 model=request.model,
                 provider=request.provider,
                 max_tokens=2000,
