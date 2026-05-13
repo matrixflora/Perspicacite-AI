@@ -98,3 +98,87 @@ def test_async_bibtex_503_when_jobs_unconfigured(monkeypatch):
     client = TestClient(app)
     r = client.post("/api/kb/default/bibtex/async", json={"bibtex": "@article{x}"})
     assert r.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Async DOI endpoint tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_dois_returns_job_id_and_runs(monkeypatch):
+    """The async DOI endpoint validates input, creates a job, and runs the worker."""
+    import tempfile
+
+    import httpx
+
+    from perspicacite.jobs.registry import JobRegistry
+    from perspicacite.memory.session_store import SessionStore
+    from perspicacite.web import state as state_mod
+    from perspicacite.web.routers import kb as kb_router
+
+    captured: dict = {}
+
+    async def fake_worker(*, name, dois, job_id, registry, **kw):
+        captured["called"] = True
+        captured["name"] = name
+        captured["dois"] = list(dois)
+        await registry.publish(job_id, {"type": "progress", "done": 1, "doi": dois[0]})
+        await registry.finish(job_id, {"added_papers": 1, "added_chunks": 2,
+                                       "skipped_duplicates": 0, "failed": []})
+
+    monkeypatch.setattr(kb_router, "_dois_ingest_worker", fake_worker)
+
+    tmp = tempfile.mkdtemp()
+    db_path = Path(tmp) / "p.db"
+    ss = SessionStore(db_path)
+    await ss.init_db()
+    jr = JobRegistry(db_path=db_path)
+    monkeypatch.setattr(state_mod.app_state, "session_store", ss, raising=False)
+    monkeypatch.setattr(state_mod.app_state, "job_registry", jr, raising=False)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        r = await client.post("/api/kb/default/dois/async", json={"dois": ["10.1/x", "10.1/y"]})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "job_id" in body
+        assert body.get("total") == 2
+        # Poll until done
+        row = None
+        for _ in range(60):
+            await asyncio.sleep(0.05)
+            row = (await client.get(f"/api/jobs/{body['job_id']}")).json()
+            if row.get("status") == "done":
+                break
+    assert row["status"] == "done"
+    assert row["result"]["added_papers"] == 1
+    assert captured.get("called") is True
+
+
+def test_async_dois_503_when_jobs_unconfigured(monkeypatch):
+    from perspicacite.web import state as state_mod
+
+    monkeypatch.setattr(state_mod.app_state, "job_registry", None, raising=False)
+    client = TestClient(app)
+    r = client.post("/api/kb/default/dois/async", json={"dois": ["10.1/x"]})
+    assert r.status_code == 503
+
+
+def test_async_dois_400_when_too_many(monkeypatch):
+    """Reject >200 DOIs same as the sync endpoint."""
+    import tempfile
+
+    from perspicacite.jobs.registry import JobRegistry
+    from perspicacite.memory.session_store import SessionStore
+    from perspicacite.web import state as state_mod
+
+    tmp = tempfile.mkdtemp()
+    db = Path(tmp) / "p.db"
+    ss = SessionStore(db)
+    jr = JobRegistry(db_path=db)
+    monkeypatch.setattr(state_mod.app_state, "job_registry", jr, raising=False)
+    monkeypatch.setattr(state_mod.app_state, "session_store", ss, raising=False)
+    client = TestClient(app)
+    r = client.post("/api/kb/default/dois/async", json={"dois": [f"10.1/{i}" for i in range(201)]})
+    assert r.status_code == 400
