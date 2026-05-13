@@ -21,10 +21,44 @@ from collections import defaultdict
 
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference
+from perspicacite.provenance.context import get_collector
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.retrieval.recency import apply_recency_weighting
 from perspicacite.search.scilex_adapter import SciLExAdapter
 
 logger = get_logger("perspicacite.rag.modes.literature_survey")
+
+
+def _apply_recency_to_candidates(
+    candidates: list[Any],
+    recency_weight: float | None,
+    half_life_years: float | None,
+) -> list[Any]:
+    """Apply recency weighting to a list of PaperCandidate objects.
+
+    PaperCandidate stores its score in ``relevance_score`` (not ``score`` /
+    ``paper_score``), so we can't pass the objects directly to the generic
+    helpers.  This wrapper converts each candidate to a plain dict with a
+    ``_candidate`` back-reference, delegates to ``apply_recency_weighting``,
+    writes the adjusted score back, and returns the re-sorted list.
+    No-op when *recency_weight* is None or 0.
+    """
+    if not recency_weight or recency_weight <= 0 or not candidates:
+        return candidates
+
+    # Build proxy dicts that the recency helper understands, carrying a
+    # reference to the original candidate so we can write the score back.
+    proxies = [
+        {"year": c.year, "score": float(c.relevance_score or 0.0), "_candidate": c}
+        for c in candidates
+    ]
+    apply_recency_weighting(proxies, recency_weight, half_life_years)
+
+    # Write adjusted scores back and return re-sorted candidates
+    for proxy in proxies:
+        proxy["_candidate"].relevance_score = proxy["score"]
+
+    return [proxy["_candidate"] for proxy in proxies]
 
 
 @dataclass
@@ -131,7 +165,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         # Phase 1: Broad search
         logger.info("phase_1_search")
         papers = await self._broad_search(request.query)
-        
+
         if not papers:
             return RAGResponse(
                 answer="No papers found for this topic. Try broadening your search terms.",
@@ -139,21 +173,56 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 mode=RAGMode.LITERATURE_SURVEY,
                 metadata={"session_id": session_id, "phase": "search_failed"}
             )
-        
+
         # Convert to candidates
         session.papers = self._convert_to_candidates(papers)
         logger.info("papers_found", count=len(session.papers))
-        
+
+        # Provenance: record broad search
+        _c = get_collector()
+        if _c is not None:
+            _c.add_trace(
+                "broad_search",
+                detail={"count": len(session.papers), "kb_name": request.kb_name},
+            )
+
         # Phase 2 & 3: Batch abstract analysis + theme identification
         logger.info("phase_2_3_analysis")
         session.themes = await self._analyze_abstracts_batch(
             session.papers, request.query, llm
         )
         logger.info("themes_identified", count=len(session.themes))
-        
+
+        # Apply recency weighting on candidates using relevance_score as the score field
+        session.papers = _apply_recency_to_candidates(
+            session.papers,
+            request.recency_weight,
+            getattr(request, "recency_half_life_years", None),
+        )
+
+        # Provenance: per-paper retrieval events after scoring
+        if _c is not None:
+            for rank, cand in enumerate(session.papers):
+                _c.add_retrieval(
+                    paper_id=cand.id,
+                    doi=cand.doi,
+                    title=cand.title,
+                    score=float(cand.relevance_score or 0.0),
+                    kb_name=None,
+                    content_type=None,
+                    pipeline_step=None,
+                    rank=rank,
+                    stage_label="survey.broad_search",
+                )
+            _c.add_trace("cluster", detail={"themes": len(session.themes)})
+
         # Phase 4: Generate recommendations
         logger.info("phase_4_recommendations")
         await self._generate_recommendations(session.papers, session.themes, llm)
+
+        # Provenance: record recommendations stage
+        if _c is not None:
+            _c.add_trace("recommend")
         
         # Return interim response - user needs to select papers
         summary = self._generate_interim_summary(session)
@@ -205,17 +274,54 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         
         session.papers = self._convert_to_candidates(papers)
         yield StreamEvent.status(f"Literature Survey: Found {len(session.papers)} papers")
-        
+
+        # Provenance: record broad search
+        _c = get_collector()
+        if _c is not None:
+            _c.add_trace(
+                "broad_search",
+                detail={"count": len(session.papers), "kb_name": request.kb_name},
+            )
+
         # Phase 2: Batch analysis
         yield StreamEvent.status("Literature Survey: Analyzing abstracts in batches...")
         session.themes = await self._analyze_abstracts_batch(
             session.papers, request.query, llm
         )
-        yield StreamEvent.status(f"Literature Survey: Identified {len(session.themes)} research themes")
-        
+        yield StreamEvent.status(
+            f"Literature Survey: Identified {len(session.themes)} research themes"
+        )
+
+        # Apply recency weighting on candidates using relevance_score as the score field
+        session.papers = _apply_recency_to_candidates(
+            session.papers,
+            request.recency_weight,
+            getattr(request, "recency_half_life_years", None),
+        )
+
+        # Provenance: per-paper retrieval events + cluster trace
+        if _c is not None:
+            for rank, cand in enumerate(session.papers):
+                _c.add_retrieval(
+                    paper_id=cand.id,
+                    doi=cand.doi,
+                    title=cand.title,
+                    score=float(cand.relevance_score or 0.0),
+                    kb_name=None,
+                    content_type=None,
+                    pipeline_step=None,
+                    rank=rank,
+                    stage_label="survey.broad_search",
+                )
+            _c.add_trace("cluster", detail={"themes": len(session.themes)})
+
         # Phase 3: Recommendations
         yield StreamEvent.status("Literature Survey: Generating recommendations...")
         await self._generate_recommendations(session.papers, session.themes, llm)
+
+        # Provenance: record recommendations stage
+        if _c is not None:
+            _c.add_trace("recommend")
         
         # Emit summary
         summary = self._generate_interim_summary(session)
@@ -391,8 +497,10 @@ JSON ONLY (no other text):
         try:
             messages = [{"role": "user", "content": prompt}]
             # Increased token limit to handle larger responses
-            response = await llm.complete(messages, temperature=0.3, max_tokens=4000)
-            
+            response = await llm.complete(
+                messages, temperature=0.3, max_tokens=4000, stage="survey.cluster"
+            )
+
             # Parse JSON with better error handling
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
@@ -467,8 +575,10 @@ Respond in JSON format:
         
         try:
             messages = [{"role": "user", "content": prompt}]
-            response = await llm.complete(messages, temperature=0.3, max_tokens=2000)
-            
+            response = await llm.complete(
+                messages, temperature=0.3, max_tokens=2000, stage="survey.cluster"
+            )
+
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 data = json.loads(json_match.group())
@@ -514,8 +624,10 @@ Respond with theme names separated by commas, or "None" if no match."""
             
             try:
                 messages = [{"role": "user", "content": prompt}]
-                response = await llm.complete(messages, temperature=0.2, max_tokens=100)
-                
+                response = await llm.complete(
+                    messages, temperature=0.2, max_tokens=100, stage="survey.cluster"
+                )
+
                 if "None" not in response:
                     assigned = [t.strip() for t in response.split(",") if t.strip() in theme_names]
                     paper.themes = assigned
