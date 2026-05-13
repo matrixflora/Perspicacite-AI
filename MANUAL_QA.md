@@ -122,3 +122,20 @@ These do not require the web UI.
 - [ ] With `zotero.enabled: true` and valid credentials in `config.yml`, opening a paper-detail slide-over shows a "Send to Zotero" button.
 - [ ] With `zotero.enabled: false`, the button is hidden.
 - [ ] Clicking the button POSTs the current DOI to `/api/zotero/push` and shows an alert with the returned key (or failure reason).
+
+## Multi-KB chat across all six modes (2026-05-13, cycle 3)
+
+For each of `basic`, `advanced`, `profound`, `contradiction`, `literature_survey`, `agentic`:
+1. Open the chat panel, multi-select two KBs that share an embedding model.
+2. Enter a representative query.
+3. Confirm the answer streams to completion (no error event).
+4. Confirm source cards show `kb_name` tags from both KBs (visible in the source-card chip).
+5. Confirm provenance JSONL contains a `kb_names` field reflecting the selection.
+
+Embedding-mismatch test:
+- Multi-select two KBs with different embedding models.
+- Confirm chat surfaces a clear error (no silent fallback).
+
+Notes:
+- `literature_survey` doesn't retrieve from any KB; multi-KB selection is honored as a *storage* target (papers are stored into `kb_names[0]`). Log line `survey_multi_kb_storage` appears when >1 KB is selected.
+- `agentic`'s KB_SEARCH step builds a `MultiKBRetriever` automatically when the request carries multi-KB; per-paper `kb_name` propagates through `SourceReference`.
