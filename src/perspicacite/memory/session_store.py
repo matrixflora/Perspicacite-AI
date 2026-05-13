@@ -53,6 +53,20 @@ CREATE TABLE IF NOT EXISTS kb_metadata (
     chunk_count INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS provenance (
+    message_id TEXT PRIMARY KEY,
+    conversation_id TEXT,
+    rag_mode TEXT NOT NULL,
+    request_params TEXT DEFAULT '{}',
+    retrieval_events TEXT DEFAULT '[]',
+    mode_trace TEXT DEFAULT '[]',
+    llm_calls_index TEXT DEFAULT '[]',
+    sidecar_path TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_provenance_conversation ON provenance(conversation_id);
+
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id);
 """
