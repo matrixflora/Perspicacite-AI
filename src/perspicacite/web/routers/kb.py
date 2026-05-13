@@ -223,6 +223,128 @@ async def _bibtex_ingest_worker(
         await registry.fail(job_id, str(exc))
 
 
+async def _dois_ingest_worker(
+    *,
+    name: str,
+    dois: list[str],
+    job_id: str,
+    registry,
+) -> None:
+    """Background worker for async DOI ingestion.
+
+    Mirrors the sync add_dois_to_kb handler but publishes per-DOI progress
+    events and finishes/fails via the JobRegistry.
+    """
+    try:
+        from perspicacite.models.papers import Author, Paper, PaperSource
+        from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+
+        kb = await app_state.session_store.get_kb_metadata(name)
+        if not kb:
+            await registry.fail(job_id, f"Knowledge base '{name}' not found")
+            return
+
+        pdf_config = app_state.config.pdf_download if app_state.config else None
+        pdf_kw = _get_pdf_fallback_kwargs(pdf_config)
+
+        papers_to_add: list = []
+        skipped: list = []
+        failed: list = []
+        dl: dict = {"attempted": 0, "success": 0, "failed": 0}
+
+        for i, raw_doi in enumerate(dois):
+            doi = (raw_doi or "").strip().replace("https://doi.org/", "")
+            if not doi:
+                await registry.publish(
+                    job_id,
+                    {"type": "progress", "done": i + 1, "doi": raw_doi, "status": "empty"},
+                )
+                continue
+
+            if await app_state.vector_store.paper_exists(kb.collection_name, doi):
+                skipped.append({"doi": doi})
+                await registry.publish(
+                    job_id,
+                    {"type": "progress", "done": i + 1, "doi": doi, "status": "skipped"},
+                )
+                continue
+
+            dl["attempted"] += 1
+            try:
+                result = await retrieve_paper_content(
+                    doi, pdf_parser=app_state.pdf_parser, **pdf_kw
+                )
+            except Exception as exc:
+                failed.append({"doi": doi, "reason": str(exc)})
+                dl["failed"] += 1
+                await registry.publish(
+                    job_id,
+                    {"type": "progress", "done": i + 1, "doi": doi, "status": "failed"},
+                )
+                continue
+
+            if not result or not result.success:
+                failed.append({"doi": doi, "reason": "no content"})
+                dl["failed"] += 1
+                await registry.publish(
+                    job_id,
+                    {"type": "progress", "done": i + 1, "doi": doi, "status": "no_content"},
+                )
+                continue
+
+            md = result.metadata or {}
+            paper = Paper(
+                id=doi,
+                title=md.get("title") or f"Reference {doi}",
+                authors=[Author(name=a) for a in (md.get("authors") or [])],
+                year=md.get("year"),
+                doi=doi,
+                abstract=result.abstract or md.get("abstract"),
+                journal=md.get("journal"),
+                source=PaperSource.WEB_SEARCH,
+            )
+            if result.full_text:
+                paper.full_text = result.full_text
+                dl["success"] += 1
+                status = "embedded"
+            else:
+                dl["failed"] += 1
+                status = "no_full_text"
+            papers_to_add.append(paper)
+            await registry.publish(
+                job_id,
+                {"type": "progress", "done": i + 1, "doi": doi, "status": status},
+            )
+
+        added = 0
+        if papers_to_add:
+            dkb = DynamicKnowledgeBase(
+                vector_store=app_state.vector_store,
+                embedding_service=app_state.embedding_provider,
+            )
+            dkb.collection_name = kb.collection_name
+            dkb._initialized = True
+            added = await dkb.add_papers(papers_to_add, include_full_text=True)
+            kb.paper_count += len(papers_to_add)
+            kb.chunk_count += added
+            await app_state.session_store.save_kb_metadata(kb)
+
+        await registry.finish(
+            job_id,
+            {
+                "added_papers": len(papers_to_add),
+                "added_chunks": added,
+                "skipped_duplicates": len(skipped),
+                "failed": failed,
+                "pdf_download": dl,
+            },
+        )
+    except Exception as exc:
+        logger.error(f"dois_ingest_worker failed: {exc}", exc_info=True)
+        await registry.fail(job_id, str(exc))
+
+
 def _get_pdf_fallback_kwargs(pdf_config) -> dict:
     """Build keyword args for retrieve_paper_content from PDFDownloadConfig."""
     if not pdf_config:
@@ -852,6 +974,31 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
         "pdf_download": dl,
         "kb": name,
     }
+
+
+@router.post("/api/kb/{name}/dois/async")
+async def add_dois_to_kb_async(name: str, request: KBAddDOIsRequest):
+    """Start an async DOI ingestion job. Returns {job_id, total} immediately."""
+    import asyncio as _asyncio
+
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="jobs not configured")
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    if len(request.dois) > 200:
+        raise HTTPException(status_code=400, detail="At most 200 DOIs per request")
+
+    total = len(request.dois)
+    job_id = await app_state.job_registry.create(kind="doi_ingest", total=total)
+    _asyncio.create_task(  # noqa: RUF006  # fire-and-forget; result tracked via JobRegistry
+        _dois_ingest_worker(
+            name=name,
+            dois=list(request.dois),
+            job_id=job_id,
+            registry=app_state.job_registry,
+        )
+    )
+    return {"job_id": job_id, "total": total}
 
 
 @router.get("/api/paper")
