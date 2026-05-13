@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from perspicacite.memory.session_store import SessionStore
+from perspicacite.provenance.store import ProvenanceStore
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class AppState:
         self.orchestrator = None
         self.rag_engine = None  # Multi-mode RAG engine
         self.session_store: Optional[SessionStore] = None
+        self.provenance_store: Optional[ProvenanceStore] = None
         self.pdf_downloader = None
         self.pdf_parser = None
         self.initialized = False
@@ -107,6 +109,13 @@ class AppState:
         self.session_store = SessionStore(db_path)
         await self.session_store.init_db()
         logger.info("Session store initialized")
+
+        sidecar_dir = self.session_store.db_path.parent / "provenance"
+        self.provenance_store = ProvenanceStore(
+            db_path=self.session_store.db_path,
+            sidecar_dir=sidecar_dir,
+        )
+        logger.info("Provenance store initialized")
 
         # Initialize PDF downloader and parser
         from perspicacite.pipeline.download import PDFDownloader
