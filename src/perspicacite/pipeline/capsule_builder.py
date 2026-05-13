@@ -9,6 +9,7 @@ ASB capsules (see docs/superpowers/specs/2026-05-13-capsule-multimodal-rag-desig
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,7 +84,41 @@ def write_figures(capsule_dir: Path, *, figures: list[RawFigure]) -> int:
     return len(records)
 
 
-def write_blocks(capsule_dir: Path, *, text: str) -> int:
+_FIG_MENTION_RE = re.compile(
+    r"\b(?:fig(?:ure|\.)?|scheme)\s+([A-Za-z]?\d+[A-Za-z]?)\b",
+    re.IGNORECASE,
+)
+
+
+def resolve_figure_refs(text: str, figures: list[RawFigure]) -> list[str]:
+    """Return a deduped list of ``figure_id`` strings mentioned in ``text``.
+
+    Only mentions whose ``figure_number`` exists in ``figures`` are kept.
+    """
+    if not text or not figures:
+        return []
+    by_number: dict[str, str] = {}
+    for raw in figures:
+        rec = raw.record
+        if rec.figure_number:
+            by_number.setdefault(
+                rec.figure_number.lower(), f"pdf_p{rec.page}_i{rec.index}",
+            )
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _FIG_MENTION_RE.finditer(text):
+        key = m.group(1).lower()
+        fid = by_number.get(key)
+        if fid and fid not in seen:
+            seen.add(fid)
+            out.append(fid)
+    return out
+
+
+def write_blocks(
+    capsule_dir: Path, *, text: str,
+    figures: "list[RawFigure] | None" = None,
+) -> int:
     """Section-split ``text`` and emit one paragraph-block per row into
     ``text/blocks.jsonl``.
 
@@ -116,7 +151,7 @@ def write_blocks(capsule_dir: Path, *, text: str) -> int:
                 "content": paragraph,
                 "section": section,
                 "char_span": [start, end] if start >= 0 else None,
-                "figure_refs": [],
+                "figure_refs": resolve_figure_refs(paragraph, figures or []),
                 "table_refs": [],
                 "resource_refs": [],
             })
@@ -126,6 +161,17 @@ def write_blocks(capsule_dir: Path, *, text: str) -> int:
         "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + ("\n" if rows else ""),
         encoding="utf-8",
     )
+
+    # figure_mentions.jsonl — one row per (block_id, figure_id) pair
+    mentions: list[dict] = []
+    for r in rows:
+        for fid in r.get("figure_refs", []):
+            mentions.append({"block_id": r["block_id"], "figure_id": fid})
+    (text_dir / "figure_mentions.jsonl").write_text(
+        "\n".join(json.dumps(x) for x in mentions) + ("\n" if mentions else ""),
+        encoding="utf-8",
+    )
+
     return len(rows)
 
 
