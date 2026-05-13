@@ -390,6 +390,9 @@ class AgenticOrchestrator:
         self.recency_weight = recency_weight
         self.recency_half_life_years = recency_half_life_years
         self.kb_metas: list = list(kb_metas or [])
+        # Optional multi-KB names for KB_SEARCH step (set per-request by callers
+        # via the agentic_request_overrides context manager or by direct attr set).
+        self.kb_names: list[str] = []
 
         self.intent_classifier = IntentClassifier(llm_client)
         self.planner = ResearchPlanner(llm_client)
@@ -401,6 +404,60 @@ class AgenticOrchestrator:
 
         # SciLEx adapter for literature search (multi-API aggregation)
         self.scilex_adapter = SciLExAdapter()
+
+    def _build_kb_retriever(self, default_kb_name: Optional[str] = None):
+        """Return a retriever for the KB_SEARCH step.
+
+        Multi-KB request → MultiKBRetriever fanning across collections.
+        Single KB → DynamicKnowledgeBase (backward compatible).
+
+        Resolves the KB name list in this order:
+          1. agentic_request_overrides context var kb_metas (per-request, race-free)
+          2. self.kb_names (set on the orchestrator)
+          3. [default_kb_name] (typically session.kb_name)
+        """
+        from types import SimpleNamespace
+
+        from perspicacite.rag.agentic.context import get_current_kb_metas
+        from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+        from perspicacite.retrieval.multi_kb import MultiKBRetriever
+
+        ctx_metas = get_current_kb_metas()
+        if ctx_metas and len(ctx_metas) > 1:
+            return MultiKBRetriever(
+                vector_store=self.vector_store,
+                embedding_service=self.embeddings,
+                kb_metas=ctx_metas,
+            )
+
+        names = list(getattr(self, "kb_names", None) or [])
+        if not names and default_kb_name:
+            names = [default_kb_name]
+
+        if len(names) > 1:
+            metas = [
+                SimpleNamespace(
+                    name=n,
+                    collection_name=chroma_collection_name_for_kb(n),
+                    embedding_model=None,
+                )
+                for n in names
+            ]
+            return MultiKBRetriever(
+                vector_store=self.vector_store,
+                embedding_service=self.embeddings,
+                kb_metas=metas,
+            )
+
+        single = names[0] if names else default_kb_name
+        dkb = DynamicKnowledgeBase(
+            vector_store=self.vector_store,
+            embedding_service=self.embeddings,
+        )
+        if single:
+            dkb.collection_name = chroma_collection_name_for_kb(single)
+            dkb._initialized = True
+        return dkb
 
     def get_or_create_session(self, session_id: Optional[str] = None) -> AgentSession:
         """Get existing session or create new one."""
@@ -1174,18 +1231,18 @@ class AgenticOrchestrator:
                     )
                     logger.info(f"KB_SEARCH: search_query ({len(kb_query)} chars)={kb_query!r}")
 
-                    dkb = DynamicKnowledgeBase(
-                        vector_store=self.vector_store,
-                        embedding_service=self.embeddings,
-                    )
-                    dkb.collection_name = collection_name
-                    dkb._initialized = True
+                    dkb = self._build_kb_retriever(default_kb_name=session.kb_name)
                     # Dynamic top_k: planner can specify via tool_input
                     planner_top_k = step.tool_input.get("top_k")
-                    top_k = planner_top_k if planner_top_k is not None else dkb.config.top_k
+                    # DynamicKnowledgeBase exposes .config; MultiKBRetriever does not.
+                    _kb_cfg = getattr(dkb, "config", None)
+                    _default_top_k = getattr(_kb_cfg, "top_k", 5)
+                    _default_min_rel = getattr(_kb_cfg, "min_relevance_score", 0.0)
+                    top_k = planner_top_k if planner_top_k is not None else _default_top_k
                     logger.info(
-                        f"KB_SEARCH: top_k={top_k} min_relevance_score={dkb.config.min_relevance_score} "
-                        f"embedding_model={getattr(self.embeddings, 'model_name', '?')!r}"
+                        f"KB_SEARCH: top_k={top_k} min_relevance_score={_default_min_rel} "
+                        f"embedding_model={getattr(self.embeddings, 'model_name', '?')!r} "
+                        f"retriever={type(dkb).__name__}"
                     )
 
                     results = await dkb.search(kb_query, top_k=top_k)
@@ -1292,9 +1349,30 @@ class AgenticOrchestrator:
                                 try:
                                     from perspicacite.rag.utils import deduplicate_chunk_overlaps
 
-                                    all_chunks = await self.vector_store.get_chunks_by_paper_ids(
-                                        collection_name, paper_ids
-                                    )
+                                    # Multi-KB: fan get_chunks across all member
+                                    # collections; single-KB: original code path.
+                                    _is_multi = type(dkb).__name__ == "MultiKBRetriever"
+                                    if _is_multi:
+                                        from perspicacite.retrieval.multi_kb import (
+                                            get_chunks_by_paper_ids_across,
+                                        )
+
+                                        _coll_names = [
+                                            getattr(m, "collection_name", "")
+                                            for m in getattr(dkb, "kb_metas", [])
+                                            if getattr(m, "collection_name", None)
+                                        ]
+                                        all_chunks = await get_chunks_by_paper_ids_across(
+                                            self.vector_store,
+                                            collection_names=_coll_names,
+                                            paper_ids=paper_ids,
+                                        )
+                                    else:
+                                        all_chunks = (
+                                            await self.vector_store.get_chunks_by_paper_ids(
+                                                collection_name, paper_ids
+                                            )
+                                        )
                                     if all_chunks:
                                         deduped = deduplicate_chunk_overlaps(all_chunks)
                                         from collections import OrderedDict
