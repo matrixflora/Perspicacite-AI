@@ -642,6 +642,84 @@ def pubmed_search_cmd(
         click.echo(f"Wrote {len(papers)} entries to {output_bib}")
 
 
+@cli.command("build-capsule")
+@click.option("--paper", "paper_id", required=True, help="Paper ID (e.g. doi:10.1234/abc)")
+@click.option("--kb", required=True, help="KB to enumerate papers from")
+@click.option("--force", is_flag=True, default=False)
+@click.pass_context
+def build_capsule_cmd(ctx, paper_id: str, kb: str, force: bool) -> None:
+    """Build (or rebuild) a per-paper capsule."""
+    import asyncio
+    from perspicacite.pipeline.capsule_builder import (
+        build_capsule as _build,
+        resolve_paper_from_metadata,
+        locate_cached_pdf,
+    )
+    from perspicacite.web.state import AppState
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        kb_meta = await state.session_store.get_kb_metadata(kb)
+        if kb_meta is None:
+            click.echo(f"Error: KB '{kb}' not found", err=True)
+            raise SystemExit(1)
+        rows = await state.vector_store.list_paper_metadata(kb_meta.collection_name)
+        row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+        if row is None:
+            click.echo(f"Error: paper '{paper_id}' not in KB '{kb}'", err=True)
+            raise SystemExit(1)
+        paper = resolve_paper_from_metadata(row)
+        pdf_path = locate_cached_pdf(row)
+        res = await _build(
+            paper=paper, pdf_path=pdf_path,
+            kb_name=kb, app_state=state, force=force,
+        )
+        click.echo(f"Done: {res}")
+    asyncio.run(_run())
+
+
+@cli.command("build-capsules")
+@click.option("--kb", "kb_name", required=True, help="KB name")
+@click.option("--force", is_flag=True, default=False)
+@click.pass_context
+def build_capsules_cmd(ctx, kb_name: str, force: bool) -> None:
+    """Build capsules for every paper in a KB."""
+    import asyncio
+    from perspicacite.pipeline.capsule_builder import (
+        build_capsule as _build,
+        resolve_paper_from_metadata,
+        locate_cached_pdf,
+    )
+    from perspicacite.web.state import AppState
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        kb_meta = await state.session_store.get_kb_metadata(kb_name)
+        if kb_meta is None:
+            click.echo(f"Error: KB '{kb_name}' not found", err=True)
+            raise SystemExit(1)
+        rows = await state.vector_store.list_paper_metadata(kb_meta.collection_name)
+        counts = {"built": 0, "skipped": 0, "errored": 0}
+        for row in rows:
+            paper = resolve_paper_from_metadata(row)
+            pdf_path = locate_cached_pdf(row)
+            try:
+                res = await _build(
+                    paper=paper, pdf_path=pdf_path,
+                    kb_name=kb_name, app_state=state, force=force,
+                )
+                status = res.get("status", "errored")
+                counts[status] = counts.get(status, 0) + 1
+                click.echo(f"  {paper.id}: {status}")
+            except Exception as exc:
+                counts["errored"] += 1
+                click.echo(f"  {paper.id}: errored — {exc}", err=True)
+        click.echo(f"Summary: {counts}")
+    asyncio.run(_run())
+
+
 @cli.command()
 def version() -> None:
     """Print version information."""
