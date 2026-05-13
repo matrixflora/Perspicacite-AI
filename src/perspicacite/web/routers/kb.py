@@ -70,6 +70,159 @@ class KBAddDOIsRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _count_bibtex_entries(bibtex_text: str) -> int:
+    """Return the number of BibTeX entries in *bibtex_text* (best-effort)."""
+    try:
+        import bibtexparser
+
+        return len(bibtexparser.loads(bibtex_text).entries)
+    except Exception:
+        return 0
+
+
+async def _bibtex_ingest_worker(
+    *,
+    name: str,
+    bibtex_text: str,
+    job_id: str,
+    registry,
+) -> None:
+    """Background worker for async BibTeX ingestion.
+
+    Replicates the same logic as the sync handler but publishes per-paper
+    progress events and finishes/fails via the JobRegistry.
+    """
+    try:
+        import bibtexparser
+
+        from perspicacite.models.papers import Author, PaperSource
+        from perspicacite.pipeline.bibtex_kb import entries_to_papers
+        from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+
+        kb = await app_state.session_store.get_kb_metadata(name)
+        if not kb:
+            await registry.fail(job_id, f"Knowledge base '{name}' not found")
+            return
+
+        db = bibtexparser.loads(bibtex_text)
+        papers = entries_to_papers(db.entries)
+        if not papers:
+            await registry.finish(job_id, {"added_papers": 0, "added_chunks": 0, "skipped": 0})
+            return
+
+        pdf_config = app_state.config.pdf_download if app_state.config else None
+        pdf_kw = _get_pdf_fallback_kwargs(pdf_config)
+
+        papers_to_add = []
+        skipped = 0
+        for i, paper in enumerate(papers):
+            paper_id = paper.doi if paper.doi else paper.id
+            exists = await app_state.vector_store.paper_exists(kb.collection_name, paper_id)
+            if exists:
+                skipped += 1
+                await registry.publish(
+                    job_id,
+                    {"type": "progress", "done": i + 1, "doi": paper.doi, "status": "skipped"},
+                )
+                continue
+
+            paper.source = PaperSource.BIBTEX
+
+            # Local PDF check
+            local_path = Path(paper.pdf_url) if paper.pdf_url else None
+            if local_path and local_path.suffix.lower() == ".pdf" and local_path.exists():
+                try:
+                    parsed = await app_state.pdf_parser.parse(local_path)
+                    if parsed.text:
+                        paper.full_text = parsed.text
+                        papers_to_add.append(paper)
+                        await registry.publish(
+                            job_id,
+                            {
+                                "type": "progress",
+                                "done": i + 1,
+                                "doi": paper.doi,
+                                "status": "local_pdf",
+                            },
+                        )
+                        continue
+                except Exception as exc:
+                    logger.warning(f"Local PDF parse failed for {paper.title[:50]}: {exc}")
+
+            if paper.doi and app_state.pdf_parser:
+                try:
+                    result = await retrieve_paper_content(
+                        paper.doi, pdf_parser=app_state.pdf_parser, **pdf_kw
+                    )
+                    if result.success and result.full_text:
+                        paper.full_text = result.full_text
+                        meta = result.metadata or {}
+                        if meta.get("title") and not paper.title:
+                            paper.title = meta["title"]
+                        if meta.get("authors") and not paper.authors:
+                            paper.authors = [Author(name=a) for a in meta["authors"]]
+                        if result.abstract and not paper.abstract:
+                            paper.abstract = result.abstract
+                        await registry.publish(
+                            job_id,
+                            {
+                                "type": "progress",
+                                "done": i + 1,
+                                "doi": paper.doi,
+                                "status": "embedded",
+                            },
+                        )
+                    else:
+                        await registry.publish(
+                            job_id,
+                            {
+                                "type": "progress",
+                                "done": i + 1,
+                                "doi": paper.doi,
+                                "status": "no_full_text",
+                            },
+                        )
+                except Exception as exc:
+                    logger.warning(f"Content download failed for {paper.title[:50]}: {exc}")
+                    await registry.publish(
+                        job_id,
+                        {"type": "progress", "done": i + 1, "doi": paper.doi, "status": "failed"},
+                    )
+            else:
+                await registry.publish(
+                    job_id,
+                    {"type": "progress", "done": i + 1, "doi": paper.doi, "status": "no_doi"},
+                )
+
+            papers_to_add.append(paper)
+
+        added = 0
+        if papers_to_add:
+            dkb = DynamicKnowledgeBase(
+                vector_store=app_state.vector_store,
+                embedding_service=app_state.embedding_provider,
+            )
+            dkb.collection_name = kb.collection_name
+            dkb._initialized = True
+            added = await dkb.add_papers(papers_to_add, include_full_text=True)
+            kb.paper_count += len(papers_to_add)
+            kb.chunk_count += added
+            await app_state.session_store.save_kb_metadata(kb)
+
+        await registry.finish(
+            job_id,
+            {
+                "added_papers": len(papers_to_add),
+                "added_chunks": added,
+                "skipped": skipped,
+            },
+        )
+    except Exception as exc:
+        logger.error(f"bibtex_ingest_worker failed: {exc}", exc_info=True)
+        await registry.fail(job_id, str(exc))
+
+
 def _get_pdf_fallback_kwargs(pdf_config) -> dict:
     """Build keyword args for retrieve_paper_content from PDFDownloadConfig."""
     if not pdf_config:
@@ -569,6 +722,37 @@ async def add_bibtex_to_kb(name: str, request: Request):
         "pdf_download": download_stats,
         "kb": name,
     }
+
+
+@router.post("/api/kb/{name}/bibtex/async")
+async def add_bibtex_to_kb_async(name: str, request: Request):
+    """Start an async BibTeX ingestion job. Returns {job_id, total}."""
+    import asyncio as _asyncio
+
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="jobs not configured")
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="System not initialized")
+
+    try:
+        body = await request.json()
+        bibtex_content = body.get("bibtex", "")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body") from None
+    if not bibtex_content.strip():
+        raise HTTPException(status_code=400, detail="BibTeX content is empty")
+
+    total = _count_bibtex_entries(bibtex_content)
+    job_id = await app_state.job_registry.create(kind="bibtex_ingest", total=total)
+    _asyncio.create_task(  # noqa: RUF006  # fire-and-forget; result tracked via JobRegistry
+        _bibtex_ingest_worker(
+            name=name,
+            bibtex_text=bibtex_content,
+            job_id=job_id,
+            registry=app_state.job_registry,
+        )
+    )
+    return {"job_id": job_id, "total": total}
 
 
 @router.post("/api/kb/{name}/dois")
