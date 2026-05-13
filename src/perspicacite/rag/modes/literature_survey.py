@@ -29,6 +29,22 @@ from perspicacite.search.scilex_adapter import SciLExAdapter
 logger = get_logger("perspicacite.rag.modes.literature_survey")
 
 
+def _target_kb(request: Any) -> str:
+    """Return the KB to use for any storage-targeting decisions.
+
+    Literature Survey does NOT retrieve from a KB (it uses external SciLEx
+    search), but the API still accepts ``request.kb_names`` for parity with
+    other RAG modes. When multiple KBs are supplied, storage / provenance
+    must converge on a single target — by convention the first entry.
+
+    Falls back to ``request.kb_name`` when ``kb_names`` is None or empty.
+    """
+    names = getattr(request, "kb_names", None)
+    if names:
+        return names[0]
+    return request.kb_name
+
+
 def _apply_recency_to_candidates(
     candidates: list[Any],
     recency_weight: float | None,
@@ -159,9 +175,19 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         session_id = str(uuid.uuid4())
         session = SurveySession(session_id=session_id, query=request.query)
         self.sessions[session_id] = session
-        
+
         logger.info("literature_survey_start", query=request.query, session_id=session_id)
-        
+
+        # Multi-KB: literature_survey doesn't read from a KB, but if a caller
+        # passed multiple kb_names for storage targeting, only the first will
+        # be used. Log the decision once so it's visible in traces.
+        if request.kb_names and len(request.kb_names) > 1:
+            logger.info(
+                "survey_multi_kb_storage",
+                selected_storage_kb=_target_kb(request),
+                other_kbs=list(request.kb_names[1:]),
+            )
+
         # Phase 1: Broad search
         logger.info("phase_1_search")
         papers = await self._broad_search(request.query)
@@ -183,7 +209,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         if _c is not None:
             _c.add_trace(
                 "broad_search",
-                detail={"count": len(session.papers), "kb_name": request.kb_name},
+                detail={"count": len(session.papers), "kb_name": _target_kb(request)},
             )
 
         # Phase 2 & 3: Batch abstract analysis + theme identification
@@ -254,9 +280,19 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         session_id = str(uuid.uuid4())
         session = SurveySession(session_id=session_id, query=request.query)
         self.sessions[session_id] = session
-        
+
+        # Multi-KB: literature_survey doesn't read from a KB, but if a caller
+        # passed multiple kb_names for storage targeting, only the first will
+        # be used. Log the decision once so it's visible in traces.
+        if request.kb_names and len(request.kb_names) > 1:
+            logger.info(
+                "survey_multi_kb_storage",
+                selected_storage_kb=_target_kb(request),
+                other_kbs=list(request.kb_names[1:]),
+            )
+
         yield StreamEvent.status("Literature Survey: Initializing...")
-        
+
         # Phase 1: Search
         yield StreamEvent.status("Literature Survey: Searching across academic databases...")
         papers = await self._broad_search(request.query, request.databases)
@@ -280,7 +316,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         if _c is not None:
             _c.add_trace(
                 "broad_search",
-                detail={"count": len(session.papers), "kb_name": request.kb_name},
+                detail={"count": len(session.papers), "kb_name": _target_kb(request)},
             )
 
         # Phase 2: Batch analysis
