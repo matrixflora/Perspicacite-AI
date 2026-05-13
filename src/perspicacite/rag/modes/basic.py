@@ -14,6 +14,7 @@ from typing import Any
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.models.kb import chroma_collection_name_for_kb
+from perspicacite.provenance.context import get_collector
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
@@ -138,6 +139,23 @@ class BasicRAGMode(BaseRAGMode):
                 getattr(request, "recency_half_life_years", None),
             )
 
+        # Provenance: record retrieval events
+        _c = get_collector()
+        if _c is not None:
+            _c.add_trace("retrieve", detail={"kb_name": request.kb_name, "count": len(paper_results)})
+            for rank, p in enumerate(paper_results):
+                _c.add_retrieval(
+                    paper_id=p.get("paper_id"),
+                    doi=p.get("doi"),
+                    title=p.get("title"),
+                    score=float(p.get("paper_score", 0.0) or 0.0),
+                    kb_name=p.get("kb_name"),
+                    content_type=None,
+                    pipeline_step=None,
+                    rank=rank,
+                    stage_label="basic.retrieve",
+                )
+
         # Build sources from paper results
         sources = []
         for p in paper_results:
@@ -241,6 +259,23 @@ class BasicRAGMode(BaseRAGMode):
                 getattr(request, "recency_half_life_years", None),
             )
 
+        # Provenance: record retrieval events
+        _c = get_collector()
+        if _c is not None:
+            _c.add_trace("retrieve", detail={"kb_name": request.kb_name, "count": len(paper_results)})
+            for rank, p in enumerate(paper_results):
+                _c.add_retrieval(
+                    paper_id=p.get("paper_id"),
+                    doi=p.get("doi"),
+                    title=p.get("title"),
+                    score=float(p.get("paper_score", 0.0) or 0.0),
+                    kb_name=p.get("kb_name"),
+                    content_type=None,
+                    pipeline_step=None,
+                    rank=rank,
+                    stage_label="basic.retrieve",
+                )
+
         # Prepare sources
         sources = []
         for p in paper_results:
@@ -289,6 +324,7 @@ class BasicRAGMode(BaseRAGMode):
                 provider=request.provider,
                 max_tokens=2000,
                 temperature=0.3,
+                stage="basic.answer",
             ):
                 full_response += chunk
                 yield StreamEvent.content(chunk)
