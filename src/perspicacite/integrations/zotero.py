@@ -2,11 +2,31 @@
 
 from __future__ import annotations
 
+from html.parser import HTMLParser
 from typing import Any
 
 import httpx
 
 ZOTERO_API = "https://api.zotero.org"
+
+
+class _HTMLStripper(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._chunks: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self._chunks.append(data)
+
+    def get_text(self) -> str:
+        return " ".join("".join(self._chunks).split()).strip()
+
+
+def _html_to_text(html: str) -> str:
+    """Strip HTML tags; collapse whitespace."""
+    p = _HTMLStripper()
+    p.feed(html or "")
+    return p.get_text()
 
 
 class ZoteroClient:
@@ -101,3 +121,113 @@ class ZoteroClient:
         if success:
             return next(iter(success.values()))
         return None
+
+    async def _paginated(
+        self, path: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        c = await self._client()
+        out: list[dict[str, Any]] = []
+        start = 0
+        limit = 100
+        while True:
+            p: dict[str, Any] = {"start": start, "limit": limit, "format": "json"}
+            if params:
+                p.update(params)
+            r = await c.get(f"{self._base()}{path}", params=p, headers=self._headers())
+            if r.status_code != 200:
+                break
+            page = r.json() or []
+            if not page:
+                break
+            out.extend(page)
+            start += len(page)
+        return out
+
+    async def list_collections(self) -> list[dict[str, Any]]:
+        """All collections (paginated)."""
+        return await self._paginated("/collections")
+
+    async def list_top_level_collections(self) -> list[dict[str, Any]]:
+        """Top-level collections only (no parent)."""
+        return await self._paginated("/collections/top")
+
+    async def list_items_in_collection(
+        self, coll_key: str, *, include_subcollections: bool = True
+    ) -> list[dict[str, Any]]:
+        """Items in a collection. Excludes attachments and notes (those come via
+        get_item_attachments / get_item_notes per parent item).
+        When include_subcollections=True, rolls up items from descendant collections."""
+        items = await self._paginated(
+            f"/collections/{coll_key}/items",
+            params={"itemType": "-attachment || note"},
+        )
+        if include_subcollections:
+            all_colls = await self.list_collections()
+            descendants = [
+                c["key"] for c in all_colls
+                if (c.get("data") or {}).get("parentCollection") == coll_key
+            ]
+            for d in descendants:
+                items.extend(await self.list_items_in_collection(d, include_subcollections=True))
+        seen: set[str] = set()
+        uniq: list[dict[str, Any]] = []
+        for it in items:
+            k = it.get("key")
+            if k and k not in seen:
+                seen.add(k)
+                uniq.append(it)
+        return uniq
+
+    async def list_top_level_items_without_collection(self) -> list[dict[str, Any]]:
+        """Top-level library items not in any collection."""
+        items = await self._paginated(
+            "/items/top",
+            params={"itemType": "-attachment || note"},
+        )
+        return [it for it in items if not ((it.get("data") or {}).get("collections") or [])]
+
+    async def get_item_attachments(self, item_key: str) -> list[dict[str, Any]]:
+        """Children of item_key where itemType == 'attachment'."""
+        c = await self._client()
+        r = await c.get(
+            f"{self._base()}/items/{item_key}/children",
+            params={"format": "json"},
+            headers=self._headers(),
+        )
+        if r.status_code != 200:
+            return []
+        return [
+            it for it in (r.json() or [])
+            if ((it.get("data") or {}).get("itemType")) == "attachment"
+        ]
+
+    async def download_attachment_bytes(self, attachment_key: str) -> bytes | None:
+        """Return raw file bytes for an attachment. None on 404/error/empty."""
+        c = await self._client()
+        try:
+            r = await c.get(
+                f"{self._base()}/items/{attachment_key}/file",
+                headers=self._headers(),
+            )
+        except httpx.HTTPError:
+            return None
+        if r.status_code != 200 or not r.content:
+            return None
+        return r.content
+
+    async def get_item_notes(self, item_key: str) -> list[str]:
+        """Plain-text content of all 'note' children of item_key (HTML stripped)."""
+        c = await self._client()
+        r = await c.get(
+            f"{self._base()}/items/{item_key}/children",
+            params={"format": "json"},
+            headers=self._headers(),
+        )
+        if r.status_code != 200:
+            return []
+        out: list[str] = []
+        for it in r.json() or []:
+            data = it.get("data") or {}
+            if data.get("itemType") == "note":
+                out.append(_html_to_text(data.get("note") or ""))
+        return out
