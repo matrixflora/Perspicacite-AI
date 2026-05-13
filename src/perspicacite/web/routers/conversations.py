@@ -56,6 +56,27 @@ async def search_conversations(q: str = ""):
     return {"results": await app_state.session_store.search_conversations(q.strip())}
 
 
+@router.get("/api/conversations/{conv_id}/messages/{message_id}/provenance")
+async def get_message_provenance(conv_id: str, message_id: str):
+    """Return the provenance record for a specific message."""
+    if app_state.provenance_store is None:
+        raise HTTPException(status_code=503, detail="provenance not configured")
+    rec = await app_state.provenance_store.get_for_message(message_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="no provenance for that message")
+    if rec.get("conversation_id") and rec["conversation_id"] != conv_id:
+        raise HTTPException(status_code=404, detail="provenance not in this conversation")
+    return rec
+
+
+@router.get("/api/conversations/{conv_id}/provenance")
+async def list_conversation_provenance(conv_id: str):
+    """Return all provenance records for a conversation."""
+    if app_state.provenance_store is None:
+        raise HTTPException(status_code=503, detail="provenance not configured")
+    return await app_state.provenance_store.get_for_conversation(conv_id)
+
+
 @router.get("/api/conversations/{conv_id}")
 async def get_conversation(conv_id: str):
     """Get a specific conversation with all messages."""
