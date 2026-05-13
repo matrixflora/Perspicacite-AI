@@ -42,6 +42,8 @@ EXPECTED_ROUTES: list[tuple[str, set[str]]] = [
     ("/api/survey/{session_id}/generate", {"POST"}),
     ("/api/jobs/{job_id}", {"GET"}),
     ("/api/jobs/{job_id}/events", {"GET"}),
+    ("/api/zotero/status", {"GET"}),
+    ("/api/zotero/push", {"POST"}),
 ]
 
 
@@ -89,5 +91,5 @@ def test_total_route_count_unchanged():
     app = _load_app()
     routes = _route_methods_by_path(app)
     pair_count = sum(len(methods) for methods in routes.values())
-    # 30 (path, method) pairs across the EXPECTED_ROUTES list above.
-    assert pair_count >= 30, f"expected at least 30 (path, method) pairs, got {pair_count}"
+    # 32 (path, method) pairs across the EXPECTED_ROUTES list above.
+    assert pair_count >= 32, f"expected at least 32 (path, method) pairs, got {pair_count}"
