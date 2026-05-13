@@ -28,8 +28,39 @@ class ProvenanceStore:
         if not message_id:
             logger.warning("provenance_save_no_message_id")
             return
+        conv_id = record.get("conversation_id")
+        llm_calls: list[dict[str, Any]] = list(record.get("llm_calls") or [])
         llm_calls_index: list[dict[str, Any]] = []
         sidecar_path: str | None = None
+        try:
+            if conv_id and llm_calls:
+                sidecar_path = f"{conv_id}.jsonl"
+                target = self.sidecar_dir / sidecar_path
+                self.sidecar_dir.mkdir(parents=True, exist_ok=True)
+                with target.open("ab") as f:
+                    for call in llm_calls:
+                        offset = f.tell()
+                        line = (json.dumps(call) + "\n").encode("utf-8")
+                        f.write(line)
+                        llm_calls_index.append({
+                            "stage_label": call.get("stage_label"),
+                            "provider": call.get("provider"),
+                            "model": call.get("model"),
+                            "prompt_tokens": call.get("prompt_tokens", 0),
+                            "completion_tokens": call.get("completion_tokens", 0),
+                            "latency_ms": call.get("latency_ms", 0.0),
+                            "ts": call.get("ts"),
+                            "offset": offset,
+                        })
+            else:
+                # No conversation id → keep payload inline in the index entries
+                for call in llm_calls:
+                    entry = dict(call)
+                    entry["offset"] = None
+                    llm_calls_index.append(entry)
+        except Exception as exc:
+            logger.warning("provenance_sidecar_write_failed", error=str(exc), message_id=message_id)
+
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
@@ -40,8 +71,7 @@ class ProvenanceStore:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        message_id,
-                        record.get("conversation_id"),
+                        message_id, conv_id,
                         record.get("rag_mode", "unknown"),
                         json.dumps(record.get("request_params") or {}),
                         json.dumps(record.get("retrieval_events") or []),
@@ -96,9 +126,11 @@ def _row_to_record(row: Any, *, sidecar_dir: Path) -> dict[str, Any]:
 def _resolve_llm_calls(
     index: list[dict[str, Any]], sidecar_path: str | None, sidecar_dir: Path
 ) -> list[dict[str, Any]]:
-    # Task 2.1 will implement sidecar resolution + inline-payload fallback.
-    if not index or not sidecar_path:
+    if not index:
         return []
+    if not sidecar_path:
+        # Inline payloads (no conversation id): strip the 'offset' marker
+        return [{k: v for k, v in entry.items() if k != "offset"} for entry in index]
     p = sidecar_dir / sidecar_path
     if not p.exists():
         return []
