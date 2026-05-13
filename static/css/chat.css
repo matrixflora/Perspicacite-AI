@@ -827,3 +827,27 @@ details[open] .advanced-options-summary::before { content: '▼ '; }
 
 /* RO-Crate bundle download link */
 .ro-crate-link { font-size: 0.85em; margin-left: 8px; }
+
+/* Zotero button on paper-detail panel */
+.zotero-btn {
+    margin-top: 12px;
+    padding: 6px 12px;
+    background: var(--accent, #4a90e2);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: 'Chivo', sans-serif;
+    transition: all 0.2s;
+    width: 100%;
+}
+.zotero-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+.zotero-btn:not(:disabled):hover {
+    background: var(--accent-light, #5a9fee);
+    transform: translateY(-1px);
+}

@@ -150,6 +150,7 @@ def test_provenance_disclosure_css():
 
 def test_async_ingestion_css_present():
     from pathlib import Path
+
     root = Path(__file__).resolve().parents[2]
     css = (root / "static/css/kb.css").read_text()
     assert ".progress-bar" in css
@@ -158,8 +159,18 @@ def test_async_ingestion_css_present():
 
 def test_kb_js_uses_async_endpoints():
     from pathlib import Path
+
     root = Path(__file__).resolve().parents[2]
     js = (root / "static/js/kb.js").read_text()
     assert "/bibtex/async" in js
     assert "/dois/async" in js
     assert "EventSource" in js
+
+
+def test_paper_detail_has_zotero_button():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    js = (root / "static/js/paper_detail.js").read_text()
+    assert "/api/zotero/push" in js
+    assert "/api/zotero/status" in js
