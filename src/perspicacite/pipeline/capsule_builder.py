@@ -16,6 +16,12 @@ from pathlib import Path
 from typing import Any
 
 from perspicacite.models.papers import Paper
+from perspicacite.pipeline.external.accessions import mine_accessions
+from perspicacite.pipeline.external.resources import (
+    extract_doi_candidates,
+    extract_github_repos,
+    extract_zenodo_record_ids,
+)
 from perspicacite.pipeline.parsers.figures import RawFigure
 from perspicacite.pipeline.parsers.section_splitter import split_sections
 
@@ -118,6 +124,7 @@ def resolve_figure_refs(text: str, figures: list[RawFigure]) -> list[str]:
 def write_blocks(
     capsule_dir: Path, *, text: str,
     figures: "list[RawFigure] | None" = None,
+    resources: "list[dict] | None" = None,
 ) -> int:
     """Section-split ``text`` and emit one paragraph-block per row into
     ``text/blocks.jsonl``.
@@ -153,7 +160,7 @@ def write_blocks(
                 "char_span": [start, end] if start >= 0 else None,
                 "figure_refs": resolve_figure_refs(paragraph, figures or []),
                 "table_refs": [],
-                "resource_refs": [],
+                "resource_refs": resolve_resource_refs(paragraph, resources or []),
             })
             block_idx += 1
 
@@ -178,3 +185,87 @@ def write_blocks(
 def _split_paragraphs(text: str) -> list[str]:
     """Split a section's text on blank lines; trim each paragraph."""
     return [p.strip() for p in text.split("\n\n") if p.strip()]
+
+
+def _evidence_span(text: str, needle: str, radius: int = 60) -> str:
+    idx = text.find(needle)
+    if idx < 0:
+        return ""
+    start = max(0, idx - radius)
+    end = min(len(text), idx + len(needle) + radius)
+    return text[start:end].replace("\n", " ").strip()
+
+
+def write_resources(capsule_dir: Path, *, text: str) -> int:
+    """Mine accessions + DOIs + GitHub + Zenodo from ``text``; write ``resources.json``.
+
+    Returns count of records.
+    """
+    records: list[dict] = []
+    for acc in mine_accessions(text or ""):
+        records.append({
+            "resource_id": f"{acc['kind']}:{acc['accession']}",
+            "kind": acc["kind"],
+            "identifier": acc["accession"],
+            "url": acc["url"],
+            "evidence_span": acc["evidence_span"],
+            "char_span": None,
+            "page": None,
+            "block_id": None,
+        })
+    for repo in extract_github_repos(text or ""):
+        records.append({
+            "resource_id": f"github:{repo}",
+            "kind": "github",
+            "identifier": repo,
+            "url": f"https://github.com/{repo}",
+            "evidence_span": _evidence_span(text or "", f"github.com/{repo}"),
+            "char_span": None,
+            "page": None,
+            "block_id": None,
+        })
+    for rec_id in extract_zenodo_record_ids(text or ""):
+        records.append({
+            "resource_id": f"zenodo:{rec_id}",
+            "kind": "zenodo",
+            "identifier": rec_id,
+            "url": f"https://zenodo.org/record/{rec_id}",
+            "evidence_span": _evidence_span(text or "", rec_id),
+            "char_span": None,
+            "page": None,
+            "block_id": None,
+        })
+    for doi in extract_doi_candidates(text or ""):
+        records.append({
+            "resource_id": f"doi:{doi}",
+            "kind": "doi",
+            "identifier": doi,
+            "url": f"https://doi.org/{doi}",
+            "evidence_span": _evidence_span(text or "", doi),
+            "char_span": None,
+            "page": None,
+            "block_id": None,
+        })
+    capsule_dir.mkdir(parents=True, exist_ok=True)
+    (capsule_dir / "resources.json").write_text(
+        json.dumps(records, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return len(records)
+
+
+def resolve_resource_refs(text: str, resources: list[dict]) -> list[str]:
+    """Return resource_ids whose ``identifier`` or ``url`` appears in ``text``."""
+    if not text or not resources:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for r in resources:
+        ident = r.get("identifier") or ""
+        url = r.get("url") or ""
+        if (ident and ident in text) or (url and url in text):
+            rid = r["resource_id"]
+            if rid not in seen:
+                seen.add(rid)
+                out.append(rid)
+    return out
