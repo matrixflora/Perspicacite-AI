@@ -1130,6 +1130,88 @@ async def add_dois_to_kb(
 
 
 # =============================================================================
+# Tool 11: push_to_zotero
+# =============================================================================
+
+
+@mcp.tool
+async def push_to_zotero(dois: list[str] | str) -> str:
+    """Push one or more DOIs to the configured Zotero library.
+
+    Fetches metadata (abstract-only, no slow PDF download) via the unified
+    pipeline and calls ZoteroClient.create_item for each DOI.  Skips
+    duplicates automatically (ZoteroClient checks by DOI before creating).
+
+    Args:
+        dois: A single DOI string or a list of DOIs (max 100 per call).
+
+    Returns:
+        JSON ``{"created": [...], "skipped": [], "failed": [...]}``.
+        Returns an error JSON when Zotero is not configured.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    cfg = getattr(state.config, "zotero", None)
+    if cfg is None or not cfg.enabled or not cfg.api_key or not cfg.library_id:
+        return _json_error("zotero_not_configured")
+
+    if isinstance(dois, str):
+        dois = [dois]
+    if len(dois) > 100:
+        return _json_error("at most 100 DOIs per call")
+
+    try:
+        import httpx
+        from perspicacite.integrations.zotero import ZoteroClient
+        from perspicacite.pipeline.download import retrieve_paper_content
+
+        created: list[dict] = []
+        failed: list[dict] = []
+
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http_client:
+            zotero = ZoteroClient(
+                api_key=cfg.api_key,
+                library_id=cfg.library_id,
+                library_type=cfg.library_type,
+                collection_key=cfg.collection_key,
+                http_client=http_client,
+            )
+            for raw_doi in dois:
+                doi = (raw_doi or "").strip().replace("https://doi.org/", "")
+                if not doi:
+                    continue
+                try:
+                    content = await retrieve_paper_content(
+                        doi,
+                        http_client=http_client,
+                        pdf_parser=None,  # metadata-only — no slow PDF download
+                    )
+                    paper: dict[str, Any] = dict(content.metadata or {})
+                    paper["doi"] = doi
+                    paper["abstract"] = content.abstract or paper.get("abstract")
+                    key = await zotero.create_item(paper)
+                    if key:
+                        created.append({"doi": doi, "key": key})
+                    else:
+                        failed.append({"doi": doi, "reason": "no key returned"})
+                except Exception as exc:
+                    failed.append({"doi": doi, "reason": str(exc)})
+
+        logger.info(
+            "mcp_push_to_zotero",
+            created=len(created),
+            failed=len(failed),
+        )
+        return _json_ok({"created": created, "skipped": [], "failed": failed})
+
+    except Exception as e:
+        logger.error("mcp_push_to_zotero_error", error=str(e))
+        return _json_error(f"Failed to push to Zotero: {e}")
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -1152,6 +1234,7 @@ async def get_info() -> str:
                 "generate_report",
                 "screen_papers",
                 "add_dois_to_kb",
+                "push_to_zotero",
             ],
             "initialized": mcp_state.initialized,
         }

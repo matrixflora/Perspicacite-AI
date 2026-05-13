@@ -117,6 +117,9 @@ class TestToolRegistration:
         "create_knowledge_base",
         "add_papers_to_kb",
         "generate_report",
+        "screen_papers",
+        "add_dois_to_kb",
+        "push_to_zotero",
     ]
 
     def test_mcp_object_exists(self):
@@ -438,6 +441,21 @@ async def test_generate_report_kb_names_mismatch(monkeypatch):
         assert out["success"] is False and "embedding" in out["error"].lower()
     finally:
         s.mcp_state.initialized = saved
+
+
+@pytest.mark.asyncio
+async def test_get_info_includes_push_to_zotero():
+    """get_info() resource must list push_to_zotero and report 11 tools."""
+    from perspicacite.mcp.server import get_info
+
+    raw = await get_info()
+    info = json.loads(raw)
+    assert "push_to_zotero" in info["tools"], (
+        f"push_to_zotero missing from tools list: {info['tools']}"
+    )
+    assert len(info["tools"]) == 11, (
+        f"Expected 11 tools in get_info(), got {len(info['tools'])}: {info['tools']}"
+    )
 
 
 if __name__ == "__main__":

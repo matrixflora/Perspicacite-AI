@@ -41,6 +41,7 @@ from perspicacite.web.routers import (
     jobs as jobs_router,
     kb as kb_router,
     survey as survey_router,
+    zotero as zotero_router,
 )
 
 
@@ -77,6 +78,7 @@ app.include_router(chat_router.router)
 app.include_router(kb_router.router)
 app.include_router(survey_router.router)
 app.include_router(jobs_router.router)
+app.include_router(zotero_router.router)
 
 
 @app.get("/", response_class=HTMLResponse)
