@@ -35,9 +35,6 @@ def test_ingest_local_calls_worker(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "perspicacite.web.state.AppState.initialize", _noop, raising=False,
     )
-    monkeypatch.setattr(
-        "perspicacite.web.state.AppState.shutdown", _noop, raising=False,
-    )
 
     runner = CliRunner()
     r = runner.invoke(

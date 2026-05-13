@@ -360,41 +360,30 @@ def ingest_local(
     from perspicacite.integrations.local_docs import ingest_local_documents
     from perspicacite.web.state import AppState
 
-    config = ctx.obj["config"]
-
     async def _run() -> None:
         state = AppState()
-        # AppState.initialize() loads config internally; pass-through for
-        # forward-compat if the signature ever accepts a config object.
-        try:
-            await state.initialize(config)  # type: ignore[call-arg]
-        except TypeError:
-            await state.initialize()
-        try:
-            class _Reg:
-                async def publish(self, jid, ev):  # noqa: D401
-                    pass
+        await state.initialize()
 
-                async def finish(self, jid, res):
-                    self._res = res
+        class _Reg:
+            async def publish(self, jid, ev):
+                pass
 
-                async def fail(self, jid, err):
-                    self._err = err
+            async def finish(self, jid, res):
+                self._res = res
 
-            reg = _Reg()
-            result = await ingest_local_documents(
-                kb_name=kb,
-                paths=list(paths),
-                app_state=state,
-                registry=reg,
-                job_id="cli",
-                recursive=recursive,
-            )
-            click.echo(f"Done: {result}")
-        finally:
-            shutdown = getattr(state, "shutdown", None)
-            if shutdown is not None:
-                await shutdown()
+            async def fail(self, jid, err):
+                self._err = err
+
+        reg = _Reg()
+        result = await ingest_local_documents(
+            kb_name=kb,
+            paths=list(paths),
+            app_state=state,
+            registry=reg,
+            job_id="cli",
+            recursive=recursive,
+        )
+        click.echo(f"Done: {result}")
 
     asyncio.run(_run())
 
