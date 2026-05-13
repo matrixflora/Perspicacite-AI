@@ -1380,6 +1380,45 @@ async def build_capsule(
     )
 
 
+@mcp.tool
+async def build_capsules_for_kb(
+    kb_name: str,
+    force: bool = False,
+) -> dict:
+    """Build capsules for every paper in ``kb_name``.
+
+    Returns ``{total, built, skipped, errored, per_paper: [...]}``.
+    """
+    from perspicacite.pipeline.capsule_builder import (
+        build_capsule as _build,
+        resolve_paper_from_metadata,
+        locate_cached_pdf,
+    )
+
+    kb = await mcp_state.session_store.get_kb_metadata(kb_name)
+    if kb is None:
+        return {"error": f"KB '{kb_name}' not found", "total": 0,
+                "built": 0, "skipped": 0, "errored": 0, "per_paper": []}
+    rows = await mcp_state.vector_store.list_paper_metadata(kb.collection_name)
+    per_paper = []
+    counts = {"built": 0, "skipped": 0, "errored": 0}
+    for row in rows:
+        paper = resolve_paper_from_metadata(row)
+        pdf_path = locate_cached_pdf(row)
+        try:
+            res = await _build(
+                paper=paper, pdf_path=pdf_path,
+                kb_name=kb_name, app_state=mcp_state, force=force,
+            )
+            status = res.get("status", "errored")
+            counts[status] = counts.get(status, 0) + 1
+            per_paper.append({"paper_id": paper.id, **res})
+        except Exception as exc:
+            counts["errored"] += 1
+            per_paper.append({"paper_id": paper.id, "status": "errored", "error": str(exc)})
+    return {"total": len(rows), **counts, "per_paper": per_paper}
+
+
 # =============================================================================
 # Resource
 # =============================================================================
@@ -1400,6 +1439,7 @@ _TOOL_NAMES: list[str] = [
     "build_kbs_from_zotero",
     "ingest_local_documents",
     "build_capsule",
+    "build_capsules_for_kb",
 ]
 
 
