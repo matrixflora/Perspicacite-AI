@@ -281,12 +281,18 @@ async def build_capsule(
     app_state,
     force: bool = False,
     producer_version: str = "0.0.0",
+    ingest_chunks: bool = True,
 ) -> dict[str, Any]:
-    """Build a capsule for ``paper`` and ingest its chunks into ``kb_name``.
+    """Build a capsule for ``paper`` and optionally ingest its chunks into ``kb_name``.
 
     Returns a dict with ``status`` (``built`` / ``skipped``), figure/chunk counts.
     Idempotent: no-op when ``capsule_dir/metadata.json`` exists with
     ``capsule_version >= app_state.config.capsule.min_version``, unless ``force``.
+
+    ``ingest_chunks=False`` writes only the on-disk capsule (metadata, figures,
+    blocks, resources) without chunking+embedding. The auto-build-on-ingest
+    callers pass ``False`` because the host worker has already added chunks via
+    its own pipeline; retro-build / CLI / MCP callers leave it ``True``.
     """
     cap_root = Path(app_state.config.capsule.root)
     cap = capsule_dir_for(paper, root=cap_root)
@@ -323,9 +329,9 @@ async def build_capsule(
     # 5. Metadata
     write_metadata(cap, paper=paper, producer_version=producer_version)
 
-    # 6. Chunk per block + embed + write to Chroma
+    # 6. Chunk per block + embed + write to Chroma (opt-out for auto-build callers)
     n_chunks = 0
-    if text:
+    if text and ingest_chunks:
         n_chunks = await _ingest_chunks(
             paper=paper, blocks_path=cap / "text" / "blocks.jsonl",
             kb_name=kb_name, app_state=app_state,
