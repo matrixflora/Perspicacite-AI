@@ -161,3 +161,23 @@ class TestEnvironmentOverrides:
         monkeypatch.setenv("PERSPICACITE_SERVER_PORT", "8080")
         config = load_config()
         assert config.server.port == 8080
+
+
+def test_zotero_config_defaults() -> None:
+    from perspicacite.config.schema import Config
+    cfg = Config()
+    assert cfg.zotero.enabled is False
+    assert cfg.zotero.api_key == ""
+    assert cfg.zotero.library_id == ""
+    assert cfg.zotero.library_type == "user"
+    assert cfg.zotero.collection_key == ""
+
+
+def test_zotero_config_override() -> None:
+    from perspicacite.config.schema import Config, ZoteroConfig
+    cfg = Config(zotero=ZoteroConfig(
+        enabled=True, api_key="k", library_id="123",
+        library_type="group", collection_key="ABC",
+    ))
+    assert cfg.zotero.enabled is True
+    assert cfg.zotero.library_type == "group"
