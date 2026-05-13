@@ -24,6 +24,8 @@ EXPECTED_ROUTES: list[tuple[str, set[str]]] = [
     ("/api/conversations/search", {"GET"}),
     ("/api/conversations/{conv_id}", {"GET", "DELETE"}),
     ("/api/conversations/{conv_id}/export", {"GET"}),
+    ("/api/conversations/{conv_id}/messages/{message_id}/provenance", {"GET"}),
+    ("/api/conversations/{conv_id}/provenance", {"GET"}),
     ("/api/conversations/{conv_id}/messages", {"POST"}),
     ("/api/kb", {"GET", "POST"}),
     ("/api/kb/{name}", {"GET", "DELETE"}),
@@ -83,5 +85,5 @@ def test_total_route_count_unchanged():
     app = _load_app()
     routes = _route_methods_by_path(app)
     pair_count = sum(len(methods) for methods in routes.values())
-    # 24 (path, method) pairs across the EXPECTED_ROUTES list above.
-    assert pair_count >= 24, f"expected at least 24 (path, method) pairs, got {pair_count}"
+    # 26 (path, method) pairs across the EXPECTED_ROUTES list above.
+    assert pair_count >= 26, f"expected at least 26 (path, method) pairs, got {pair_count}"

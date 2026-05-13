@@ -227,6 +227,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
             logger.warning(f"Failed to save user message: {e}")
 
     assistant_content = ""
+    assistant_message_id_outer: Optional[str] = None
 
     try:
         logger.info(f"Chat request: {request.query[:50]}... | Mode: {request.mode}")
@@ -249,7 +250,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
         else:
             # Use RAGEngine for other modes (basic, advanced, profound)
             async for event in _stream_rag_mode(request, conversation_id):
-                # Collect assistant content for saving
+                # Collect assistant content and message_id for saving
                 if event.startswith("data:"):
                     try:
                         data = json.loads(event[5:].strip())
@@ -257,6 +258,9 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
                             content_b64 = data.get("content_b64")
                             if content_b64:
                                 assistant_content = base64.b64decode(content_b64).decode("utf-8")
+                            new_msg_id = data.get("message_id")
+                            if new_msg_id:
+                                assistant_message_id_outer = new_msg_id
                     except (json.JSONDecodeError, base64.binascii.Error, UnicodeDecodeError):
                         pass
                 yield event
@@ -269,8 +273,10 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
     # Save assistant message to conversation
     if conversation_id and app_state.session_store and assistant_content:
         try:
+            msg_id = assistant_message_id_outer or str(uuid.uuid4())
             await app_state.session_store.add_message(
-                conversation_id, Message(role="assistant", content=assistant_content)
+                conversation_id,
+                Message(id=msg_id, role="assistant", content=assistant_content),
             )
             logger.info(f"Saved conversation messages to {conversation_id}")
         except Exception as e:
@@ -313,6 +319,10 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
     rag_mode = RAG_MODE_MAP.get(request.mode, RAGMode.BASIC)
 
     logger.info(f"Using RAGEngine with mode: {rag_mode.value}")
+
+    # Pre-generate assistant message id so it can be threaded into the engine
+    # and included in SSE frames so the UI and provenance rows share the same id.
+    assistant_message_id = str(uuid.uuid4())
 
     # Generate session_id if not provided
     session_id = request.session_id or str(uuid.uuid4())
@@ -360,7 +370,11 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
     sources = []
 
     try:
-        async for event in app_state.rag_engine.query_stream(rag_request):
+        async for event in app_state.rag_engine.query_stream(
+            rag_request,
+            message_id=assistant_message_id,
+            conversation_id=conversation_id,
+        ):
             if event.event == "status":
                 # Forward status updates
                 status_data = json.loads(event.data)
@@ -393,11 +407,12 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
                     "type": "answer",
                     "session_id": session_id,
                     "conversation_id": conversation_id,
+                    "message_id": assistant_message_id,
                     "content_b64": base64.b64encode(full_answer.encode("utf-8")).decode("ascii"),
                     "sources": sources,
                 }
                 yield f"data: {json.dumps(safe, separators=(',', ':'))}\n\n"
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
                 return
 
             elif event.event == "error":
@@ -409,4 +424,4 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
         yield f"data: {json.dumps({'type': 'error', 'message': f'Error in {rag_mode.value} mode: {str(e)}'})}\n\n"
 
     # End of stream (fallback if no done event)
-    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
