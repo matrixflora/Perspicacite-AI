@@ -1153,7 +1153,7 @@ _local_tasks: set[asyncio.Task] = set()
 @router.post("/api/kb/{name}/local-files")
 async def add_local_files(
     name: str,
-    files: list[UploadFile] = File(...),
+    files: list[UploadFile] = File(...),  # noqa: B008 — FastAPI dependency pattern
 ) -> dict:
     """Ingest uploaded files (multipart) into the named KB."""
     if app_state.job_registry is None:
@@ -1203,16 +1203,16 @@ async def add_local_paths(name: str, payload: AddLocalPathsRequest) -> dict:
         try:
             validated.append(validate_local_path(raw, allowed_roots=allowed))
         except LocalDocsDisabledError as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except LocalDocsValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     expanded = expand_paths(validated, recursive=payload.recursive)
     # Re-validate every expanded file (covers symlink escapes from recursion).
     for f in expanded:
         try:
             validate_local_path(str(f), allowed_roots=allowed)
         except LocalDocsValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     job_id = await app_state.job_registry.create("local_docs_paths", total=len(expanded))
     task = asyncio.create_task(
         ingest_local_documents(

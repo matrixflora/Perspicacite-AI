@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 from typing import Any
 
 from perspicacite.logging import get_logger
-from perspicacite.models.documents import DocumentChunk
+from perspicacite.models.documents import ChunkMetadata
 from perspicacite.models.papers import Paper, PaperSource
 from perspicacite.pipeline.chunking_dispatch import (
     _local_paper_id_for,
@@ -111,19 +110,15 @@ async def _ingest_files(
                 text, paper,
                 content_type=content_type, language=language, config=kb_cfg,
             )
-            # tag with source_file_path
+            # ChunkMetadata is frozen — recreate with source_file_path set
             for c in chunks:
-                # ChunkMetadata is frozen — recreate
-                from perspicacite.models.documents import ChunkMetadata as _CM
-                new_md = _CM(
+                c.metadata = ChunkMetadata(
                     **{**c.metadata.model_dump(), "source_file_path": str(fp.resolve())}
                 )
-                c.metadata = new_md
             if chunks:
-                # embed + write
                 texts = [c.text for c in chunks]
                 embeds = await app_state.embedding_provider.embed(texts)
-                for c, e in zip(chunks, embeds):
+                for c, e in zip(chunks, embeds, strict=True):
                     c.embedding = e
                 await app_state.vector_store.add_chunks(kb.collection_name, chunks)
                 total_chunks += len(chunks)
