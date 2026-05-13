@@ -165,6 +165,15 @@ def test_async_dois_503_when_jobs_unconfigured(monkeypatch):
     assert r.status_code == 503
 
 
+def test_background_tasks_set_exists():
+    """kb.py must hold a strong reference to in-flight ingestion tasks."""
+    from perspicacite.web.routers import kb as kb_router
+
+    assert hasattr(kb_router, "_background_tasks"), \
+        "kb.py must keep a strong-ref set for fire-and-forget tasks"
+    assert isinstance(kb_router._background_tasks, set)
+
+
 def test_async_dois_400_when_too_many(monkeypatch):
     """Reject >200 DOIs same as the sync endpoint."""
     import tempfile
