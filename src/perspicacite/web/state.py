@@ -13,6 +13,7 @@ from typing import Optional
 
 from perspicacite.memory.session_store import SessionStore
 from perspicacite.provenance.store import ProvenanceStore
+from perspicacite.jobs.registry import JobRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class AppState:
         self.rag_engine = None  # Multi-mode RAG engine
         self.session_store: Optional[SessionStore] = None
         self.provenance_store: Optional[ProvenanceStore] = None
+        self.job_registry: Optional[JobRegistry] = None
         self.pdf_downloader = None
         self.pdf_parser = None
         self.initialized = False
@@ -117,6 +119,9 @@ class AppState:
         )
         logger.info("Provenance store initialized")
         self.rag_engine.provenance_store = self.provenance_store
+
+        self.job_registry = JobRegistry(db_path=self.session_store.db_path)
+        logger.info("Job registry initialized")
 
         # Initialize PDF downloader and parser
         from perspicacite.pipeline.download import PDFDownloader
