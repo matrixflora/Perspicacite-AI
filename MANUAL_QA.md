@@ -139,3 +139,22 @@ Embedding-mismatch test:
 Notes:
 - `literature_survey` doesn't retrieve from any KB; multi-KB selection is honored as a *storage* target (papers are stored into `kb_names[0]`). Log line `survey_multi_kb_storage` appears when >1 KB is selected.
 - `agentic`'s KB_SEARCH step builds a `MultiKBRetriever` automatically when the request carries multi-KB; per-paper `kb_name` propagates through `SourceReference`.
+
+## Zotero → KB ingest (2026-05-13, cycle 3)
+
+Prereqs: set `zotero.enabled: true`, `zotero.api_key`, `zotero.library_id` in `config.yml`.
+
+1. Click "Build KBs from Zotero" in the KB panel header.
+2. Confirm modal loads a plan table with rows per top-level collection + (optional) "Unfiled".
+3. Rename one target KB; uncheck another row.
+4. Click Execute. Confirm a progress pane appears with per-item lines.
+5. After "Done", confirm new KBs appear in the KB list with non-zero paper/chunk counts.
+6. Verify DOI dedup: re-run the same plan. Expect "skipped" progress events; no duplicate items added.
+
+503 / disabled path:
+- With `zotero.enabled: false`, the modal loading text says "Zotero is not configured (set zotero.enabled in config.yml)."
+
+MCP path:
+- Call `build_kbs_from_zotero(plan_only=True)` from an MCP client; confirm `plan` is returned.
+- Call with `plan_only=False`; confirm `per_kb` summary is returned.
+- Call with `zotero.enabled=false`; confirm `{"error": ...}` is returned (no crash).

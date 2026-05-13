@@ -229,8 +229,11 @@ logging:
 # =============================================================================
 
 zotero:
-  enabled: false
+  enabled: false            # set true to enable both push (paper → Zotero) and ingest (Zotero → KBs)
   api_key: ""
   library_id: ""
   library_type: "user"      # or "group"
-  collection_key: ""        # optional; empty = no collection
+  collection_key: ""        # optional; used by PUSH only — empty = no default collection
+  # Note: ingest does NOT use collection_key. Instead, /api/zotero/plan
+  # generates one KB per top-level collection (with subcollections rolled up)
+  # plus an "Unfiled" KB for items not in any collection.
