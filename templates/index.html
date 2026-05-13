@@ -99,7 +99,14 @@
                     <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
                         <button id="kb-add-bibtex-btn" class="kb-create-toggle" style="display:none;" onclick="document.getElementById('kb-add-bibtex-file').click()">Add from BibTeX</button>
                         <input type="file" id="kb-add-bibtex-file" accept=".bib" style="display:none" onchange="addToKBFromBibtex(this.files[0])">
+                        <button id="kb-add-dois-btn" class="kb-create-toggle" style="display:none;" onclick="toggleAddDoisPanel()">Add DOIs</button>
                         <button id="kb-delete-btn" class="kb-delete-btn" style="display:none;" onclick="showDeleteKBDialog(selectedKb)">Delete KB</button>
+                    </div>
+                    <!-- DOI add panel (shown when "Add DOIs" is clicked) -->
+                    <div id="kb-dois-panel" class="kb-dois-panel">
+                        <textarea id="kb-dois-input" placeholder="One DOI per line&#10;e.g. 10.1038/s41586-020-2649-2" rows="4" style="width:100%;font-size:12px;font-family:monospace;border:1px solid #cbd5e1;border-radius:4px;padding:6px;resize:vertical;margin-bottom:6px;"></textarea>
+                        <div id="kb-dois-progress"></div>
+                        <button id="kb-dois-submit-btn" onclick="addDoisToKB()" style="width:100%;padding:7px;background:var(--secondary);color:white;border:none;border-radius:var(--radius);font-size:13px;font-weight:500;cursor:pointer;font-family:'Chivo',sans-serif;">Add DOIs</button>
                     </div>
                     <div id="kb-create-form" class="kb-create-form">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">

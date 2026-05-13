@@ -4,6 +4,86 @@
 let bibtexFileLoaded = false;
 let kbToDelete = '';
 
+/**
+ * Start SSE-driven ingestion progress for a job.
+ * Renders a .progress-bar + .progress-bar-fill + .progress-label into `container`,
+ * then opens an EventSource on /api/jobs/{jobId}/events.
+ * Falls back to polling /api/jobs/{jobId} if SSE fails.
+ * Returns an object with a close() method.
+ */
+function startIngestionProgress(jobId, total, container) {
+    // Build progress bar DOM
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML =
+        '<div class="progress-bar"><div class="progress-bar-fill"></div></div>' +
+        '<div class="progress-label">Starting…</div>';
+    container.appendChild(wrapper);
+
+    const progressBar = wrapper.querySelector('.progress-bar-fill');
+    const progressLabel = wrapper.querySelector('.progress-label');
+
+    let pollInterval = null;
+    let closed = false;
+
+    function close() {
+        closed = true;
+        if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    }
+
+    function startPolling(es) {
+        if (pollInterval) return;
+        pollInterval = setInterval(async () => {
+            try {
+                const r = await fetch('/api/jobs/' + jobId);
+                if (!r.ok) return;
+                const row = await r.json();
+                if (row.total) {
+                    const pct = Math.round((row.done_count / row.total) * 100);
+                    progressBar.style.width = pct + '%';
+                }
+                if (row.status === 'done' || row.status === 'error') {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                    if (es) { try { es.close(); } catch (_) {} }
+                    progressBar.style.width = '100%';
+                    progressLabel.textContent = row.status === 'done'
+                        ? 'Done · ' + (row.result?.added_papers ?? '?') + ' papers, ' + (row.result?.added_chunks ?? '?') + ' chunks'
+                        : 'Error: ' + (row.error || 'unknown');
+                    if (typeof loadKBs === 'function') loadKBs();
+                }
+            } catch (_) {}
+        }, 2000);
+    }
+
+    const es = new EventSource('/api/jobs/' + jobId + '/events');
+    es.onmessage = (ev) => {
+        if (closed) { es.close(); return; }
+        try {
+            const e = JSON.parse(ev.data);
+            if (e.type === 'progress') {
+                const pct = total ? Math.round((e.done / total) * 100) : 0;
+                progressBar.style.width = pct + '%';
+                progressLabel.textContent = e.done + '/' + total + (e.status ? ' · ' + e.status : '');
+            } else if (e.type === 'done') {
+                progressBar.style.width = '100%';
+                progressLabel.textContent = 'Done · ' + (e.result?.added_papers ?? '?') + ' papers, ' + (e.result?.added_chunks ?? '?') + ' chunks';
+                es.close();
+                if (typeof loadKBs === 'function') loadKBs();
+            } else if (e.type === 'error') {
+                progressLabel.textContent = 'Error: ' + (e.error || 'unknown');
+                es.close();
+            }
+        } catch (_) {}
+    };
+    es.onerror = () => {
+        if (closed) { es.close(); return; }
+        // SSE failed — fall back to polling
+        startPolling(es);
+    };
+
+    return { close };
+}
+
 // KB management
 async function loadKBs() {
     try {
@@ -34,6 +114,7 @@ function selectKB(name) {
     const infoDiv = document.getElementById('kb-info');
     const deleteBtn = document.getElementById('kb-delete-btn');
     const addBibtexBtn = document.getElementById('kb-add-bibtex-btn');
+    const addDoisBtn = document.getElementById('kb-add-dois-btn');
     const statsTabStrip = document.getElementById('kb-detail-tab-strip');
     const statsContainer = document.getElementById('kb-stats-container');
     if (selectedKb) {
@@ -42,6 +123,7 @@ function selectKB(name) {
                 infoDiv.style.display = 'none';
                 deleteBtn.style.display = 'none';
                 addBibtexBtn.style.display = 'none';
+                if (addDoisBtn) addDoisBtn.style.display = 'none';
                 if (statsTabStrip) statsTabStrip.style.display = 'none';
                 if (statsContainer) { statsContainer.innerHTML = ''; statsContainer.style.display = 'none'; }
                 return;
@@ -54,6 +136,7 @@ function selectKB(name) {
         });
         deleteBtn.style.display = 'inline';
         addBibtexBtn.style.display = 'inline';
+        if (addDoisBtn) addDoisBtn.style.display = 'inline';
         // Show the tab strip, default to "Info" tab
         if (statsTabStrip) {
             statsTabStrip.style.display = 'flex';
@@ -64,6 +147,7 @@ function selectKB(name) {
         infoDiv.style.display = 'none';
         deleteBtn.style.display = 'none';
         addBibtexBtn.style.display = 'none';
+        if (addDoisBtn) addDoisBtn.style.display = 'none';
         if (statsTabStrip) statsTabStrip.style.display = 'none';
         if (statsContainer) { statsContainer.innerHTML = ''; statsContainer.style.display = 'none'; }
     }
@@ -207,10 +291,20 @@ async function addToKBFromBibtex(file) {
     reader.onload = async function(e) {
         const bibtex = e.target.result;
         const entryCount = (bibtex.match(/@\w+\s*\{/g) || []).length;
-        showToast(`Importing ${entryCount} papers to "${selectedKb}"...`);
+        showToast(`Starting import of ${entryCount} papers to "${selectedKb}"…`);
+
+        // Show progress area under the Add from BibTeX button
+        let progressContainer = document.getElementById('kb-add-bibtex-progress');
+        if (!progressContainer) {
+            progressContainer = document.createElement('div');
+            progressContainer.id = 'kb-add-bibtex-progress';
+            const btnRow = document.getElementById('kb-add-bibtex-btn').parentNode;
+            btnRow.parentNode.insertBefore(progressContainer, btnRow.nextSibling);
+        }
+        progressContainer.innerHTML = '';
 
         try {
-            const resp = await fetch('/api/kb/' + encodeURIComponent(selectedKb) + '/bibtex', {
+            const resp = await fetch('/api/kb/' + encodeURIComponent(selectedKb) + '/bibtex/async', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ bibtex })
@@ -224,20 +318,10 @@ async function addToKBFromBibtex(file) {
                 throw new Error(msg);
             }
 
-            const added = data.added_papers || 0;
-            const dupes = data.skipped_duplicates || 0;
-            const pdfOk = data.pdf_download ? data.pdf_download.success : 0;
-            const pdfFail = data.pdf_download ? data.pdf_download.failed : 0;
+            const jobId = data.job_id;
+            const total = data.total || entryCount;
+            startIngestionProgress(jobId, total, progressContainer);
 
-            let summary = `Added ${added} of ${entryCount} papers to "${selectedKb}"`;
-            if (dupes) summary += ` (${dupes} duplicates skipped)`;
-            if (pdfOk) summary += ` — ${pdfOk} PDFs downloaded`;
-            showToast(summary);
-
-            // Refresh KB info
-            selectKB(selectedKb);
-            await loadKBs();
-            document.getElementById('kb-select').value = selectedKb;
         } catch (err) {
             showToast('Error: ' + err.message);
         }
@@ -278,9 +362,9 @@ async function createKBFromBibtex() {
         createBtn.textContent = 'Creating...';
         progressDiv.style.display = 'block';
         progressBar.style.width = '5%';
-        progressText.textContent = `Creating KB for ${entryCount} entries...`;
+        progressText.textContent = `Creating KB for ${entryCount} entries…`;
 
-        // First create the KB
+        // First create the KB (sync — fast metadata-only operation)
         const resp = await fetch('/api/kb', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -298,11 +382,11 @@ async function createKBFromBibtex() {
         const kbData = await resp.json();
         const actualName = kbData.name || name;
 
-        progressBar.style.width = '15%';
-        progressText.textContent = `Importing ${entryCount} papers...`;
+        progressBar.style.width = '10%';
+        progressText.textContent = `Starting async import of ${entryCount} papers…`;
 
-        // Then add BibTeX content
-        const bibtexResp = await fetch('/api/kb/' + encodeURIComponent(actualName) + '/bibtex', {
+        // Start async BibTeX ingestion job
+        const bibtexResp = await fetch('/api/kb/' + encodeURIComponent(actualName) + '/bibtex/async', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ bibtex })
@@ -313,21 +397,24 @@ async function createKBFromBibtex() {
             throw new Error(bibtexData.error || 'Unknown error');
         }
 
-        const added = bibtexData.added_papers || 0;
-        const dupes = bibtexData.skipped_duplicates || 0;
-        const pdfOk = bibtexData.pdf_download ? bibtexData.pdf_download.success : 0;
-        const pdfFail = bibtexData.pdf_download ? bibtexData.pdf_download.failed : 0;
+        const jobId = bibtexData.job_id;
+        const total = bibtexData.total || entryCount;
 
-        progressBar.style.width = '100%';
-        let summary = `${added} of ${entryCount} papers added`;
-        if (dupes) summary += ` (${dupes} duplicates skipped)`;
-        if (pdfOk) summary += ` — ${pdfOk} PDFs downloaded`;
-        if (pdfFail) summary += ` (${pdfFail} PDFs unavailable)`;
-        progressText.textContent = summary;
+        // Hide the old inline progress bar and drive via SSE
+        progressBar.style.width = '10%';
+        progressText.textContent = '';
 
-        showToast('KB "' + actualName + '" created with ' + (bibtexData.added_papers || 0) + ' papers');
+        // Use a wrapper div inside progressDiv for startIngestionProgress
+        const sseContainer = document.createElement('div');
+        progressDiv.appendChild(sseContainer);
 
-        // Reset form
+        const handle = startIngestionProgress(jobId, total, sseContainer);
+
+        await loadKBs();
+        document.getElementById('kb-select').value = actualName;
+        selectKB(actualName);
+
+        // Reset form inputs (but leave progress visible)
         document.getElementById('kb-bibtex-name-input').value = '';
         document.getElementById('kb-bibtex-content').value = '';
         bibtexFileLoaded = false;
@@ -336,16 +423,10 @@ async function createKBFromBibtex() {
         dropZone.style.borderColor = '';
         document.getElementById('bibtex-file-input').value = '';
 
-        await loadKBs();
-        document.getElementById('kb-select').value = actualName;
-        selectKB(actualName);
-
-        // Hide progress and form after a moment
+        // Close form after a moment, keep progress bar visible until done
         setTimeout(() => {
-            progressDiv.style.display = 'none';
-            progressBar.style.width = '0%';
             document.getElementById('kb-create-form').classList.remove('visible');
-        }, 2000);
+        }, 800);
 
     } catch (e) {
         showToast('Error: ' + e.message);
@@ -354,6 +435,81 @@ async function createKBFromBibtex() {
     } finally {
         createBtn.disabled = false;
         createBtn.textContent = 'Create from BibTeX';
+    }
+}
+
+/**
+ * Toggle the DOI add panel for the currently selected KB.
+ */
+function toggleAddDoisPanel() {
+    const panel = document.getElementById('kb-dois-panel');
+    if (!panel) return;
+    const isVisible = panel.classList.contains('visible');
+    panel.classList.toggle('visible', !isVisible);
+    if (!isVisible) {
+        document.getElementById('kb-dois-input').focus();
+    }
+}
+
+/**
+ * Add DOIs to the currently selected KB via the async endpoint.
+ */
+async function addDoisToKB() {
+    if (!selectedKb) {
+        showToast('Please select a knowledge base first');
+        return;
+    }
+
+    const textarea = document.getElementById('kb-dois-input');
+    if (!textarea) return;
+    const raw = textarea.value.trim();
+    if (!raw) {
+        showToast('Please enter at least one DOI');
+        return;
+    }
+
+    // Parse DOIs: one per line, strip whitespace and https://doi.org/ prefix
+    const dois = raw.split(/\s+/).map(d => d.trim().replace(/^https?:\/\/doi\.org\//i, '')).filter(Boolean);
+    if (!dois.length) {
+        showToast('No valid DOIs found');
+        return;
+    }
+
+    const btn = document.getElementById('kb-dois-submit-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+
+    const progressContainer = document.getElementById('kb-dois-progress');
+    if (progressContainer) progressContainer.innerHTML = '';
+
+    try {
+        const resp = await fetch('/api/kb/' + encodeURIComponent(selectedKb) + '/dois/async', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ dois })
+        });
+
+        const data = await resp.json();
+        if (!resp.ok || data.error) {
+            const msg = data.detail
+                ? (Array.isArray(data.detail) ? data.detail.map(d => d.msg || d).join('; ') : data.detail)
+                : (data.error || 'Unknown error');
+            throw new Error(msg);
+        }
+
+        const jobId = data.job_id;
+        const total = data.total || dois.length;
+        showToast(`Started importing ${total} DOIs into "${selectedKb}"…`);
+
+        if (progressContainer) {
+            startIngestionProgress(jobId, total, progressContainer);
+        }
+
+        // Clear input
+        textarea.value = '';
+    } catch (err) {
+        showToast('Error: ' + err.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Add DOIs'; }
     }
 }
 
