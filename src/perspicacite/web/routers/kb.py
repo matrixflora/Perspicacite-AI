@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Strong-reference set that keeps fire-and-forget ingestion Tasks alive until
+# they complete.  asyncio.create_task() returns a Task that Python's GC may
+# collect if no other reference is held; storing it here prevents mid-flight
+# cancellation.  The done_callback removes the Task once it finishes so the
+# set does not grow unbounded.
+_background_tasks: set = set()
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -947,7 +954,7 @@ async def add_bibtex_to_kb_async(name: str, request: Request):
 
     total = _count_bibtex_entries(bibtex_content)
     job_id = await app_state.job_registry.create(kind="bibtex_ingest", total=total)
-    _asyncio.create_task(  # noqa: RUF006  # fire-and-forget; result tracked via JobRegistry
+    task = _asyncio.create_task(
         _bibtex_ingest_worker(
             name=name,
             bibtex_text=bibtex_content,
@@ -955,6 +962,8 @@ async def add_bibtex_to_kb_async(name: str, request: Request):
             registry=app_state.job_registry,
         )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return {"job_id": job_id, "total": total}
 
 
@@ -1071,7 +1080,7 @@ async def add_dois_to_kb_async(name: str, request: KBAddDOIsRequest):
 
     total = len(request.dois)
     job_id = await app_state.job_registry.create(kind="doi_ingest", total=total)
-    _asyncio.create_task(  # noqa: RUF006  # fire-and-forget; result tracked via JobRegistry
+    task = _asyncio.create_task(
         _dois_ingest_worker(
             name=name,
             dois=list(request.dois),
@@ -1079,6 +1088,8 @@ async def add_dois_to_kb_async(name: str, request: KBAddDOIsRequest):
             registry=app_state.job_registry,
         )
     )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return {"job_id": job_id, "total": total}
 
 
