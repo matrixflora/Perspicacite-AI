@@ -10,6 +10,7 @@ Profound RAG (ProfondeChain) adds:
 - WRRF multi-query fusion (vector-only retrieval, matching v1 profonde)
 """
 
+import contextlib
 import json
 import math
 import re
@@ -19,9 +20,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from perspicacite.logging import get_logger
-from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.models.kb import chroma_collection_name_for_kb
+from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.provenance.context import get_collector
+from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
@@ -300,6 +302,7 @@ class ProfoundRAGMode(BaseRAGMode):
         embedding_provider: Any,
         tools: Any,
         kb_name: str,
+        collection_names: list[str] | None = None,
     ) -> tuple[list[ResearchStep], list[Any], str | None, bool]:
         """
         Run one cycle's plan steps with v1 consecutive-failure plan review.
@@ -326,6 +329,7 @@ class ProfoundRAGMode(BaseRAGMode):
                 tools=tools,
                 kb_name=kb_name,
                 model=getattr(request, "model", None),
+                collection_names=collection_names,
             )
             cycle_steps.append(step)
             cycle_documents.extend(step.documents)
@@ -410,6 +414,8 @@ class ProfoundRAGMode(BaseRAGMode):
         all_documents: list[Any] = []
         completion_reason: str | None = None
         kb_name = chroma_collection_name_for_kb(request.kb_name)
+        kb_names = getattr(request, "kb_names", None) or [request.kb_name]
+        collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
 
         # Main research loop
         for cycle in range(self.max_cycles):
@@ -433,6 +439,7 @@ class ProfoundRAGMode(BaseRAGMode):
                     embedding_provider=embedding_provider,
                     tools=tools,
                     kb_name=kb_name,
+                    collection_names=collection_names,
                 )
             )
 
@@ -582,6 +589,8 @@ class ProfoundRAGMode(BaseRAGMode):
         all_documents: list[Any] = []
         completion_reason: str | None = None
         kb_name = chroma_collection_name_for_kb(request.kb_name)
+        kb_names = getattr(request, "kb_names", None) or [request.kb_name]
+        collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
 
         for cycle in range(self.max_cycles):
             self.iterations = cycle + 1
@@ -604,6 +613,7 @@ class ProfoundRAGMode(BaseRAGMode):
                     embedding_provider=embedding_provider,
                     tools=tools,
                     kb_name=kb_name,
+                    collection_names=collection_names,
                 )
             )
 
@@ -878,22 +888,53 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         embedding_provider: Any,
         kb_name: str,
         llm: Any = None,
+        collection_names: list[str] | None = None,
     ) -> list[Any]:
         """
         core/core.py retrieve_documents multi-query branch: vector only (v1 profonde
         uses advanced_mode=False so hybrid is never applied).
+
+        When `collection_names` has more than one entry, the per-query search
+        is fanned out across all listed collections and each result is tagged
+        with its originating collection name (kb_name). Single-collection
+        behaviour is preserved when `collection_names` is None or length 1.
         """
+        effective_collections = list(collection_names) if collection_names else [kb_name]
+
         rankings: dict[Any, dict[int, int]] = {}
         scores_per_query: dict[int, dict[Any, float]] = {}
         documents_info: dict[Any, Any] = {}
 
         for q_idx, query in enumerate(queries):
             query_embedding = await embedding_provider.embed([query])
-            results = await vector_store.search(
-                collection=kb_name,
-                query_embedding=query_embedding[0],
-                top_k=self.initial_docs,
-            )
+            if len(effective_collections) == 1:
+                results = await vector_store.search(
+                    collection=effective_collections[0],
+                    query_embedding=query_embedding[0],
+                    top_k=self.initial_docs,
+                )
+            else:
+                results = []
+                for coll in effective_collections:
+                    try:
+                        coll_results = await vector_store.search(
+                            collection=coll,
+                            query_embedding=query_embedding[0],
+                            top_k=self.initial_docs,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "profound_wrrf_fanout_search_failed",
+                            collection=coll,
+                            error=str(e),
+                        )
+                        continue
+                    for r in coll_results:
+                        with contextlib.suppress(Exception):
+                            r.kb_name = coll
+                    results.extend(coll_results)
+                results.sort(key=lambda r: getattr(r, "score", 0.0), reverse=True)
+                results = results[: self.initial_docs]
             scores_per_query[q_idx] = {}
             for rank, doc in enumerate(results, start=1):
                 doc_id = doc_page_content(doc)
@@ -929,14 +970,46 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         vector_store: Any,
         embedding_provider: Any,
         kb_name: str,
+        collection_names: list[str] | None = None,
     ) -> list[Any]:
-        """core/core.py single-query basic path: vector search + per-source cap."""
+        """core/core.py single-query basic path: vector search + per-source cap.
+
+        When `collection_names` is provided with more than one entry, the
+        search is fanned out across all listed collections and each retrieved
+        result is tagged with its originating collection name (kb_name).
+        Single-collection behaviour is preserved when `collection_names` is
+        None or has a single entry.
+        """
+        effective_collections = list(collection_names) if collection_names else [kb_name]
+
         query_embedding = await embedding_provider.embed([query])
-        results = await vector_store.search(
-            collection=kb_name,
-            query_embedding=query_embedding[0],
-            top_k=self.initial_docs,
-        )
+        if len(effective_collections) == 1:
+            results = await vector_store.search(
+                collection=effective_collections[0],
+                query_embedding=query_embedding[0],
+                top_k=self.initial_docs,
+            )
+        else:
+            # Fan out across collections and tag each hit with its source kb.
+            results = []
+            for coll in effective_collections:
+                try:
+                    coll_results = await vector_store.search(
+                        collection=coll,
+                        query_embedding=query_embedding[0],
+                        top_k=self.initial_docs,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "profound_basic_fanout_search_failed",
+                        collection=coll,
+                        error=str(e),
+                    )
+                    continue
+                for r in coll_results:
+                    with contextlib.suppress(Exception):
+                        r.kb_name = coll
+                results.extend(coll_results)
         results = sorted(results, key=lambda r: getattr(r, "score", 0.0), reverse=True)
         selected: list[Any] = []
         source_counter: Counter[str] = Counter()
@@ -955,12 +1028,25 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         results: list[Any],
         kb_name: str,
         vector_store: Any,
+        collection_names: list[str] | None = None,
     ) -> list[Any]:
-        """Two-pass enrichment: given chunk-level results, fetch full paper text."""
+        """Two-pass enrichment: given chunk-level results, fetch full paper text.
+
+        When `collection_names` has more than one entry, fans the
+        `get_chunks_by_paper_ids` call across collections via
+        `get_chunks_by_paper_ids_across`. Each resulting paper-level dict is
+        tagged with the originating collection's kb_name (derived from the
+        first-pass `r.kb_name` attribute set by the fan-out retriever).
+        Single-collection behaviour is preserved when `collection_names` is
+        None or has a single entry.
+        """
         from perspicacite.rag.utils import deduplicate_chunk_overlaps
+
+        effective_collections = list(collection_names) if collection_names else [kb_name]
 
         paper_ids = []
         paper_scores: dict[str, float] = {}
+        paper_kb: dict[str, str | None] = {}
         for r in results:
             meta = getattr(r, "chunk", None)
             if meta and hasattr(meta, "metadata"):
@@ -973,11 +1059,23 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                 paper_ids.append(pid)
                 score = getattr(r, "score", getattr(r, "wrrf_score", 0.5))
                 paper_scores[pid] = score
+                # First-pass kb tag (set by fan-out search). May be None for
+                # single-KB callers; we fall back to kb_name in that case.
+                paper_kb[pid] = getattr(r, "kb_name", None) if not isinstance(r, dict) else r.get("kb_name")
 
         if not paper_ids:
             return results
 
-        all_chunks = await vector_store.get_chunks_by_paper_ids(kb_name, paper_ids)
+        if len(effective_collections) == 1:
+            all_chunks = await vector_store.get_chunks_by_paper_ids(
+                effective_collections[0], paper_ids
+            )
+        else:
+            all_chunks = await get_chunks_by_paper_ids_across(
+                vector_store,
+                collection_names=effective_collections,
+                paper_ids=paper_ids,
+            )
         deduped = deduplicate_chunk_overlaps(all_chunks)
 
         # Group by paper_id
@@ -1003,6 +1101,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                 "chunks": chunks_list,
                 "full_text": full_text,
                 "source": "kb",
+                "kb_name": paper_kb.get(pid),
             })
 
         return paper_results
@@ -1086,6 +1185,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         tools: Any,
         kb_name: str,
         model: str | None = None,
+        collection_names: list[str] | None = None,
     ) -> ResearchStep:
         """
         Execute a single research step with v1's 3-stage fallback:
@@ -1114,12 +1214,21 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         kb_after_s1: list[Any] = []
         try:
             basic_results = await self._basic_vector_retrieve(
-                step_info.query, vector_store, embedding_provider, kb_name
+                step_info.query,
+                vector_store,
+                embedding_provider,
+                kb_name,
+                collection_names=collection_names,
             )
 
             # Two-pass enrichment: fetch full paper text (if enabled)
             if self.use_two_pass:
-                enriched = await self._enrich_with_full_text(basic_results[:self.final_max_docs], kb_name, vector_store)
+                enriched = await self._enrich_with_full_text(
+                    basic_results[: self.final_max_docs],
+                    kb_name,
+                    vector_store,
+                    collection_names=collection_names,
+                )
             else:
                 enriched = []
 
@@ -1183,6 +1292,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                     vector_store,
                     embedding_provider,
                     kb_name,
+                    collection_names=collection_names,
                 )
             else:
                 stage2_docs = await self._wrrf_retrieval(
@@ -1191,10 +1301,16 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                     embedding_provider,
                     kb_name,
                     llm=None,
+                    collection_names=collection_names,
                 )
 
             if self.use_two_pass and stage2_docs:
-                enriched_wrrf = await self._enrich_with_full_text(stage2_docs, kb_name, vector_store)
+                enriched_wrrf = await self._enrich_with_full_text(
+                    stage2_docs,
+                    kb_name,
+                    vector_store,
+                    collection_names=collection_names,
+                )
             else:
                 enriched_wrrf = []
 
@@ -1817,6 +1933,7 @@ Follow the system instructions for this situation."""
                         year=doc.get("year"),
                         doi=doc.get("doi"),
                         relevance_score=doc.get("paper_score", 0.5),
+                        kb_name=doc.get("kb_name"),
                     )
                 )
                 continue
@@ -1869,6 +1986,7 @@ Follow the system instructions for this situation."""
                     year=year,
                     doi=doi,
                     relevance_score=getattr(doc, "score", 0.0),
+                    kb_name=getattr(doc, "kb_name", None),
                 )
             )
 
