@@ -17,6 +17,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from perspicacite.logging import get_logger
+from perspicacite.provenance.context import get_collector
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -143,7 +144,7 @@ class ContradictionRAGMode(BaseRAGMode):
                 excerpts=excerpts,
             )
             try:
-                claims = await llm.complete(messages=[{"role": "user", "content": prompt}])
+                claims = await llm.complete(messages=[{"role": "user", "content": prompt}], stage="contradiction.summarize")
                 if not isinstance(claims, str):
                     claims = str(claims)
             except Exception as exc:
@@ -179,7 +180,7 @@ class ContradictionRAGMode(BaseRAGMode):
         )
         empty: dict[str, Any] = {"consensus": [], "disagreement": [], "open": []}
         try:
-            raw = await llm.complete(messages=[{"role": "user", "content": prompt}])
+            raw = await llm.complete(messages=[{"role": "user", "content": prompt}], stage="contradiction.cluster")
             if not isinstance(raw, str):
                 raw = str(raw)
             # Strip markdown code fences if present
@@ -220,12 +221,12 @@ class ContradictionRAGMode(BaseRAGMode):
         )
         messages = [{"role": "user", "content": prompt}]
         try:
-            async for chunk in llm.stream(messages=messages, max_tokens=2000, temperature=0.3):
+            async for chunk in llm.stream(messages=messages, max_tokens=2000, temperature=0.3, stage="contradiction.synthesis"):
                 yield StreamEvent.content(chunk)
         except AttributeError:
             # LLM has no stream() method; fall back to one-shot complete()
             try:
-                answer = await llm.complete(messages=messages)
+                answer = await llm.complete(messages=messages, stage="contradiction.synthesis")
                 if not isinstance(answer, str):
                     answer = str(answer)
                 yield StreamEvent.content(answer)
@@ -238,7 +239,7 @@ class ContradictionRAGMode(BaseRAGMode):
             logger.error("synthesis_stream_failed", error=str(exc))
             # Try non-streaming fallback
             try:
-                answer = await llm.complete(messages=messages)
+                answer = await llm.complete(messages=messages, stage="contradiction.synthesis")
                 if not isinstance(answer, str):
                     answer = str(answer)
                 yield StreamEvent.content(answer)
@@ -268,11 +269,11 @@ class ContradictionRAGMode(BaseRAGMode):
             context=context,
         )
         try:
-            async for chunk in llm.stream(messages=messages, max_tokens=1500, temperature=0.3):
+            async for chunk in llm.stream(messages=messages, max_tokens=1500, temperature=0.3, stage="contradiction.fallback"):
                 yield StreamEvent.content(chunk)
         except AttributeError:
             try:
-                answer = await llm.complete(messages=messages)
+                answer = await llm.complete(messages=messages, stage="contradiction.fallback")
                 if not isinstance(answer, str):
                     answer = str(answer)
                 yield StreamEvent.content(answer)
@@ -280,7 +281,7 @@ class ContradictionRAGMode(BaseRAGMode):
                 yield StreamEvent.content(f"(Answer generation failed: {exc})")
         except Exception:
             try:
-                answer = await llm.complete(messages=messages)
+                answer = await llm.complete(messages=messages, stage="contradiction.fallback")
                 if not isinstance(answer, str):
                     answer = str(answer)
                 yield StreamEvent.content(answer)
@@ -329,7 +330,40 @@ class ContradictionRAGMode(BaseRAGMode):
         try:
             yield StreamEvent.status("Contradiction analysis: retrieving documents...")
             chunks = await self._retrieve(request, vector_store, embedding_provider)
+            _c = get_collector()
+            if _c is not None:
+                _c.add_trace("retrieve", detail={"kb_name": request.kb_name, "count": len(chunks)})
+                for rank, ch in enumerate(chunks):
+                    md = self._chunk_meta(ch)
+                    if isinstance(md, dict):
+                        doi = md.get("doi")
+                        title = md.get("title")
+                        content_type = md.get("content_type")
+                        pipeline_step = md.get("content_source")
+                    elif md is not None:
+                        doi = getattr(md, "doi", None)
+                        title = getattr(md, "title", None)
+                        content_type = getattr(md, "content_type", None)
+                        pipeline_step = getattr(md, "content_source", None)
+                    else:
+                        doi = title = content_type = pipeline_step = None
+                    score = float(self._chunk_score(ch) or 0.0)
+                    kb_name = self._chunk_kb_name(ch)
+                    paper_id = (ch.get("paper_id") if isinstance(ch, dict) else getattr(ch, "paper_id", None))
+                    _c.add_retrieval(
+                        paper_id=paper_id,
+                        doi=doi,
+                        title=title,
+                        score=score,
+                        kb_name=kb_name,
+                        content_type=content_type,
+                        pipeline_step=pipeline_step,
+                        rank=rank,
+                        stage_label="contradiction.retrieve",
+                    )
             by_paper = self._group_by_paper(chunks)
+            if _c is not None:
+                _c.add_trace("group_by_paper", detail={"papers": len(by_paper)})
             real_papers = [p for p in by_paper if p != "?"]
             n = len(real_papers)
 
@@ -374,6 +408,14 @@ class ContradictionRAGMode(BaseRAGMode):
             cap = getattr(self.settings, "map_reduce_max_papers", 8)
             paper_summaries = await self._summarize_claims(by_paper, request.query, llm, cap)
             clusters = await self._cluster_claims(request.query, paper_summaries, llm)
+            if _c is not None:
+                _c.add_trace("cluster", detail={
+                    "agreement": len(clusters.get("agreement", [])),
+                    "disagreement": len(clusters.get("disagreement", [])),
+                    "open": len(clusters.get("open", [])),
+                })
+            if _c is not None:
+                _c.add_trace("synthesize")
 
             async for ev in self._synthesize_stream(request.query, clusters, paper_summaries, llm):
                 yield ev
