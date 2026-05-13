@@ -1253,3 +1253,45 @@ async def add_local_paths(name: str, payload: AddLocalPathsRequest) -> dict:
     _local_tasks.add(task)
     task.add_done_callback(_local_tasks.discard)
     return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
+
+
+@router.post("/api/kb/{name}/build-capsules")
+async def build_capsules_for_kb_async(name: str, force: bool = False) -> dict:
+    """Retro-build capsules for every paper in this KB. Returns job_id + sse_url."""
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="Job registry not available")
+    kb_meta = await app_state.session_store.get_kb_metadata(name)
+    if kb_meta is None:
+        raise HTTPException(status_code=404, detail=f"KB '{name}' not found")
+    rows = await app_state.vector_store.list_paper_metadata(kb_meta.collection_name)
+    job_id = await app_state.job_registry.create("capsule_build", total=len(rows))
+
+    async def _runner():
+        from perspicacite.pipeline.capsule_builder import (
+            build_capsule,
+            resolve_paper_from_metadata,
+            locate_cached_pdf,
+        )
+        for i, row in enumerate(rows):
+            paper = resolve_paper_from_metadata(row)
+            pdf_path = locate_cached_pdf(row)
+            try:
+                res = await build_capsule(
+                    paper=paper, pdf_path=pdf_path,
+                    kb_name=name, app_state=app_state, force=force,
+                )
+                await app_state.job_registry.publish(job_id, {
+                    "type": "progress", "done": i + 1, "paper": paper.id,
+                    "status": res.get("status"),
+                })
+            except Exception as exc:
+                await app_state.job_registry.publish(job_id, {
+                    "type": "progress", "done": i + 1, "paper": paper.id,
+                    "status": "errored", "error": str(exc),
+                })
+        await app_state.job_registry.finish(job_id, {"total": len(rows)})
+
+    task = asyncio.create_task(_runner())
+    _local_tasks.add(task)
+    task.add_done_callback(_local_tasks.discard)
+    return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
