@@ -116,6 +116,7 @@ class AppState:
             sidecar_dir=sidecar_dir,
         )
         logger.info("Provenance store initialized")
+        self.rag_engine.provenance_store = self.provenance_store
 
         # Initialize PDF downloader and parser
         from perspicacite.pipeline.download import PDFDownloader
