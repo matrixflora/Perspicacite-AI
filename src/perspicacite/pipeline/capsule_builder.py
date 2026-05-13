@@ -9,11 +9,13 @@ ASB capsules (see docs/superpowers/specs/2026-05-13-capsule-multimodal-rag-desig
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from perspicacite.models.papers import Paper
+from perspicacite.pipeline.parsers.figures import RawFigure
 
 CAPSULE_VERSION = "0.1"
 
@@ -54,3 +56,27 @@ def write_metadata(
         json.dumps(payload, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def write_figures(capsule_dir: Path, *, figures: list[RawFigure]) -> int:
+    """Persist each ``RawFigure``'s bytes and emit ``figures/index.json``.
+
+    Returns the number of figures written. Filenames follow ASB's
+    ``fig_p<page:03d>_i<idx:02d>.<ext>`` convention (already set on each
+    ``FigureRecord``).
+    """
+    fig_dir = capsule_dir / "figures"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    records: list[dict] = []
+    for raw in figures:
+        rec = raw.record
+        target = fig_dir / rec.filename
+        target.write_bytes(raw.image_bytes)
+        records.append(asdict(rec))
+
+    (fig_dir / "index.json").write_text(
+        json.dumps(records, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return len(records)
