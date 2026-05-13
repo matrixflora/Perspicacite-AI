@@ -1347,6 +1347,39 @@ async def ingest_local_documents(
     )
 
 
+@mcp.tool
+async def build_capsule(
+    paper_id: str,
+    kb_name: str,
+    force: bool = False,
+) -> dict:
+    """Build (or rebuild) a per-paper capsule.
+
+    Enumerates papers in ``kb_name``'s vector-store collection, finds the row
+    matching ``paper_id``, reconstructs a Paper, locates a cached PDF (if any),
+    and calls ``capsule_builder.build_capsule``.
+    """
+    from perspicacite.pipeline.capsule_builder import (
+        build_capsule as _build,
+        resolve_paper_from_metadata,
+        locate_cached_pdf,
+    )
+
+    kb = await mcp_state.session_store.get_kb_metadata(kb_name)
+    if kb is None:
+        return {"error": f"KB '{kb_name}' not found"}
+    rows = await mcp_state.vector_store.list_paper_metadata(kb.collection_name)
+    row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+    if row is None:
+        return {"error": f"paper '{paper_id}' not found in KB '{kb_name}'"}
+    paper = resolve_paper_from_metadata(row)
+    pdf_path = locate_cached_pdf(row)
+    return await _build(
+        paper=paper, pdf_path=pdf_path, kb_name=kb_name,
+        app_state=mcp_state, force=force,
+    )
+
+
 # =============================================================================
 # Resource
 # =============================================================================
@@ -1366,6 +1399,7 @@ _TOOL_NAMES: list[str] = [
     "push_to_zotero",
     "build_kbs_from_zotero",
     "ingest_local_documents",
+    "build_capsule",
 ]
 
 

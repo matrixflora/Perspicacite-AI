@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from perspicacite.models.documents import ChunkMetadata
-from perspicacite.models.papers import Paper
+from perspicacite.models.papers import Author, Paper, PaperSource
 from perspicacite.pipeline.chunking_dispatch import chunk_document
 from perspicacite.pipeline.external.accessions import mine_accessions
 from perspicacite.pipeline.external.resources import (
@@ -391,3 +391,40 @@ async def _ingest_chunks(
         kb.chunk_count += len(all_chunks)
         await app_state.session_store.save_kb_metadata(kb)
     return len(all_chunks)
+
+
+_DEFAULT_PDF_CACHE = Path("./data/papers")
+
+
+def resolve_paper_from_metadata(row: dict) -> Paper:
+    """Reconstruct a minimal ``Paper`` from a vector-store metadata row."""
+    authors_raw = row.get("authors") or ""
+    authors: list[Author] = []
+    if isinstance(authors_raw, str) and authors_raw.strip():
+        for part in authors_raw.split(";"):
+            name = part.strip()
+            if name:
+                authors.append(Author(name=name, family=name.split(",")[0].strip()))
+    return Paper(
+        id=row["paper_id"],
+        title=row.get("title") or row["paper_id"],
+        authors=authors,
+        year=row.get("year"),
+        doi=row.get("doi"),
+        source=PaperSource.USER_UPLOAD if row.get("doi") else PaperSource.LOCAL,
+    )
+
+
+def locate_cached_pdf(row: dict, *, root: Path = _DEFAULT_PDF_CACHE) -> Path | None:
+    """Best-effort: locate a cached PDF for this paper. Returns None if absent."""
+    doi = row.get("doi")
+    if doi:
+        candidate = root / f"{doi.replace('/', '_')}.pdf"
+        if candidate.exists():
+            return candidate
+    pid = row.get("paper_id") or ""
+    if pid.startswith("local:"):
+        candidate = root / f"{pid.replace(':', '_')}.pdf"
+        if candidate.exists():
+            return candidate
+    return None
