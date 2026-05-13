@@ -225,6 +225,19 @@ async def _bibtex_ingest_worker(
             kb.chunk_count += added
             await app_state.session_store.save_kb_metadata(kb)
 
+        # Cycle A: on-disk capsule artifacts per added paper (metadata + resources + blocks).
+        # Skip per-paper if capsule auto-build disabled.
+        if app_state.config.capsule.auto_build_on_ingest and papers_to_add:
+            from perspicacite.pipeline.capsule_builder import build_capsule
+            for p in papers_to_add:
+                try:
+                    await build_capsule(
+                        paper=p, pdf_path=None, kb_name=name,
+                        app_state=app_state, ingest_chunks=False,
+                    )
+                except Exception as exc:
+                    logger.warning(f"capsule build failed for {p.id}: {exc}")
+
         await registry.finish(
             job_id,
             {
