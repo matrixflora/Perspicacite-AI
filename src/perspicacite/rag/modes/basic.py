@@ -16,6 +16,7 @@ from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceRefe
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.provenance.context import get_collector
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
 )
@@ -387,11 +388,18 @@ Instructions:
 - Unique sources: {len(set(get_doc_citation(d) for d in documents))}"""
 
         try:
+            base_messages = [
+                {"role": "system", "content": get_system_prompt()},
+                {"role": "user", "content": template},
+            ]
+            messages = wrap_messages_for_chunks(
+                base_messages=base_messages,
+                chunks=documents,
+                model=request.model,
+                config=self.config,
+            )
             response = await llm.complete(
-                messages=[
-                    {"role": "system", "content": get_system_prompt()},
-                    {"role": "user", "content": template},
-                ],
+                messages=messages,
                 model=request.model,
                 provider=request.provider,
                 max_tokens=2000,
