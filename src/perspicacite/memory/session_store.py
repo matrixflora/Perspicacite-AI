@@ -67,6 +67,18 @@ CREATE TABLE IF NOT EXISTS provenance (
 
 CREATE INDEX IF NOT EXISTS idx_provenance_conversation ON provenance(conversation_id);
 
+CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    total INTEGER DEFAULT 0,
+    done_count INTEGER DEFAULT 0,
+    result TEXT,
+    error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id);
 """
