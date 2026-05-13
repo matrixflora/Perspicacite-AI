@@ -204,3 +204,19 @@ def wrap_messages_for_chunks(
         config_enabled=mm.enabled,
         max_images=mm.max_images,
     )
+
+
+import re as _re
+
+_FIG_ID_TOKEN_RE = _re.compile(r"\bpdf_p\d+_i\d+\b")
+
+
+def strip_unknown_figure_ids(text: str, *, known: set[str]) -> str:
+    """Remove ``pdf_p<page>_i<idx>`` tokens that aren't in ``known``.
+
+    Mirrors ASB. Used at the answer-post stage so hallucinated figure IDs
+    don't render as broken thumbnails in the UI.
+    """
+    def _repl(m):
+        return m.group(0) if m.group(0) in known else ""
+    return _FIG_ID_TOKEN_RE.sub(_repl, text or "")
