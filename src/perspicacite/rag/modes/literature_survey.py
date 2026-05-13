@@ -886,8 +886,14 @@ Respond with theme names separated by commas, or "None" if no match."""
         llm: Any
     ) -> str:
         """Generate final structured survey report."""
+        # NOTE (Capsule Cycle B): No multimodal hook here. The survey report is
+        # deterministic text aggregation; the LLM calls in this mode
+        # (_analyze_batch, _identify_themes, _assign_papers_to_themes) are
+        # intermediate paper-metadata processing, not final user-facing synthesis.
+        # If/when a final-synthesis LLM call is added, wire via
+        # perspicacite.rag.multimodal.wrap_messages_for_chunks here.
         # TODO: Full implementation with PDF export
-        
+
         lines = [
             f"# Literature Survey Report: {session.query}",
             f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
