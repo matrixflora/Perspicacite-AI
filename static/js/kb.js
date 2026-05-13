@@ -900,3 +900,70 @@ document.addEventListener('DOMContentLoaded', () => {
     const cancel = document.getElementById('zotero-build-cancel');
     if (cancel) cancel.addEventListener('click', closeZoteroBuildModal);
 });
+
+// --- Local-file drag-and-drop into selected KB ---
+function wireKBDropzone() {
+    const dz = document.getElementById('kb-local-dropzone');
+    const picker = document.getElementById('kb-local-file-picker');
+    if (!dz || !picker) return;
+
+    async function upload(files) {
+        if (!selectedKb) { alert('Select a KB first.'); return; }
+        if (!files || files.length === 0) return;
+
+        const fd = new FormData();
+        [...files].forEach((f) => fd.append('files', f));
+
+        const prog = document.getElementById('kb-local-progress');
+        prog.classList.remove('hidden');
+        prog.textContent = `Uploading ${files.length} file(s) to "${selectedKb}"…\n`;
+
+        try {
+            const r = await fetch(`/api/kb/${encodeURIComponent(selectedKb)}/local-files`, {
+                method: 'POST',
+                body: fd,
+            });
+            const body = await r.json();
+            if (!r.ok || body.error) {
+                prog.textContent += `Error: ${body.error || body.detail || r.statusText}\n`;
+                return;
+            }
+            const sseUrl = body.sse_url || (body.job_id ? `/api/jobs/${body.job_id}/events` : null);
+            if (!sseUrl) {
+                prog.textContent += 'Done (no job stream).\n';
+                if (typeof loadKBs === 'function') loadKBs();
+                return;
+            }
+            const ev = new EventSource(sseUrl);
+            ev.onmessage = (m) => {
+                prog.textContent += m.data + '\n';
+                prog.scrollTop = prog.scrollHeight;
+            };
+            ev.addEventListener('done', () => {
+                ev.close();
+                prog.textContent += '\nDone.';
+                if (typeof loadKBs === 'function') loadKBs();
+            });
+            ev.onerror = () => {
+                prog.textContent += '\n(SSE stream closed)';
+                ev.close();
+                if (typeof loadKBs === 'function') loadKBs();
+            };
+        } catch (e) {
+            prog.textContent += `\nError: ${e.message || e}`;
+        }
+    }
+
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('over'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+    dz.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dz.classList.remove('over');
+        upload(e.dataTransfer.files);
+    });
+    picker.addEventListener('change', (e) => {
+        upload(e.target.files);
+        e.target.value = '';
+    });
+}
+document.addEventListener('DOMContentLoaded', wireKBDropzone);

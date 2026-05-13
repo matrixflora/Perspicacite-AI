@@ -420,3 +420,28 @@
 .kb-dois-panel.visible {
     display: block;
 }
+
+/* Local-file drag-and-drop zone for adding files into the selected KB */
+.kb-dropzone {
+    border: 2px dashed var(--border, #ccc);
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+    margin: 0.5rem 0;
+}
+.kb-dropzone.over {
+    background: var(--surface-alt, #f5f5f5);
+}
+.link {
+    cursor: pointer;
+    text-decoration: underline;
+}
+.hidden {
+    display: none;
+}
+#kb-local-progress {
+    white-space: pre-wrap;
+    font-family: monospace;
+    max-height: 30vh;
+    overflow: auto;
+}
