@@ -30,6 +30,7 @@ from perspicacite.models.rag import (
 )
 from perspicacite.rag import prompts as _prompts
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.multimodal import wrap_messages_for_chunks
 
 logger = get_logger("perspicacite.rag.modes.contradiction")
 
@@ -205,9 +206,11 @@ class ContradictionRAGMode(BaseRAGMode):
 
     async def _synthesize_stream(
         self,
+        request: RAGRequest,
         query: str,
         clusters: dict[str, Any],
         paper_summaries: list[dict[str, Any]],
+        documents: list[Any],
         llm: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Stream the structured three-section brief."""
@@ -219,7 +222,13 @@ class ContradictionRAGMode(BaseRAGMode):
             clusters=json.dumps(clusters, indent=2),
             summaries=summaries_text,
         )
-        messages = [{"role": "user", "content": prompt}]
+        base_messages = [{"role": "user", "content": prompt}]
+        messages = wrap_messages_for_chunks(
+            base_messages=base_messages,
+            chunks=documents,
+            model=getattr(request, "model", None),
+            config=self.config,
+        )
         try:
             async for chunk in llm.stream(messages=messages, max_tokens=2000, temperature=0.3, stage="contradiction.synthesis"):
                 yield StreamEvent.content(chunk)
@@ -264,9 +273,15 @@ class ContradictionRAGMode(BaseRAGMode):
             yield StreamEvent.content("No relevant documents found.")
             return
         context = "\n\n---\n\n".join(self._chunk_text(c)[:800] for c in chunks[:8])
-        messages = self._build_messages(
+        base_messages = self._build_messages(
             query=request.query,
             context=context,
+        )
+        messages = wrap_messages_for_chunks(
+            base_messages=base_messages,
+            chunks=chunks,
+            model=getattr(request, "model", None),
+            config=self.config,
         )
         try:
             async for chunk in llm.stream(messages=messages, max_tokens=1500, temperature=0.3, stage="contradiction.fallback"):
@@ -417,7 +432,14 @@ class ContradictionRAGMode(BaseRAGMode):
             if _c is not None:
                 _c.add_trace("synthesize")
 
-            async for ev in self._synthesize_stream(request.query, clusters, paper_summaries, llm):
+            async for ev in self._synthesize_stream(
+                request=request,
+                query=request.query,
+                clusters=clusters,
+                paper_summaries=paper_summaries,
+                documents=chunks,
+                llm=llm,
+            ):
                 yield ev
 
             sources = self._build_sources(by_paper, real_papers)
