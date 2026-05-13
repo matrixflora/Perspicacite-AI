@@ -7,6 +7,7 @@ Advanced RAG adds:
 - Optional response refinement
 """
 
+import contextlib
 import math
 from collections import Counter
 from collections.abc import AsyncIterator
@@ -16,6 +17,7 @@ from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.provenance.context import get_collector
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
@@ -233,6 +235,8 @@ Sources:
         logger.info("advanced_rag_start", query=request.query)
 
         kb_collection = chroma_collection_name_for_kb(request.kb_name)
+        kb_names = getattr(request, "kb_names", None) or [request.kb_name]
+        collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
             request.refined_query = refined  # type: ignore[misc]
@@ -262,7 +266,8 @@ Sources:
             queries=all_queries,
             vector_store=vector_store,
             embedding_provider=embedding_provider,
-            kb_name=chroma_collection_name_for_kb(request.kb_name),
+            kb_name=kb_collection,
+            collection_names=collection_names,
             llm=llm,
             request=request,
         )
@@ -286,6 +291,7 @@ Sources:
             paper_ids = []
             paper_scores: dict[str, float] = {}
             paper_meta: dict[str, Any] = {}
+            paper_kb: dict[str, str | None] = {}
             for doc in selected_documents:
                 meta = getattr(doc, "chunk", None)
                 if meta and hasattr(meta, "metadata"):
@@ -295,12 +301,20 @@ Sources:
                         score = getattr(doc, "wrrf_score", getattr(doc, "score", 0.5))
                         paper_scores[pid] = score
                         paper_meta[pid] = meta.metadata
+                        paper_kb[pid] = getattr(doc, "kb_name", None)
 
             if paper_ids:
                 ordered = merge_scope_with_candidates(paper_ids, paper_scores, scope, cap)
-                all_chunks = await vector_store.get_chunks_by_paper_ids(
-                    chroma_collection_name_for_kb(request.kb_name), ordered
-                )
+                if len(collection_names) == 1:
+                    all_chunks = await vector_store.get_chunks_by_paper_ids(
+                        collection_names[0], ordered
+                    )
+                else:
+                    all_chunks = await get_chunks_by_paper_ids_across(
+                        vector_store,
+                        collection_names=collection_names,
+                        paper_ids=ordered,
+                    )
                 deduped = deduplicate_chunk_overlaps(all_chunks)
                 # Group by paper
                 from collections import OrderedDict
@@ -322,6 +336,7 @@ Sources:
                             "doi": getattr(meta, "doi", None),
                             "chunks": chunks_list,
                             "full_text": full_text,
+                            "kb_name": paper_kb.get(pid),
                         }
                     )
 
@@ -398,6 +413,7 @@ Sources:
                         year=p.get("year"),
                         doi=p.get("doi"),
                         relevance_score=p.get("paper_score", 0.0),
+                        kb_name=p.get("kb_name") or request.kb_name,
                     )
                 )
         else:
@@ -502,6 +518,8 @@ Sources:
         yield StreamEvent.status("Advanced RAG: Generating query variations...")
 
         kb_collection = chroma_collection_name_for_kb(request.kb_name)
+        kb_names = getattr(request, "kb_names", None) or [request.kb_name]
+        collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
             request.refined_query = refined  # type: ignore[misc]
@@ -528,6 +546,7 @@ Sources:
             vector_store=vector_store,
             embedding_provider=embedding_provider,
             kb_name=kb_collection,
+            collection_names=collection_names,
             llm=llm,
             request=request,
         )
@@ -545,6 +564,7 @@ Sources:
             paper_ids: list[str] = []
             paper_scores: dict[str, float] = {}
             paper_meta: dict[str, Any] = {}
+            paper_kb: dict[str, str | None] = {}
             for doc in selected_documents:
                 meta = getattr(doc, "chunk", None)
                 if meta and hasattr(meta, "metadata"):
@@ -554,9 +574,19 @@ Sources:
                         score = getattr(doc, "wrrf_score", getattr(doc, "score", 0.5))
                         paper_scores[pid] = score
                         paper_meta[pid] = meta.metadata
+                        paper_kb[pid] = getattr(doc, "kb_name", None)
             if paper_ids:
                 ordered = merge_scope_with_candidates(paper_ids, paper_scores, scope, cap)
-                all_chunks = await vector_store.get_chunks_by_paper_ids(kb_collection, ordered)
+                if len(collection_names) == 1:
+                    all_chunks = await vector_store.get_chunks_by_paper_ids(
+                        collection_names[0], ordered
+                    )
+                else:
+                    all_chunks = await get_chunks_by_paper_ids_across(
+                        vector_store,
+                        collection_names=collection_names,
+                        paper_ids=ordered,
+                    )
                 deduped = deduplicate_chunk_overlaps(all_chunks)
                 from collections import OrderedDict
 
@@ -577,6 +607,7 @@ Sources:
                             "doi": getattr(meta, "doi", None),
                             "chunks": chunks_list,
                             "full_text": full_text,
+                            "kb_name": paper_kb.get(pid),
                         }
                     )
 
@@ -619,6 +650,7 @@ Sources:
                         year=p.get("year"),
                         doi=p.get("doi"),
                         relevance_score=p.get("paper_score", 0.0),
+                        kb_name=p.get("kb_name") or request.kb_name,
                     )
                 )
         else:
@@ -768,6 +800,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         kb_name: str,
         llm: Any = None,
         request: Any = None,
+        collection_names: list[str] | None = None,
     ) -> list[Any]:
         """
         Retrieve documents using WRRF (Weighted Reciprocal Rank Fusion).
@@ -777,22 +810,56 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         WRRF formula: score = sum(normalized_score / (k + rank))
 
         If use_hybrid is enabled, also applies BM25 scoring to combine with vector scores.
+
+        When `collection_names` is provided with more than one entry, the search
+        is fanned out across all listed collections and each retrieved result is
+        tagged with its originating collection name (kb_name). Single-collection
+        behaviour is preserved when `collection_names` is None or length 1.
         """
-        rankings = {}  # doc_id -> {query_idx: rank}
-        scores_per_query = {}  # query_idx -> {doc_id: score}
-        documents_info = {}  # doc_id -> document
+        # Normalize collection list: prefer explicit collection_names, else legacy kb_name.
+        effective_collections = list(collection_names) if collection_names else [kb_name]
+
+        rankings: dict[str, dict[int, int]] = {}  # doc_id -> {query_idx: rank}
+        scores_per_query: dict[int, dict[str, float]] = {}  # query_idx -> {doc_id: score}
+        documents_info: dict[str, Any] = {}  # doc_id -> document
 
         # Process each query
         for q_idx, query in enumerate(queries):
             logger.debug("advanced_wrrf_processing_query", idx=q_idx, query=query[:100])
 
-            # Get query embedding and search
+            # Get query embedding and search across one or more collections.
             query_embedding = await embedding_provider.embed([query])
-            results = await vector_store.search(
-                collection=kb_name,
-                query_embedding=query_embedding[0],
-                top_k=self.initial_docs,
-            )
+            if len(effective_collections) == 1:
+                results = await vector_store.search(
+                    collection=effective_collections[0],
+                    query_embedding=query_embedding[0],
+                    top_k=self.initial_docs,
+                )
+            else:
+                # Fan out across collections and tag each hit with its source kb.
+                results = []
+                for coll in effective_collections:
+                    try:
+                        coll_results = await vector_store.search(
+                            collection=coll,
+                            query_embedding=query_embedding[0],
+                            top_k=self.initial_docs,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "advanced_wrrf_fanout_search_failed",
+                            collection=coll,
+                            error=str(e),
+                        )
+                        continue
+                    for r in coll_results:
+                        # RetrievedChunk allows extra fields; tag with kb_name.
+                        with contextlib.suppress(Exception):
+                            r.kb_name = coll
+                    results.extend(coll_results)
+                # Re-sort by score and clip so WRRF rank assignments stay meaningful.
+                results.sort(key=lambda r: getattr(r, "score", 0.0), reverse=True)
+                results = results[: self.initial_docs]
 
             scores_per_query[q_idx] = {}
 
