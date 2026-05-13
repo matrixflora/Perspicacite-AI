@@ -110,6 +110,12 @@
                             Build KBs from Zotero
                         </button>
                     </div>
+                    <!-- Local-file drop zone (drag-and-drop or click to upload) -->
+                    <div id="kb-local-dropzone" data-testid="kb-local-dropzone" class="kb-dropzone">
+                        <p>Drop files here, or <label for="kb-local-file-picker" class="link">click to choose</label></p>
+                        <input type="file" id="kb-local-file-picker" multiple class="hidden" />
+                        <div id="kb-local-progress" class="hidden"></div>
+                    </div>
                     <!-- DOI add panel (shown when "Add DOIs" is clicked) -->
                     <div id="kb-dois-panel" class="kb-dois-panel">
                         <textarea id="kb-dois-input" placeholder="One DOI per line&#10;e.g. 10.1038/s41586-020-2649-2" rows="4" style="width:100%;font-size:12px;font-family:monospace;border:1px solid #cbd5e1;border-radius:4px;padding:6px;resize:vertical;margin-bottom:6px;"></textarea>
