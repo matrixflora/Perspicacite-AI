@@ -25,6 +25,7 @@ from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceRefe
 from perspicacite.provenance.context import get_collector
 from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     ASSESS_DOCUMENT_QUALITY_PROMPT,
@@ -1653,6 +1654,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         self,
         query: str,
         research_text: str,
+        documents: list[Any],
         llm: Any,
         request: RAGRequest,
         completion_reason: str | None,
@@ -1695,10 +1697,16 @@ Follow the system instructions for this situation."""
 
         model = getattr(request, "model", "") or ""
         is_o_series = model.startswith("o") or "gpt-5" in model
-        messages = [
+        base_messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ]
+        messages = wrap_messages_for_chunks(
+            base_messages=base_messages,
+            chunks=documents,
+            model=request.model,
+            config=self.config,
+        )
 
         try:
             if limitations:
@@ -1759,7 +1767,7 @@ Follow the system instructions for this situation."""
 
         research_text = self._format_research_context(query, steps)
         answer = await self._profound_final_draft_answer(
-            query, research_text, llm, request, completion_reason
+            query, research_text, documents, llm, request, completion_reason
         )
 
         # v1 refine_response on draft (not for unanswerable / false_premise)
@@ -1842,7 +1850,7 @@ Follow the system instructions for this situation."""
             yield StreamEvent.source(source)
 
         draft = await self._profound_final_draft_answer(
-            query, research_text, llm, request, completion_reason
+            query, research_text, documents, llm, request, completion_reason
         )
 
         if (
