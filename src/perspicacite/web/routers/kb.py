@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from perspicacite.integrations.local_docs import (
+    LocalDocsDisabledError,
+    LocalDocsValidationError,
+    expand_paths,
+    ingest_local_documents,
+    validate_local_path,
+)
 from perspicacite.models.kb import (
     ChunkConfig,
     KnowledgeBase,
@@ -1124,3 +1132,98 @@ async def get_paper_detail(doi: str):
         "has_full_text": bool(result.full_text),
         "references_count": len(result.references) if result.references else 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Local document ingestion: multipart upload and server-side allow-listed paths
+# ---------------------------------------------------------------------------
+
+
+class AddLocalPathsRequest(BaseModel):
+    paths: list[str]
+    recursive: bool = True
+
+
+# Strong-reference set for fire-and-forget local-docs ingestion tasks. Kept
+# separate from `_background_tasks` so the two ingestion flows do not stomp on
+# each other's lifecycle.
+_local_tasks: set[asyncio.Task] = set()
+
+
+@router.post("/api/kb/{name}/local-files")
+async def add_local_files(
+    name: str,
+    files: list[UploadFile] = File(...),
+) -> dict:
+    """Ingest uploaded files (multipart) into the named KB."""
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="Job registry not available")
+    import tempfile
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="perspicacite_upload_"))
+    saved: list[Path] = []
+    for uf in files:
+        target = tmpdir / Path(uf.filename or "upload").name
+        with target.open("wb") as out:
+            while True:
+                chunk = await uf.read(1 << 16)
+                if not chunk:
+                    break
+                out.write(chunk)
+        saved.append(target)
+    job_id = await app_state.job_registry.create("local_docs_upload", total=len(saved))
+    task = asyncio.create_task(
+        ingest_local_documents(
+            kb_name=name,
+            paths=saved,
+            app_state=app_state,
+            registry=app_state.job_registry,
+            job_id=job_id,
+            recursive=False,
+        )
+    )
+    _local_tasks.add(task)
+    task.add_done_callback(_local_tasks.discard)
+    return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
+
+
+@router.post("/api/kb/{name}/local-paths")
+async def add_local_paths(name: str, payload: AddLocalPathsRequest) -> dict:
+    """Ingest files identified by server-side paths into the named KB.
+
+    Paths are validated against the configured allow-list. Disabled when no
+    allow-list is configured. Symlink escapes are caught by re-validating each
+    file after expansion.
+    """
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="Job registry not available")
+    allowed = list(getattr(app_state.config.local_docs, "allowed_roots", []) or [])
+    validated: list[Path] = []
+    for raw in payload.paths:
+        try:
+            validated.append(validate_local_path(raw, allowed_roots=allowed))
+        except LocalDocsDisabledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except LocalDocsValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    expanded = expand_paths(validated, recursive=payload.recursive)
+    # Re-validate every expanded file (covers symlink escapes from recursion).
+    for f in expanded:
+        try:
+            validate_local_path(str(f), allowed_roots=allowed)
+        except LocalDocsValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    job_id = await app_state.job_registry.create("local_docs_paths", total=len(expanded))
+    task = asyncio.create_task(
+        ingest_local_documents(
+            kb_name=name,
+            paths=expanded,
+            app_state=app_state,
+            registry=app_state.job_registry,
+            job_id=job_id,
+            recursive=False,
+        )
+    )
+    _local_tasks.add(task)
+    task.add_done_callback(_local_tasks.discard)
+    return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
