@@ -19,6 +19,7 @@ Tools exposed:
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from perspicacite.logging import get_logger
@@ -54,6 +55,7 @@ class MCPState:
         self.llm_client: Any = None
         self.pdf_parser: Any = None
         self.tool_registry: Any = None
+        self.provenance_store: Any = None
         self.initialized: bool = False
 
     async def initialize(self, config: Any) -> None:
@@ -88,6 +90,13 @@ class MCPState:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.session_store = SessionStore(db_path)
         await self.session_store.init_db()
+
+        # Provenance store (shares the same DB as the session store)
+        from perspicacite.provenance.store import ProvenanceStore
+
+        sidecar_dir = Path("./data/provenance")
+        sidecar_dir.mkdir(parents=True, exist_ok=True)
+        self.provenance_store = ProvenanceStore(db_path=db_path, sidecar_dir=sidecar_dir)
 
         # PDF parser
         self.pdf_parser = PDFParser()
@@ -793,6 +802,8 @@ async def generate_report(
         return state
 
     try:
+        message_id = str(uuid.uuid4())
+
         from perspicacite.models.rag import RAGMode, RAGRequest
         from perspicacite.rag.engine import RAGEngine
 
@@ -827,6 +838,7 @@ async def generate_report(
             tool_registry=state.tool_registry,
             config=state.config,
         )
+        engine.provenance_store = getattr(state, "provenance_store", None)
 
         # Collect full response from streaming generator
         report_text = ""
@@ -848,7 +860,7 @@ async def generate_report(
             recency_weight=recency_weight if recency_weight > 0 else None,
         )
 
-        async for event in engine.query_stream(rag_request):
+        async for event in engine.query_stream(rag_request, message_id=message_id):
             if event.event == "content":
                 import json as _json
 
@@ -881,6 +893,7 @@ async def generate_report(
                 "report": report_text,
                 "sources": sources,
                 "papers_used": len(sources),
+                "message_id": message_id,
             }
         )
 
