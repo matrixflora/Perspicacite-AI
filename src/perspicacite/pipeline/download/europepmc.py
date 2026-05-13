@@ -102,6 +102,12 @@ async def _resolve_id(
         ident = h.get("id") or h.get("pmcid") or h.get("pmid")
         if not src or not ident:
             return None, None
-        return str(src), str(ident)
+        ident = str(ident)
+        # EPMC search sometimes returns source="PMC" with a bare numeric id
+        # (no "PMC" prefix); the fullTextXML URL needs the prefixed form.
+        if src == "PMC" and not ident.startswith("PMC"):
+            pmcid_field = h.get("pmcid")
+            ident = str(pmcid_field) if pmcid_field else f"PMC{ident}"
+        return str(src), ident
     except (httpx.HTTPError, ValueError):
         return None, None

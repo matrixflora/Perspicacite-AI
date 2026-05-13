@@ -87,3 +87,29 @@ async def test_europepmc_pmid_path(respx_mock):
             doi=None, pmid="12345", pmcid=None, http_client=client
         )
     assert out is not None and out.success
+
+
+@pytest.mark.asyncio
+async def test_europepmc_search_bare_numeric_pmc_id_gets_prefix(respx_mock):
+    """When search returns source=PMC with a bare numeric id (no 'PMC' prefix),
+    the fullTextXML URL must include the 'PMC' prefix — e.g. PMC1234567."""
+    respx_mock.get(url__regex=_EPMC_SEARCH_RE).mock(
+        return_value=httpx.Response(
+            200,
+            json={"resultList": {"result": [{"source": "PMC", "id": "1234567"}]}},
+        )
+    )
+    # Only register the prefixed URL; a bare-numeric URL would 404 (not registered)
+    full_text_route = respx_mock.get(
+        "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC/PMC1234567/fullTextXML"
+    ).mock(return_value=httpx.Response(200, content=PMC_XML))
+
+    async with httpx.AsyncClient() as client:
+        out = await get_content_from_europepmc(
+            doi="10.1/bare", pmid=None, pmcid=None, http_client=client
+        )
+
+    assert full_text_route.called, (
+        "fullTextXML was not fetched at the expected PMC-prefixed URL"
+    )
+    assert out is not None and out.success
