@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from perspicacite.integrations.local_docs import (
@@ -1295,3 +1297,51 @@ async def build_capsules_for_kb_async(name: str, force: bool = False) -> dict:
     _local_tasks.add(task)
     task.add_done_callback(_local_tasks.discard)
     return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
+
+
+# ---------------------------------------------------------------------------
+# Capsule figure serving (Cycle B)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/capsule/{paper_id:path}/figures")
+async def list_capsule_figures(paper_id: str, request: Request):
+    """Return the parsed figures/index.json for the matching capsule."""
+    cfg = request.app.state.app_state.config
+    safe = paper_id.replace(":", "_").replace("/", "__")
+    idx = cfg.capsule.root / safe / "figures" / "index.json"
+    if not idx.is_file():
+        raise HTTPException(status_code=404, detail="capsule not found")
+    try:
+        return JSONResponse(json.loads(idx.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/api/capsule/{paper_id:path}/figure/{fig_id}")
+async def get_capsule_figure(paper_id: str, fig_id: str, request: Request):
+    """Serve PNG bytes for a single figure inside a capsule."""
+    cfg = request.app.state.app_state.config
+    safe = paper_id.replace(":", "_").replace("/", "__")
+    cap = cfg.capsule.root / safe
+    idx = cap / "figures" / "index.json"
+    if not idx.is_file():
+        raise HTTPException(status_code=404, detail="capsule not found")
+    try:
+        records = json.loads(idx.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    match = next(
+        (
+            r
+            for r in records
+            if f"pdf_p{r.get('page', 0)}_i{r.get('index', 0)}" == fig_id
+        ),
+        None,
+    )
+    if not match:
+        raise HTTPException(status_code=404, detail="figure not found")
+    path = cap / "figures" / match["filename"]
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="figure file missing")
+    return FileResponse(path, media_type="image/png")
