@@ -338,6 +338,67 @@ def query(
     asyncio.run(_run_query(config, query, kb, mode, provider, model))
 
 
+@cli.command("ingest-local")
+@click.option("--kb", required=True, help="Target KB name")
+@click.option(
+    "--path",
+    "paths",
+    required=True,
+    multiple=True,
+    type=click.Path(path_type=Path),
+    help="File or directory; can repeat",
+)
+@click.option("--recursive/--no-recursive", default=True)
+@click.pass_context
+def ingest_local(
+    ctx: click.Context,
+    kb: str,
+    paths: tuple[Path, ...],
+    recursive: bool,
+) -> None:
+    """Ingest local files/directories into a KB (no server needed)."""
+    from perspicacite.integrations.local_docs import ingest_local_documents
+    from perspicacite.web.state import AppState
+
+    config = ctx.obj["config"]
+
+    async def _run() -> None:
+        state = AppState()
+        # AppState.initialize() loads config internally; pass-through for
+        # forward-compat if the signature ever accepts a config object.
+        try:
+            await state.initialize(config)  # type: ignore[call-arg]
+        except TypeError:
+            await state.initialize()
+        try:
+            class _Reg:
+                async def publish(self, jid, ev):  # noqa: D401
+                    pass
+
+                async def finish(self, jid, res):
+                    self._res = res
+
+                async def fail(self, jid, err):
+                    self._err = err
+
+            reg = _Reg()
+            result = await ingest_local_documents(
+                kb_name=kb,
+                paths=list(paths),
+                app_state=state,
+                registry=reg,
+                job_id="cli",
+                recursive=recursive,
+            )
+            click.echo(f"Done: {result}")
+        finally:
+            shutdown = getattr(state, "shutdown", None)
+            if shutdown is not None:
+                await shutdown()
+
+    asyncio.run(_run())
+
+
 def _start_mcp_and_web(config, app) -> None:
     """Start MCP server and web server on a single port."""
     import uvicorn
