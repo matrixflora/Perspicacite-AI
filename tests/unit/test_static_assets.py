@@ -146,3 +146,20 @@ def test_provenance_disclosure_css():
     root = Path(__file__).resolve().parents[2]
     css = (root / "static/css/chat.css").read_text()
     assert ".provenance-disclosure" in css, ".provenance-disclosure missing from chat.css"
+
+
+def test_async_ingestion_css_present():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    css = (root / "static/css/kb.css").read_text()
+    assert ".progress-bar" in css
+    assert ".progress-bar-fill" in css
+
+
+def test_kb_js_uses_async_endpoints():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    js = (root / "static/js/kb.js").read_text()
+    assert "/bibtex/async" in js
+    assert "/dois/async" in js
+    assert "EventSource" in js

@@ -105,3 +105,12 @@ These do not require the web UI.
 - [ ] `GET /api/paper?doi=10.1016/j.cell.2021.01.001` returns paper metadata (or `{error: ...}` — not a 500).
 - [ ] `GET /api/conversations/search?q=crispr` returns `{results: [...]}`.
 - [ ] `GET /api/conversations/<id>/export?format=markdown` returns a downloadable `.md` file with conversation content.
+
+---
+
+## Async ingestion progress (Phase 4)
+
+- [ ] Creating a KB from a BibTeX file shows a progress bar that fills from 0 → 100% with a label like "12/34 · embedded".
+- [ ] Adding a list of DOIs to an existing KB shows the same progress bar.
+- [ ] On completion, the label shows "Done · N papers, M chunks" and the KB stats refresh.
+- [ ] If the SSE stream drops, the bar continues updating via polling every 2 s.
