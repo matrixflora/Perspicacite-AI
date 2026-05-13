@@ -223,3 +223,14 @@ ui:
 logging:
   level: "INFO"
   format: "json"
+
+# =============================================================================
+# Zotero Integration
+# =============================================================================
+
+zotero:
+  enabled: false
+  api_key: ""
+  library_id: ""
+  library_type: "user"      # or "group"
+  collection_key: ""        # optional; empty = no collection

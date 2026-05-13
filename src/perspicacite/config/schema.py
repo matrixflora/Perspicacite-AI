@@ -252,6 +252,16 @@ class WebSearchConfig(BaseModel):
     cache_ttl: int = Field(default=3600, ge=0)  # seconds
 
 
+class ZoteroConfig(BaseModel):
+    """Zotero integration configuration."""
+
+    enabled: bool = False
+    api_key: str = ""
+    library_id: str = ""
+    library_type: str = "user"  # "user" or "group"
+    collection_key: str = ""
+
+
 class PDFDownloadConfig(BaseModel):
     """PDF download configuration."""
 
@@ -337,6 +347,7 @@ class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
+    zotero: ZoteroConfig = Field(default_factory=ZoteroConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":
