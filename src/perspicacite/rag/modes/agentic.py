@@ -94,6 +94,7 @@ class AgenticRAGMode(BaseRAGMode):
                 map_reduce_max_papers=getattr(
                     self._config.rag_modes.agentic, "map_reduce_max_papers", 8
                 ),
+                config=self._config,
             )
         return self._orchestrator
 

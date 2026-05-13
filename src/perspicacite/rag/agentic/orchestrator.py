@@ -367,8 +367,10 @@ class AgenticOrchestrator:
         recency_weight: Optional[float] = None,
         recency_half_life_years: Optional[float] = None,
         kb_metas: Optional[list] = None,
+        config: Any = None,
     ):
         self.llm = llm_client
+        self.config = config
         self.tools = tool_registry
         self.embeddings = embedding_provider
         self.vector_store = vector_store
@@ -2127,7 +2129,17 @@ Generate your answer:"""
         logger.info(f"Prompt length: {len(prompt)} chars")
         logger.info("Calling LLM for answer...")
 
-        answer = await self.llm.complete(prompt, temperature=0.25)
+        mm_chunks = (
+            self._chunks_with_figure_refs(step_results)
+            if getattr(self, "config", None) is not None
+            else None
+        )
+        answer = await self.llm.complete(
+            prompt,
+            temperature=0.25,
+            chunks=mm_chunks,
+            config=getattr(self, "config", None),
+        )
         logger.info(f"Answer generated, length: {len(answer)} chars")
         logger.info(f"Answer content:\n{answer}")
 
@@ -2314,7 +2326,15 @@ Guidelines:
 Generate your answer:"""
 
         logger.info(f"Single-paper prompt length: {len(prompt)} chars")
-        answer = await self.llm.complete(prompt, temperature=0.25)
+        # Single-paper path doesn't surface step_results / DocumentChunks here,
+        # so multimodal degrades to text-only. Pass None for chunks; the wrap
+        # function won't be invoked.
+        answer = await self.llm.complete(
+            prompt,
+            temperature=0.25,
+            chunks=None,
+            config=getattr(self, "config", None),
+        )
         logger.info(f"Single-paper answer generated: {len(answer)} chars")
 
         # Build citation map for single paper (always [1])
@@ -2877,6 +2897,28 @@ Generate your answer:"""
         if isinstance(authors, str):
             return [a.strip() for a in authors.split(",") if a.strip()]
         return []
+
+    def _chunks_with_figure_refs(self, step_results: Optional[Dict[str, Any]]) -> List[Any]:
+        """Best-effort scan of ``step_results`` for DocumentChunk-like items with figure_refs.
+
+        Used to surface multimodal candidates into the final-answer LLM call. The
+        agentic flow today stores mostly paper dicts in ``step_results``, so this
+        commonly returns ``[]`` — that's the graceful degradation path (text-only).
+        """
+        out: List[Any] = []
+        if not step_results:
+            return out
+        for v in step_results.values():
+            if not isinstance(v, list):
+                continue
+            for item in v:
+                md = getattr(item, "metadata", None)
+                if md is None:
+                    continue
+                refs = getattr(md, "figure_refs", None) or []
+                if refs:
+                    out.append(item)
+        return out
 
     def _extract_papers_from_results(self, step_results: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract deduplicated paper list from accumulated found papers."""
