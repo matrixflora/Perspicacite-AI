@@ -22,6 +22,11 @@ class ChunkMetadata(BaseModel):
     year: Optional[int] = None
     doi: Optional[str] = None
     url: Optional[str] = None
+    # Local-doc / smart-chunking extensions (all optional):
+    content_type: Optional[str] = None  # "pdf" | "markdown" | "code" | "text"
+    language: Optional[str] = None  # python | typescript | ...
+    heading_path: Optional[list[str]] = None  # markdown heading stack
+    source_file_path: Optional[str] = None  # absolute path for local files
 
     def __repr__(self) -> str:
         return (
