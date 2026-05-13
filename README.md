@@ -43,8 +43,12 @@
 - **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
 - **6 RAG modes** — From fast KB retrieval to multi-cycle agentic research, systematic literature surveys, and cross-paper contradiction detection
 - **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
-- **MCP server** — 10 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
+- **MCP server** — 11 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
 - **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
+- **Provenance tracking** — Per-answer trace (retrieved chunks, mode, model, latency) stored in SQLite and exportable as RO-Crate 1.1 zip bundles
+- **Zotero push** — One-click push of discovered papers to a personal Zotero library
+- **Obsidian vault export** — Export any KB as an Obsidian-compatible Markdown vault
+- **Async ingestion** — Long BibTeX / DOI import jobs run in the background with SSE progress streaming
 - **Local-first** — Data stays on your machine; only API calls go to LLM providers
 
 ---
@@ -147,7 +151,7 @@ Paper content is retrieved through a unified pipeline with quality-based priorit
 
 ```
 1. Discovery      — OpenAlex + Unpaywall → PMCID, arXiv ID, OA status, abstract
-2. Structured     — PMC JATS XML (sections + references) or arXiv HTML
+2. Structured     — PMC JATS XML → Europe PMC → arXiv HTML (sections + references)
 3. PDF full text  — OA PDF, arXiv PDF, Unpaywall, publisher APIs (ACS, Springer, Wiley, Elsevier, …)
 4. Abstract only  — from discovery metadata when no full text is available
 5. Discard        — returns failure for papers with no retrievable content
@@ -159,7 +163,7 @@ Structured content (PMC, arXiv) provides sections and references. PDF content pr
 
 ## MCP Server
 
-Perspicacité exposes an MCP server with 10 tools at `http://localhost:8000/mcp`, accessible via:
+Perspicacité exposes an MCP server with 11 tools at `http://localhost:8000/mcp`, accessible via:
 - **MCP protocol** — native tool discovery and invocation
 - **HTTP JSON-RPC** — `POST /mcp` with standard JSON-RPC 2.0 envelope
 
@@ -177,6 +181,7 @@ Perspicacité exposes an MCP server with 10 tools at `http://localhost:8000/mcp`
 | `list_knowledge_bases` | List all KBs with stats |
 | `generate_report` | Synthesize a research report using RAG |
 | `screen_papers` | Score candidate papers by relevance to a query (BM25 or LLM-rated) |
+| `push_to_zotero` | Push a list of DOIs to a configured Zotero library |
 
 Full usage details and parameter documentation: [`docs/perspicacite_skills.md`](docs/perspicacite_skills.md)
 
@@ -214,14 +219,24 @@ r = httpx.post("http://localhost:8000/mcp", json={
 | `DELETE` | `/api/conversations/{id}` | Delete conversation |
 | `GET` | `/api/conversations/search?q=...` | Full-text search across conversations (FTS5) |
 | `GET` | `/api/conversations/{id}/export?format=markdown` | Download conversation as Markdown |
+| `GET` | `/api/conversations/{id}/export?format=ro-crate` | Download conversation + provenance as RO-Crate 1.1 zip |
+| `GET` | `/api/conversations/{conv_id}/messages/{msg_id}/provenance` | Provenance trace for a single answer |
+| `GET` | `/api/conversations/{conv_id}/provenance` | All provenance records for a conversation |
 | `GET` | `/api/kb` | List knowledge bases |
 | `POST` | `/api/kb` | Create KB |
 | `GET` | `/api/kb/{name}` | Get KB details |
 | `DELETE` | `/api/kb/{name}` | Delete KB |
 | `GET` | `/api/kb/{name}/stats` | KB statistics (paper/chunk counts, year histogram, sources) |
 | `POST` | `/api/kb/{name}/papers` | Add papers to KB |
-| `POST` | `/api/kb/{name}/bibtex` | Import from BibTeX |
-| `POST` | `/api/kb/{name}/dois` | Bulk-add papers by DOI list |
+| `POST` | `/api/kb/{name}/bibtex` | Import from BibTeX (synchronous) |
+| `POST` | `/api/kb/{name}/bibtex/async` | Import from BibTeX (async job, SSE progress) |
+| `POST` | `/api/kb/{name}/dois` | Bulk-add papers by DOI list (synchronous) |
+| `POST` | `/api/kb/{name}/dois/async` | Bulk-add papers by DOI list (async job, SSE progress) |
+| `GET` | `/api/kb/{name}/export?format=obsidian-vault` | Download KB as Obsidian Markdown vault zip |
+| `GET` | `/api/jobs/{id}` | Check async ingestion job status |
+| `GET` | `/api/jobs/{id}/events` | SSE stream of async job progress events |
+| `GET` | `/api/zotero/status` | Check Zotero integration status |
+| `POST` | `/api/zotero/push` | Push papers to Zotero by DOI list |
 | `GET` | `/api/paper?doi=...` | Fetch discovery metadata + content-type availability for a DOI |
 | `GET` | `/api/survey/{session_id}` | Get literature survey status |
 | `POST` | `/api/survey/{session_id}/generate` | Generate survey report |
@@ -353,7 +368,7 @@ uv run mypy src/
 src/perspicacite/
   cli.py                        # CLI commands (serve, create-kb, screen-papers, pubmed-search, version)
   config/schema.py              # Pydantic configuration model
-  mcp/server.py                 # MCP server with 10 tools
+  mcp/server.py                 # MCP server with 11 tools
   pipeline/
     download/                   # Content retrieval pipeline
       discovery.py              # OpenAlex + Unpaywall discovery
