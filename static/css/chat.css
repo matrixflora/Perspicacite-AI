@@ -851,3 +851,31 @@ details[open] .advanced-options-summary::before { content: '▼ '; }
     background: var(--accent-light, #5a9fee);
     transform: translateY(-1px);
 }
+
+/* Inline capsule figure thumbnails (Task 13) */
+.inline-figure {
+    max-height: 120px;
+    max-width: 200px;
+    cursor: zoom-in;
+    margin: 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    vertical-align: middle;
+}
+
+.figure-lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    cursor: zoom-out;
+}
+
+.figure-lightbox img {
+    max-width: 90vw;
+    max-height: 90vh;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
