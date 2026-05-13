@@ -14,8 +14,11 @@ from perspicacite.logging import get_logger
 from perspicacite.models.documents import DocumentChunk
 from perspicacite.pipeline.parsers.figure_context import (
     FigureContext,
+    build_multimodal_messages,
+    format_figures_block,
     is_si_label,
     load_image_b64,
+    supports_vision,
 )
 
 logger = get_logger("perspicacite.rag.multimodal")
@@ -109,3 +112,95 @@ def collect_figures_for_chunks(
             )
             seen[key] = fc
     return list(seen.values())
+
+
+def build_messages_with_figures(
+    *,
+    base_messages: list[dict],
+    figures: list[FigureContext],
+    model: str | None,
+    config_enabled: bool,
+    max_images: int,
+) -> list[dict]:
+    """Return either ``base_messages`` (text-only) or a multimodal variant.
+
+    Falls through to ``base_messages`` unchanged when:
+      - feature disabled, OR
+      - model is None or doesn't pass ``supports_vision``, OR
+      - no figures have ``image_b64`` loaded.
+
+    On the multimodal path: prepends ``format_figures_block`` to the system
+    prompt and rebuilds the last user turn via ``build_multimodal_messages``
+    so the image parts ride on the user role (litellm convention).
+    """
+    if not config_enabled:
+        return base_messages
+    if not model or not supports_vision(model):
+        return base_messages
+    eligible = [f for f in figures if f.image_b64]
+    if not eligible:
+        return base_messages
+
+    figures_block = format_figures_block(eligible)
+    rule = (
+        "When a finding rests on a figure, cite it by figure_id "
+        "(e.g., pdf_p3_i2). Do not invent figure IDs."
+    )
+
+    last_user_idx = -1
+    for i, m in enumerate(base_messages):
+        if m.get("role") == "user":
+            last_user_idx = i
+
+    out: list[dict] = []
+    for i, m in enumerate(base_messages):
+        if m.get("role") == "system":
+            content = m.get("content", "")
+            if isinstance(content, str):
+                out.append({
+                    "role": "system",
+                    "content": f"{content}\n\n{figures_block}\n\n{rule}",
+                })
+            else:
+                out.append(m)
+        elif i == last_user_idx:
+            user_text = m.get("content", "")
+            user_text = user_text if isinstance(user_text, str) else ""
+            mm = build_multimodal_messages(
+                prompt_text=user_text, figures=eligible, max_images=max_images,
+            )
+            out.extend(mm)
+        else:
+            out.append(m)
+    return out
+
+
+def wrap_messages_for_chunks(
+    *,
+    base_messages: list[dict],
+    chunks: Iterable[DocumentChunk],
+    model: str | None,
+    config,
+) -> list[dict]:
+    """One-call entry point used by RAG mode hooks.
+
+    ``config`` is the full Perspicacité ``Config`` (RAG modes already hold
+    it as ``self.config``). Returns ``base_messages`` unchanged when the
+    feature is disabled, the model isn't vision-capable, or no figures
+    resolve.
+    """
+    mm = config.multimodal
+    if not mm.enabled:
+        return base_messages
+    figures = collect_figures_for_chunks(
+        chunks, capsule_root=Path(config.capsule.root),
+    )
+    if not figures:
+        return base_messages
+    return build_messages_with_figures(
+        base_messages=base_messages,
+        figures=figures,
+        model=model,
+        config_enabled=mm.enabled,
+        max_images=mm.max_images,
+    )
