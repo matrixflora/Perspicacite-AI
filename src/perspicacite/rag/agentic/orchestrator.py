@@ -16,6 +16,7 @@ from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.retrieval.hybrid import hybrid_retrieval
 from perspicacite.rag.utils import format_references_academic
+from perspicacite.provenance.context import get_collector
 
 # SciLEx integration
 from perspicacite.search.scilex_adapter import SciLExAdapter
@@ -363,6 +364,9 @@ class AgenticOrchestrator:
         relevance_threshold: int = 3,
         max_papers_to_download: int = 10,
         map_reduce_max_papers: int = 8,
+        recency_weight: Optional[float] = None,
+        recency_half_life_years: Optional[float] = None,
+        kb_metas: Optional[list] = None,
     ):
         self.llm = llm_client
         self.tools = tool_registry
@@ -381,6 +385,11 @@ class AgenticOrchestrator:
 
         # Cap on per-paper LLM extraction calls during final map-reduce answer synthesis
         self.map_reduce_max_papers = map_reduce_max_papers
+
+        # Recency weighting params (passed by callers; stored for use in retrieval)
+        self.recency_weight = recency_weight
+        self.recency_half_life_years = recency_half_life_years
+        self.kb_metas: list = list(kb_metas or [])
 
         self.intent_classifier = IntentClassifier(llm_client)
         self.planner = ResearchPlanner(llm_client)
@@ -493,6 +502,11 @@ class AgenticOrchestrator:
         )
         logger.info(f"Suggested tools: {intent_result.suggested_tools}")
 
+        # Provenance: trace intent classification
+        _c = get_collector()
+        if _c is not None:
+            _c.add_trace("intent", detail={"value": intent_result.intent.name})
+
         yield {
             "type": "thinking",
             "message": f"Intent: {intent_result.intent.name.replace('_', ' ').title()}",
@@ -567,6 +581,10 @@ class AgenticOrchestrator:
         logger.info(f"Orchestrator plan reasoning ({len(plan.reasoning)} chars): {plan.reasoning}")
         _log_steps_detail(plan.steps, "Orchestrator plan (final, after KB inject if any)")
 
+        # Provenance: trace plan
+        if _c is not None:
+            _c.add_trace("plan", detail={"steps": len(plan.steps)})
+
         self._register_evidence_facets(session, plan)
 
         if plan.can_answer_from_history:
@@ -633,6 +651,10 @@ class AgenticOrchestrator:
         for iteration in range(self.max_iterations):
             logger.info(f"\n--- Iteration {iteration + 1}/{self.max_iterations} ---")
 
+            # Provenance: trace iteration start
+            if _c is not None:
+                _c.add_trace("iteration", detail={"n": iteration})
+
             batch = self._get_next_parallel_batch(plan, completed_steps, step_results)
             if not batch:
                 logger.info("No more steps to execute")
@@ -659,6 +681,9 @@ class AgenticOrchestrator:
                 return step, res, time.time() - t0
 
             for s in to_run:
+                # Provenance: trace each tool invocation
+                if _c is not None:
+                    _c.add_trace("tool", detail={"name": s.tool or s.type.value})
                 yield {
                     "type": "tool_call",
                     "step": s.id,
@@ -758,6 +783,15 @@ class AgenticOrchestrator:
                         evidence_summary=ev_summary or None,
                     )
                     self._register_evidence_facets(session, plan)
+                    # Provenance: trace replan event
+                    if _c is not None:
+                        _c.add_trace(
+                            "replan",
+                            detail={
+                                "iteration": replan_count,
+                                "gap_facets": eval_result.get("gap_facets", []),
+                            },
+                        )
                     yield {
                         "type": "thinking",
                         "message": f"Adjusting research plan (replan {replan_count}/{MAX_REPLANS})...",
@@ -1403,6 +1437,20 @@ class AgenticOrchestrator:
                                     step_id=step.id,
                                     facet_key=fk,
                                 )
+                                # Provenance: per-chunk retrieval event for KB search
+                                _prov_c = get_collector()
+                                if _prov_c is not None:
+                                    _prov_c.add_retrieval(
+                                        paper_id=pid if isinstance(pid, str) else None,
+                                        doi=doi or None,
+                                        title=title or None,
+                                        score=float(score),
+                                        kb_name=session.kb_name,
+                                        content_type="kb_chunk",
+                                        pipeline_step=step.id,
+                                        rank=i - 1,
+                                        stage_label="agentic.tool.search_kb",
+                                    )
 
                         out = "\n".join(formatted_parts)
                         logger.info(f"KB_SEARCH: formatted tool result length={len(out)} chars")

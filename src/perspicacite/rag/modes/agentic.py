@@ -96,6 +96,33 @@ class AgenticRAGMode(BaseRAGMode):
             )
         return self._orchestrator
 
+    def _apply_request_recency(self, orchestrator: Any, request: RAGRequest) -> tuple:
+        """Set recency/kb_metas on the shared orchestrator; return previous values for restore."""
+        prev = (
+            orchestrator.recency_weight,
+            orchestrator.recency_half_life_years,
+            orchestrator.kb_metas,
+        )
+        orchestrator.recency_weight = getattr(request, "recency_weight", None)
+        orchestrator.recency_half_life_years = getattr(request, "recency_half_life_years", None)
+        kb_names = getattr(request, "kb_names", None) or []
+        if len(kb_names) > 1:
+            from types import SimpleNamespace
+
+            from perspicacite.models.kb import chroma_collection_name_for_kb
+
+            orchestrator.kb_metas = [
+                SimpleNamespace(
+                    name=n,
+                    collection_name=chroma_collection_name_for_kb(n),
+                    embedding_model=None,
+                )
+                for n in kb_names
+            ]
+        else:
+            orchestrator.kb_metas = []
+        return prev
+
     async def execute(
         self,
         request: RAGRequest,
@@ -113,35 +140,44 @@ class AgenticRAGMode(BaseRAGMode):
 
         logger.info("AgenticRAGMode delegating to AgenticOrchestrator", query=request.query)
 
+        prev = self._apply_request_recency(orchestrator, request)
+
         # Collect all events from orchestrator
         iterations = 0
         research_plan = []
         final_answer = ""
         papers_found = []
 
-        async for event in orchestrator.chat(
-            query=request.query,
-            session_id=None,  # Stateless mode
-            kb_name=request.kb_name,
-            stream=False,  # We collect everything
-        ):
-            event_type = event.get("type", "")
+        try:
+            async for event in orchestrator.chat(
+                query=request.query,
+                session_id=None,  # Stateless mode
+                kb_name=request.kb_name,
+                stream=False,  # We collect everything
+            ):
+                event_type = event.get("type", "")
 
-            if event_type == "thinking":
-                # Track research plan from thinking steps
-                message = event.get("message", "")
-                if message and message not in research_plan:
-                    research_plan.append(message)
+                if event_type == "thinking":
+                    # Track research plan from thinking steps
+                    message = event.get("message", "")
+                    if message and message not in research_plan:
+                        research_plan.append(message)
 
-            elif event_type == "tool_call":
-                iterations += 1
+                elif event_type == "tool_call":
+                    iterations += 1
 
-            elif event_type == "answer":
-                final_answer = event.get("content", "")
+                elif event_type == "answer":
+                    final_answer = event.get("content", "")
 
-            elif event_type == "papers_found":
-                papers = event.get("papers", [])
-                papers_found.extend(papers)
+                elif event_type == "papers_found":
+                    papers = event.get("papers", [])
+                    papers_found.extend(papers)
+        finally:
+            (
+                orchestrator.recency_weight,
+                orchestrator.recency_half_life_years,
+                orchestrator.kb_metas,
+            ) = prev
 
         # Convert papers to SourceReference format
         sources = []
@@ -189,39 +225,48 @@ class AgenticRAGMode(BaseRAGMode):
 
         logger.info("AgenticRAGMode streaming via AgenticOrchestrator", query=request.query)
 
+        prev = self._apply_request_recency(orchestrator, request)
+
         yield StreamEvent.status("Initializing agentic research...")
 
-        async for event in orchestrator.chat(
-            query=request.query,
-            session_id=None,
-            kb_name=request.kb_name,
-            stream=True,
-        ):
-            event_type = event.get("type", "")
+        try:
+            async for event in orchestrator.chat(
+                query=request.query,
+                session_id=None,
+                kb_name=request.kb_name,
+                stream=True,
+            ):
+                event_type = event.get("type", "")
 
-            if event_type == "thinking":
-                yield StreamEvent.status(event.get("message", ""))
+                if event_type == "thinking":
+                    yield StreamEvent.status(event.get("message", ""))
 
-            elif event_type == "tool_call":
-                yield StreamEvent.status(
-                    f"Executing: {event.get('description', event.get('tool', 'tool'))}"
-                )
+                elif event_type == "tool_call":
+                    yield StreamEvent.status(
+                        f"Executing: {event.get('description', event.get('tool', 'tool'))}"
+                    )
 
-            elif event_type == "tool_result":
-                # Optionally yield tool results as partial content
-                pass
+                elif event_type == "tool_result":
+                    # Optionally yield tool results as partial content
+                    pass
 
-            elif event_type == "answer":
-                content = event.get("content", "")
-                # Stream the answer in chunks
-                chunk_size = 100
-                for i in range(0, len(content), chunk_size):
-                    chunk = content[i : i + chunk_size]
-                    yield StreamEvent.token(chunk)
+                elif event_type == "answer":
+                    content = event.get("content", "")
+                    # Stream the answer in chunks
+                    chunk_size = 100
+                    for i in range(0, len(content), chunk_size):
+                        chunk = content[i : i + chunk_size]
+                        yield StreamEvent.token(chunk)
 
-            elif event_type == "papers_found":
-                papers = event.get("papers", [])
-                yield StreamEvent.status(f"Found {len(papers)} relevant papers")
+                elif event_type == "papers_found":
+                    papers = event.get("papers", [])
+                    yield StreamEvent.status(f"Found {len(papers)} relevant papers")
+        finally:
+            (
+                orchestrator.recency_weight,
+                orchestrator.recency_half_life_years,
+                orchestrator.kb_metas,
+            ) = prev
 
         yield StreamEvent.done()
 
