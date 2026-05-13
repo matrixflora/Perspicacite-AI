@@ -15,14 +15,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from perspicacite.models.documents import ChunkMetadata
 from perspicacite.models.papers import Paper
+from perspicacite.pipeline.chunking_dispatch import chunk_document
 from perspicacite.pipeline.external.accessions import mine_accessions
 from perspicacite.pipeline.external.resources import (
     extract_doi_candidates,
     extract_github_repos,
     extract_zenodo_record_ids,
 )
-from perspicacite.pipeline.parsers.figures import RawFigure
+from perspicacite.pipeline.parsers.figures import RawFigure, extract_figures
 from perspicacite.pipeline.parsers.section_splitter import split_sections
 
 CAPSULE_VERSION = "0.1"
@@ -269,3 +271,117 @@ def resolve_resource_refs(text: str, resources: list[dict]) -> list[str]:
                 seen.add(rid)
                 out.append(rid)
     return out
+
+
+async def build_capsule(
+    *,
+    paper: Paper,
+    pdf_path: Path | None,
+    kb_name: str,
+    app_state,
+    force: bool = False,
+    producer_version: str = "0.0.0",
+) -> dict[str, Any]:
+    """Build a capsule for ``paper`` and ingest its chunks into ``kb_name``.
+
+    Returns a dict with ``status`` (``built`` / ``skipped``), figure/chunk counts.
+    Idempotent: no-op when ``capsule_dir/metadata.json`` exists with
+    ``capsule_version >= app_state.config.capsule.min_version``, unless ``force``.
+    """
+    cap_root = Path(app_state.config.capsule.root)
+    cap = capsule_dir_for(paper, root=cap_root)
+    meta_path = cap / "metadata.json"
+
+    if not force and meta_path.exists():
+        try:
+            existing = json.loads(meta_path.read_text())
+            if existing.get("capsule_version", "0.0") >= app_state.config.capsule.min_version:
+                return {"status": "skipped", "capsule_dir": str(cap)}
+        except Exception:
+            pass  # fall through and rebuild
+
+    # 1. Parse PDF if available
+    text = ""
+    if pdf_path is not None and pdf_path.exists():
+        parsed = await app_state.pdf_parser.parse(pdf_path)
+        text = (parsed.text or "") if parsed is not None else ""
+
+    # 2. Figures (PDF only)
+    figures: list[RawFigure] = []
+    if pdf_path is not None and pdf_path.exists():
+        figures = extract_figures(pdf_path)
+
+    # 3. Mine resources first (blocks step uses them)
+    cap.mkdir(parents=True, exist_ok=True)
+    n_res = write_resources(cap, text=text)
+    resources = json.loads((cap / "resources.json").read_text())
+
+    # 4. Write figures + blocks (blocks references both figures and resources)
+    n_figs = write_figures(cap, figures=figures)
+    n_blocks = write_blocks(cap, text=text, figures=figures, resources=resources)
+
+    # 5. Metadata
+    write_metadata(cap, paper=paper, producer_version=producer_version)
+
+    # 6. Chunk per block + embed + write to Chroma
+    n_chunks = 0
+    if text:
+        n_chunks = await _ingest_chunks(
+            paper=paper, blocks_path=cap / "text" / "blocks.jsonl",
+            kb_name=kb_name, app_state=app_state,
+        )
+
+    return {
+        "status": "built",
+        "capsule_dir": str(cap),
+        "figures": n_figs,
+        "blocks": n_blocks,
+        "resources": n_res,
+        "chunks": n_chunks,
+    }
+
+
+async def _ingest_chunks(
+    *,
+    paper: Paper,
+    blocks_path: Path,
+    kb_name: str,
+    app_state,
+) -> int:
+    """Chunk each block via existing chunk_document(), tag with provenance,
+    embed, and write to Chroma."""
+    kb = await app_state.session_store.get_kb_metadata(kb_name)
+    if kb is None:
+        return 0
+    kb_cfg = app_state.config.knowledge_base
+    all_chunks = []
+    for line in blocks_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        block = json.loads(line)
+        chunks = await chunk_document(
+            block["content"], paper,
+            content_type="text", language=None, config=kb_cfg,
+        )
+        for c in chunks:
+            md = c.metadata.model_dump()
+            md.update({
+                "source_section": block["section"],
+                "page": block.get("page"),
+                "char_span": tuple(block["char_span"]) if block.get("char_span") else None,
+                "figure_refs": list(block.get("figure_refs", [])),
+                "table_refs": list(block.get("table_refs", [])),
+                "resource_refs": list(block.get("resource_refs", [])),
+            })
+            c.metadata = ChunkMetadata(**md)
+        all_chunks.extend(chunks)
+
+    if all_chunks:
+        texts = [c.text for c in all_chunks]
+        embeds = await app_state.embedding_provider.embed(texts)
+        for c, e in zip(all_chunks, embeds, strict=True):
+            c.embedding = e
+        await app_state.vector_store.add_chunks(kb.collection_name, all_chunks)
+        kb.chunk_count += len(all_chunks)
+        await app_state.session_store.save_kb_metadata(kb)
+    return len(all_chunks)
