@@ -56,6 +56,14 @@ class KnowledgeBaseConfig(BaseModel):
     use_two_pass: bool = Field(
         default=True, description="Enable two-pass retrieval for full paper context"
     )
+    markdown_heading_aware: bool = Field(
+        default=True,
+        description="Use heading-aware chunking for markdown files",
+    )
+    code_language_aware: bool = Field(
+        default=True,
+        description="Use language-aware chunking for source-code files",
+    )
 
 
 class LLMProviderConfig(BaseModel):
@@ -262,6 +270,29 @@ class ZoteroConfig(BaseModel):
     collection_key: str = ""
 
 
+class LocalDocsConfig(BaseModel):
+    """Server-side local-document ingestion configuration.
+
+    `allowed_roots` is the allow-list for the `/api/kb/{name}/local-paths`
+    endpoint and the `ingest_local_documents` MCP tool. If empty, those
+    endpoints/tools refuse all calls (server-side path entry is disabled).
+    The web multipart upload path (`/api/kb/{name}/local-files`) is
+    unaffected.
+    """
+
+    allowed_roots: list[Path] = Field(default_factory=list)
+
+    @field_validator("allowed_roots", mode="before")
+    @classmethod
+    def _expand_roots(cls, v: Any) -> list[Path]:
+        if v is None:
+            return []
+        out: list[Path] = []
+        for p in v:
+            out.append(Path(p).expanduser().resolve())
+        return out
+
+
 class PDFDownloadConfig(BaseModel):
     """PDF download configuration."""
 
@@ -348,6 +379,7 @@ class Config(BaseModel):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
     zotero: ZoteroConfig = Field(default_factory=ZoteroConfig)
+    local_docs: LocalDocsConfig = Field(default_factory=LocalDocsConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":
