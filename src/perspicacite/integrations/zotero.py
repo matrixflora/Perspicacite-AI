@@ -59,7 +59,8 @@ class ZoteroClient:
                 )
                 if r.status_code == 200:
                     for item in r.json() or []:
-                        if (item.get("data") or {}).get("DOI", "").lower() == doi.lower():
+                        existing_doi = (item.get("data") or {}).get("DOI") or ""
+                        if existing_doi.lower() == doi.lower():
                             return item.get("key")
             except httpx.HTTPError:
                 pass  # fall through to create

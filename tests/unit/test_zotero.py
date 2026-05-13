@@ -76,3 +76,28 @@ async def test_create_item_with_collection_key(respx_mock):
         await c.create_item(paper={"doi": "10.1/x", "title": "T"})
     body_bytes = create_route.calls[0].request.read()
     assert b"COLL" in body_bytes
+
+
+@pytest.mark.asyncio
+async def test_dedup_null_doi_does_not_crash_and_no_false_match(respx_mock):
+    """When Zotero returns DOI: null in response, dedup must not crash and
+    must not consider it a match for any real DOI."""
+    respx_mock.get("https://api.zotero.org/users/123/items").mock(
+        return_value=httpx.Response(
+            200,
+            json=[{"key": "OLD", "data": {"DOI": None, "title": "Something"}}],
+        )
+    )
+    # Provide a post mock so the item can be created without error
+    respx_mock.post("https://api.zotero.org/users/123/items").mock(
+        return_value=httpx.Response(
+            200,
+            json={"successful": {"0": {"key": "NEW"}}, "success": {"0": "NEW"}, "failed": {}},
+        )
+    )
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(api_key="k", library_id="123", library_type="user", http_client=http)
+        # Should not raise AttributeError, and should NOT return "OLD"
+        key = await c.create_item(paper={"doi": "10.1/real", "title": "Real"})
+    # The null-DOI item must not be returned as a duplicate
+    assert key != "OLD"
