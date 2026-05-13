@@ -445,7 +445,7 @@ async def test_generate_report_kb_names_mismatch(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_info_includes_push_to_zotero():
-    """get_info() resource must list push_to_zotero, build_kbs_from_zotero, and report 13 tools."""
+    """get_info() resource must list push_to_zotero, build_kbs_from_zotero, and report 14 tools."""
     from perspicacite.mcp.server import get_info
 
     raw = await get_info()
@@ -456,10 +456,10 @@ async def test_get_info_includes_push_to_zotero():
     assert "build_kbs_from_zotero" in info["tools"], (
         f"build_kbs_from_zotero missing from tools list: {info['tools']}"
     )
-    assert len(info["tools"]) == 13, (
-        f"Expected 13 tools in get_info(), got {len(info['tools'])}: {info['tools']}"
+    assert len(info["tools"]) == 14, (
+        f"Expected 14 tools in get_info(), got {len(info['tools'])}: {info['tools']}"
     )
-    assert info["tool_count"] == 13
+    assert info["tool_count"] == 14
 
 
 if __name__ == "__main__":
