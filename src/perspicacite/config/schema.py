@@ -302,6 +302,21 @@ class CapsuleConfig(BaseModel):
     min_version: str = "0.1"
 
 
+class MultimodalConfig(BaseModel):
+    """Multimodal RAG: figures-in-prompt + inline thumbnails in answers."""
+
+    enabled: bool = True
+    max_images: int = 6
+    vision_allowlist: list[str] = Field(
+        default_factory=lambda: [
+            "anthropic/claude-",
+            "claude-",
+            "openai/gpt-4o",
+            "gpt-4o",
+        ]
+    )
+
+
 class PDFDownloadConfig(BaseModel):
     """PDF download configuration."""
 
@@ -390,6 +405,7 @@ class Config(BaseModel):
     zotero: ZoteroConfig = Field(default_factory=ZoteroConfig)
     local_docs: LocalDocsConfig = Field(default_factory=LocalDocsConfig)
     capsule: CapsuleConfig = Field(default_factory=CapsuleConfig)
+    multimodal: MultimodalConfig = Field(default_factory=MultimodalConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":
