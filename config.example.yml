@@ -252,3 +252,12 @@ local_docs:
   # allowed_roots:
   #   - "/Users/me/Documents/research"
   #   - "/data/lab-notes"
+
+# =============================================================================
+# Capsule (per-paper artifact: figures, structured text blocks, mined resources)
+# =============================================================================
+capsule:
+  enabled: true
+  auto_build_on_ingest: true
+  root: ./data/capsules
+  min_version: "0.1"
