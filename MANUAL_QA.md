@@ -114,3 +114,11 @@ These do not require the web UI.
 - [ ] Adding a list of DOIs to an existing KB shows the same progress bar.
 - [ ] On completion, the label shows "Done · N papers, M chunks" and the KB stats refresh.
 - [ ] If the SSE stream drops, the bar continues updating via polling every 2 s.
+
+---
+
+## Zotero push (Phase 5)
+
+- [ ] With `zotero.enabled: true` and valid credentials in `config.yml`, opening a paper-detail slide-over shows a "Send to Zotero" button.
+- [ ] With `zotero.enabled: false`, the button is hidden.
+- [ ] Clicking the button POSTs the current DOI to `/api/zotero/push` and shows an alert with the returned key (or failure reason).

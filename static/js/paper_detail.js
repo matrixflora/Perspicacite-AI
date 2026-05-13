@@ -83,4 +83,72 @@ function renderPaperDetail(panel, data) {
     html += '</div>';
 
     panel.innerHTML = html;
+
+    /* Lazily initialize Zotero button */
+    if (data.doi) {
+        ensureZoteroStatus().then(function(status) {
+            if (status.enabled) {
+                const btn = document.createElement('button');
+                btn.className = 'zotero-btn';
+                btn.textContent = 'Send to Zotero';
+                btn.addEventListener('click', function() { sendToZotero(data.doi, btn); });
+                const innerDiv = panel.querySelector('.paper-detail-inner');
+                if (innerDiv) innerDiv.appendChild(btn);
+            }
+        });
+    }
 }
+
+/* Zotero integration (lazily initialized once per page) */
+window._zoteroStatusCache = null;
+async function ensureZoteroStatus() {
+    if (window._zoteroStatusCache !== null) return window._zoteroStatusCache;
+    try {
+        const r = await fetch('/api/zotero/status');
+        if (!r.ok) {
+            window._zoteroStatusCache = { enabled: false };
+            return window._zoteroStatusCache;
+        }
+        window._zoteroStatusCache = await r.json();
+    } catch (e) {
+        window._zoteroStatusCache = { enabled: false };
+    }
+    return window._zoteroStatusCache;
+}
+
+async function sendToZotero(doi, buttonEl) {
+    if (!doi) return;
+    if (buttonEl) {
+        buttonEl.disabled = true;
+        buttonEl.textContent = 'Sending…';
+    }
+    try {
+        const r = await fetch('/api/zotero/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dois: [doi] }),
+        });
+        if (r.status === 503) {
+            alert('Zotero is not configured. Set zotero.enabled + api_key + library_id in config.yml.');
+            return;
+        }
+        const data = await r.json();
+        if ((data.created || []).length > 0) {
+            alert('Sent to Zotero: ' + (data.created[0].key || 'OK'));
+        } else if ((data.failed || []).length > 0) {
+            alert('Zotero push failed: ' + (data.failed[0].reason || 'unknown'));
+        } else {
+            alert('Zotero push: no result');
+        }
+    } catch (e) {
+        alert('Zotero push error: ' + e);
+    } finally {
+        if (buttonEl) {
+            buttonEl.disabled = false;
+            buttonEl.textContent = 'Send to Zotero';
+        }
+    }
+}
+
+window.sendToZotero = sendToZotero;
+window.ensureZoteroStatus = ensureZoteroStatus;
