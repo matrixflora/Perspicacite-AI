@@ -122,6 +122,17 @@ async def _ingest_files(
                     c.embedding = e
                 await app_state.vector_store.add_chunks(kb.collection_name, chunks)
                 total_chunks += len(chunks)
+            # Cycle A: on-disk capsule artifacts for PDFs (metadata + figures + blocks + resources).
+            if content_type == "pdf" and app_state.config.capsule.auto_build_on_ingest:
+                from perspicacite.pipeline.capsule_builder import build_capsule
+                try:
+                    paper.full_text = text
+                    await build_capsule(
+                        paper=paper, pdf_path=fp, kb_name=kb_name,
+                        app_state=app_state, ingest_chunks=False,
+                    )
+                except Exception as exc:
+                    logger.warning("capsule_build_failed", file=str(fp), error=str(exc))
             await registry.publish(job_id, {
                 "type": "progress", "done": idx + 1, "file": str(fp),
                 "status": "embedded", "chunks": len(chunks),
