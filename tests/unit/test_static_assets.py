@@ -22,6 +22,7 @@ JS_FILES = [
     "kb_stats",
     "paper_detail",
     "survey",
+    "provenance",
     "main",
 ]
 
@@ -130,3 +131,18 @@ def test_phase5_html_elements(index_html):
     assert 'id="conv-search-input"' in index_html, "#conv-search-input missing"
     assert 'id="advanced-options-details"' in index_html, "#advanced-options-details missing"
     assert 'value="contradiction"' in index_html, "contradiction option missing from mode dropdown"
+
+
+def test_provenance_js_present():
+    """provenance.js must exist on disk and be referenced from index.html."""
+    root = Path(__file__).resolve().parents[2]
+    assert (root / "static/js/provenance.js").exists(), "provenance.js missing from disk"
+    html = (root / "templates/index.html").read_text()
+    assert "provenance.js" in html, "provenance.js not referenced in index.html"
+
+
+def test_provenance_disclosure_css():
+    """chat.css must contain the .provenance-disclosure rule."""
+    root = Path(__file__).resolve().parents[2]
+    css = (root / "static/css/chat.css").read_text()
+    assert ".provenance-disclosure" in css, ".provenance-disclosure missing from chat.css"
