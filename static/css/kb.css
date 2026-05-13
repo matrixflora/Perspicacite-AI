@@ -445,3 +445,4 @@
     max-height: 30vh;
     overflow: auto;
 }
+#kb-build-capsules-progress { white-space: pre-wrap; font-family: monospace; max-height: 30vh; overflow: auto; }

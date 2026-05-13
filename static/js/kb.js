@@ -967,3 +967,27 @@ function wireKBDropzone() {
     });
 }
 document.addEventListener('DOMContentLoaded', wireKBDropzone);
+
+function wireBuildCapsulesButton() {
+  const btn = document.getElementById("kb-build-capsules-btn");
+  const prog = document.getElementById("kb-build-capsules-progress");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    if (!selectedKb) { alert("Select a KB first."); return; }
+    const r = await fetch(`/api/kb/${encodeURIComponent(selectedKb)}/build-capsules`, {
+      method: "POST",
+    });
+    const body = await r.json();
+    prog.classList.remove("hidden");
+    prog.textContent = "";
+    const ev = new EventSource(body.sse_url);
+    ev.onmessage = (m) => { prog.textContent += m.data + "\n"; };
+    ev.addEventListener("done", () => {
+      ev.close();
+      prog.textContent += "\nDone.";
+      if (typeof loadKBs === "function") loadKBs();
+    });
+    ev.onerror = () => ev.close();
+  });
+}
+document.addEventListener("DOMContentLoaded", wireBuildCapsulesButton);
