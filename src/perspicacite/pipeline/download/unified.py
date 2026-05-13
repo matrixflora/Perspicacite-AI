@@ -35,6 +35,7 @@ from .wiley import download_from_wiley_tdm, download_from_wiley_direct
 from .elsevier import get_content_from_elsevier
 from .alternative import download_from_alternative_endpoint
 from .biorxiv import is_biorxiv_doi, get_content_from_biorxiv
+from .europepmc import get_content_from_europepmc
 
 logger = get_logger("perspicacite.pipeline.download.unified")
 
@@ -218,6 +219,28 @@ async def retrieve_paper_content(
                     content_source="pmc",
                     metadata=_metadata_from_discovery(disc, clean),
                 )
+
+        # 2a-bis. Europe PMC fullTextXML (broader OA coverage)
+        epmc = await get_content_from_europepmc(
+            doi=clean,
+            pmid=None,  # PaperDiscovery has no pmid field; only DOI+PMCID resolution
+            pmcid=disc.pmcid,
+            http_client=client,
+        )
+        epmc_text = (epmc.full_text or "") if epmc is not None else ""
+        if epmc is not None and epmc.success and len(epmc_text.strip()) > 200:
+            # Preserve discovery-derived metadata
+            return PaperContent(
+                success=True,
+                doi=clean,
+                content_type="structured",
+                full_text=epmc.full_text,
+                sections=epmc.sections,
+                references=epmc.references,
+                abstract=disc.abstract,
+                content_source="europepmc",
+                metadata=_metadata_from_discovery(disc, clean, epmc.metadata),
+            )
 
         # 2b. arXiv HTML
         arxiv_id = disc.arxiv_id

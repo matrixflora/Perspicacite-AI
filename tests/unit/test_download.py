@@ -638,6 +638,10 @@ class TestCrossrefEnrichmentInUnifiedPipeline:
                 },
             )
         )
+        # Europe PMC DOI search (no PMCID available; return no hit so pipeline continues)
+        respx_mock.get(url__regex=r"https://www\.ebi\.ac\.uk/europepmc/webservices/rest/search.*").mock(
+            return_value=httpx.Response(200, json={"resultList": {"result": []}})
+        )
         result = await retrieve_paper_content(doi)
         md = result.metadata or {}
         assert md.get("year") == 2019
@@ -677,6 +681,10 @@ class TestCrossrefEnrichmentInUnifiedPipeline:
 
         monkeypatch.setattr(
             "perspicacite.pipeline.download.unified.discover_paper_sources", _full_disc
+        )
+        # Europe PMC DOI search (no PMCID available; return no hit so pipeline continues)
+        respx_mock.get(url__regex=r"https://www\.ebi\.ac\.uk/europepmc/webservices/rest/search.*").mock(
+            return_value=httpx.Response(200, json={"resultList": {"result": []}})
         )
         result = await retrieve_paper_content("10.1/full")
         md = result.metadata or {}
@@ -731,6 +739,10 @@ class TestBioRxivInUnifiedPipeline:
                     ],
                 },
             )
+        )
+        # Europe PMC DOI search (no PMCID available; return no hit so pipeline continues)
+        respx_mock.get(url__regex=r"https://www\.ebi\.ac\.uk/europepmc/webservices/rest/search.*").mock(
+            return_value=httpx.Response(200, json={"resultList": {"result": []}})
         )
 
         result = await retrieve_paper_content(doi)
