@@ -184,6 +184,32 @@ class SessionStore:
                 for r in rows
             ]
 
+    async def list_conversations_by_kb(self, kb_name: str) -> list[Conversation]:
+        """Return all conversations associated with a KB, newest first.
+
+        Each returned :class:`Conversation` has its ``messages`` populated.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            rows = await db.execute_fetchall(
+                "SELECT id, session_id, title, kb_name, created_at, updated_at "
+                "FROM conversations WHERE kb_name = ? ORDER BY updated_at DESC",
+                (kb_name,),
+            )
+
+        convs: list[Conversation] = []
+        for r in rows:
+            messages = await self.get_messages(r["id"])
+            convs.append(
+                Conversation(
+                    id=r["id"],
+                    title=r["title"] or "",
+                    kb_name=r["kb_name"] or kb_name,
+                    messages=messages,
+                )
+            )
+        return convs
+
     async def add_message(self, conv_id: str, message: Message) -> None:
         """Add a message to a conversation."""
         async with aiosqlite.connect(self.db_path) as db:

@@ -659,6 +659,87 @@ async def get_kb_stats(name: str):
     }
 
 
+@router.get("/api/kb/{name}/export")
+async def kb_export(name: str, format: str = "obsidian-vault"):
+    """Export a knowledge base as a downloadable zip archive.
+
+    Currently supports ``format=obsidian-vault`` only, which produces a zip
+    with one Markdown note per paper, one per conversation, and an Index.md.
+    """
+    from typing import Any as _Any
+
+    from fastapi.responses import Response
+
+    from perspicacite.integrations.obsidian import build_obsidian_vault
+
+    if format != "obsidian-vault":
+        raise HTTPException(status_code=400, detail="unsupported format; use obsidian-vault")
+    if not app_state.session_store:
+        raise HTTPException(status_code=503, detail="System not initialized")
+
+    kb = await app_state.session_store.get_kb_metadata(name)
+    if kb is None:
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{name}' not found")
+
+    # Gather per-paper metadata from ChromaDB.  ``list_paper_metadata`` returns
+    # one merged dict per paper_id (title / DOI / year / authors).  Best-effort:
+    # if the collection is not accessible we export a vault with no paper notes.
+    papers: list[dict[str, _Any]] = []
+    try:
+        raw_meta = await app_state.vector_store.list_paper_metadata(kb.collection_name)
+        for m in raw_meta:
+            authors_raw = m.get("authors") or []
+            if isinstance(authors_raw, str):
+                import json as _json
+                try:
+                    authors_raw = _json.loads(authors_raw)
+                except Exception:
+                    authors_raw = [authors_raw]
+            papers.append({
+                "doi": m.get("doi") or m.get("paper_id"),
+                "title": m.get("title"),
+                "year": m.get("year"),
+                "journal": m.get("journal"),
+                "authors": authors_raw,
+                "content_type": m.get("content_type"),
+                "content_source": m.get("source") or m.get("content_source"),
+                "abstract": m.get("abstract"),
+            })
+    except Exception as exc:
+        logger.warning("kb_export_paper_enum_failed", kb=name, error=str(exc))
+        papers = []
+
+    # Conversations linked to this KB
+    conv_dicts: list[dict[str, _Any]] = []
+    try:
+        convs = await app_state.session_store.list_conversations_by_kb(name)
+        for c in convs:
+            c_dict = c.model_dump()
+            # Flatten messages to simple dicts for build_obsidian_vault
+            msgs = []
+            for msg in c_dict.get("messages") or []:
+                msgs.append({
+                    "role": msg.get("role"),
+                    "content": msg.get("content"),
+                    "sources": msg.get("sources") or [],
+                })
+            c_dict["messages"] = msgs
+            conv_dicts.append(c_dict)
+    except Exception as exc:
+        logger.warning("kb_export_conv_enum_failed", kb=name, error=str(exc))
+        conv_dicts = []
+
+    kb_dict = kb.model_dump()
+    kb_dict["name"] = name
+
+    blob = build_obsidian_vault(kb=kb_dict, papers=papers, conversations=conv_dicts)
+    return Response(
+        content=blob,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}-vault.zip"'},
+    )
+
+
 @router.get("/api/kb/{name}/chunks")
 async def get_kb_chunks(
     name: str,
