@@ -43,11 +43,30 @@ def _label_for(rec: dict) -> str:
     return f"Figure (p{rec.get('page', 0)} #{rec.get('index', 0)})"
 
 
-def _paper_id_for_chunk(c: DocumentChunk) -> str | None:
-    parent = getattr(c.metadata, "parent_paper_id", None)
+def _paper_id_for_chunk(c) -> str | None:
+    meta = _chunk_metadata(c)
+    if meta is None:
+        return None
+    parent = _meta_attr(meta, "parent_paper_id")
     if parent:
         return parent
-    return c.metadata.paper_id
+    return _meta_attr(meta, "paper_id")
+
+
+def _chunk_metadata(c):
+    """Return the metadata object/dict for a chunk (dict or DocumentChunk-like)."""
+    if isinstance(c, dict):
+        return c.get("metadata")
+    return getattr(c, "metadata", None)
+
+
+def _meta_attr(meta, name):
+    """Read an attribute from a metadata object that may be a dict or a model."""
+    if meta is None:
+        return None
+    if isinstance(meta, dict):
+        return meta.get(name)
+    return getattr(meta, name, None)
 
 
 def _load_capsule_figures(capsule_dir: Path) -> list[dict]:
@@ -74,7 +93,8 @@ def collect_figures_for_chunks(
     capsule_cache: dict[str, list[dict]] = {}
 
     for chunk in chunks:
-        refs = getattr(chunk.metadata, "figure_refs", None) or []
+        meta = _chunk_metadata(chunk)
+        refs = _meta_attr(meta, "figure_refs") or []
         if not refs:
             continue
         paper_id = _paper_id_for_chunk(chunk)
