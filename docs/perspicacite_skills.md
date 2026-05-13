@@ -1,7 +1,7 @@
 # Perspicacité MCP Skills Reference
 
 This file guides external agents (Mimosa-AI and similar) in using Perspicacité's
-10 MCP tools effectively. It covers prerequisites, recommended workflows, and
+11 MCP tools effectively. It covers prerequisites, recommended workflows, and
 failure recovery patterns.
 
 ## Prerequisites
@@ -19,6 +19,7 @@ initialized. Call the `perspicacite://info` resource to verify status.
 | `SPRINGER_API_KEY` | `get_paper_content` | Springer PDF download |
 | `ELSEVIER_API_KEY` | `get_paper_content` | Elsevier full text |
 | `PUBMED_API_KEY` | `search_literature` | PubMed search |
+| `ZOTERO_API_KEY` | `push_to_zotero` | Zotero Web API key |
 
 If keys are missing, tools still work but with lower rate limits or reduced
 content coverage.
@@ -28,8 +29,9 @@ content coverage.
 Not every paper has accessible full text. The priority pipeline is:
 
 1. **PMC JATS XML** — structured sections + references (best quality)
-2. **arXiv HTML** — structured sections
-3. **Publisher PDF** — parsed to plain text
+2. **Europe PMC** — structured full text for Europe PMC Open Access papers
+3. **arXiv HTML** — structured sections
+4. **Publisher PDF** — parsed to plain text
 4. **Abstract only** — from OpenAlex metadata
 5. **None** — paper exists but no content retrievable
 
@@ -196,6 +198,52 @@ deduplicates against existing KB content, and indexes the result.
 - Content retrieval follows the same priority pipeline as `get_paper_content`.
 - Use this tool when you have a list of DOIs from an external source (e.g.
   citation export, `screen_papers` output) and want to ingest them directly.
+
+### push_to_zotero
+
+```
+push_to_zotero(dois)
+```
+
+Pushes one or more papers to the configured Zotero library. Accepts a single DOI
+string or a list of DOI strings.
+
+**Args:**
+- `dois` — a DOI string (e.g. `"10.1038/s41586-024-12345-6"`) or a list of DOI
+  strings (bare or `https://doi.org/`-prefixed).
+
+**Returns:** JSON object with three lists:
+- `created` — DOIs successfully added to Zotero.
+- `skipped` — DOIs already present in the Zotero library.
+- `failed` — DOIs that could not be pushed (network error, metadata missing, etc.).
+
+**Errors:**
+- Returns `{"error": "zotero_not_configured"}` when Zotero integration is disabled
+  or the required config values are absent.
+
+**Required config** (`config.yml`):
+
+```yaml
+zotero:
+  enabled: true
+  api_key: "your_zotero_web_api_key"
+  library_id: "1234567"          # numeric user or group library ID
+  library_type: "user"           # "user" (default) or "group"
+  collection_key: "ABCD1234"     # optional — push into a specific collection
+```
+
+**Example call:**
+
+```python
+# Push a single DOI
+result = await client.call_tool("push_to_zotero", {"dois": "10.1038/s41586-024-12345-6"})
+
+# Push multiple DOIs
+result = await client.call_tool("push_to_zotero", {
+    "dois": ["10.1038/s41586-024-12345-6", "10.1126/science.abc1234"]
+})
+# → {"created": ["10.1038/..."], "skipped": [], "failed": []}
+```
 
 ---
 
