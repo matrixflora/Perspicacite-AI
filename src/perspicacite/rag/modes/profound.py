@@ -21,7 +21,9 @@ from typing import Any
 from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.models.kb import chroma_collection_name_for_kb
+from perspicacite.provenance.context import get_collector
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     ASSESS_DOCUMENT_QUALITY_PROMPT,
     GENERATE_CONTEXTUAL_QUERIES_PROMPT,
@@ -418,6 +420,9 @@ class ProfoundRAGMode(BaseRAGMode):
             logger.info(
                 "profound_plan_created", steps=len(plan), purposes=[s.purpose for s in plan]
             )
+            _c_plan = get_collector()
+            if _c_plan is not None:
+                _c_plan.add_trace("plan", detail={"cycle": self.iterations, "steps": len(plan)})
 
             cycle_steps, cycle_documents, plan_limit_reason, early_exit = (
                 await self._execute_cycle_steps(
@@ -430,6 +435,42 @@ class ProfoundRAGMode(BaseRAGMode):
                     kb_name=kb_name,
                 )
             )
+
+            # Apply recency weighting to paper-dict results for this cycle
+            cycle_paper_docs = [
+                d for d in cycle_documents if isinstance(d, dict) and "paper_id" in d
+            ]
+            if getattr(request, "recency_weight", None) and cycle_paper_docs:
+                apply_recency_weighting_to_papers(
+                    cycle_paper_docs,
+                    recency_weight=getattr(request, "recency_weight", None),
+                    half_life_years=getattr(request, "recency_half_life_years", None),
+                )
+
+            # Provenance: record cycle trace + per-paper retrieval events
+            _c = get_collector()
+            if _c is not None:
+                _c.add_trace(
+                    "cycle",
+                    detail={
+                        "n": self.iterations,
+                        "papers": len(cycle_paper_docs),
+                        "kb_name": request.kb_name,
+                    },
+                )
+                for rank, p in enumerate(cycle_paper_docs):
+                    _c.add_retrieval(
+                        paper_id=p.get("paper_id"),
+                        doi=p.get("doi"),
+                        title=p.get("title"),
+                        score=float(p.get("paper_score", p.get("score", 0.0)) or 0.0),
+                        kb_name=p.get("kb_name"),
+                        content_type=None,
+                        pipeline_step=None,
+                        rank=rank,
+                        stage_label=f"profound.cycle{self.iterations}.retrieve",
+                    )
+
             all_steps.extend(cycle_steps)
             all_documents.extend(cycle_documents)
 
@@ -468,6 +509,15 @@ class ProfoundRAGMode(BaseRAGMode):
 
             summary = await self._create_iteration_summary(request.query, cycle_steps, llm)
             self._iteration_summaries.append(summary)
+            _c_refl = get_collector()
+            if _c_refl is not None:
+                _c_refl.add_trace(
+                    "reflection",
+                    detail={
+                        "cycle": self.iterations,
+                        "should_continue": bool(summary.get("should_continue", False)),
+                    },
+                )
             self.research_history.append(
                 {
                     "cycle": self.iterations,
@@ -483,7 +533,9 @@ class ProfoundRAGMode(BaseRAGMode):
                 }
             )
 
-            should_continue = bool(summary.get("should_continue", False)) and cycle < self.max_cycles - 1
+            should_continue = (
+                bool(summary.get("should_continue", False)) and cycle < self.max_cycles - 1
+            )
             if not should_continue:
                 logger.info("profound_iteration_summary_stop", cycle=self.iterations)
                 break
@@ -539,6 +591,9 @@ class ProfoundRAGMode(BaseRAGMode):
 
             plan = await self._create_plan(query=request.query, llm=llm)
             yield StreamEvent.status(f"Profound RAG: Executing {len(plan)} research steps...")
+            _c_plan_s = get_collector()
+            if _c_plan_s is not None:
+                _c_plan_s.add_trace("plan", detail={"cycle": self.iterations, "steps": len(plan)})
 
             cycle_steps, cycle_documents, plan_limit_reason, early_exit = (
                 await self._execute_cycle_steps(
@@ -551,6 +606,42 @@ class ProfoundRAGMode(BaseRAGMode):
                     kb_name=kb_name,
                 )
             )
+
+            # Apply recency weighting to paper-dict results for this cycle
+            cycle_paper_docs = [
+                d for d in cycle_documents if isinstance(d, dict) and "paper_id" in d
+            ]
+            if getattr(request, "recency_weight", None) and cycle_paper_docs:
+                apply_recency_weighting_to_papers(
+                    cycle_paper_docs,
+                    recency_weight=getattr(request, "recency_weight", None),
+                    half_life_years=getattr(request, "recency_half_life_years", None),
+                )
+
+            # Provenance: record cycle trace + per-paper retrieval events
+            _c = get_collector()
+            if _c is not None:
+                _c.add_trace(
+                    "cycle",
+                    detail={
+                        "n": self.iterations,
+                        "papers": len(cycle_paper_docs),
+                        "kb_name": request.kb_name,
+                    },
+                )
+                for rank, p in enumerate(cycle_paper_docs):
+                    _c.add_retrieval(
+                        paper_id=p.get("paper_id"),
+                        doi=p.get("doi"),
+                        title=p.get("title"),
+                        score=float(p.get("paper_score", p.get("score", 0.0)) or 0.0),
+                        kb_name=p.get("kb_name"),
+                        content_type=None,
+                        pipeline_step=None,
+                        rank=rank,
+                        stage_label=f"profound.cycle{self.iterations}.retrieve",
+                    )
+
             all_steps.extend(cycle_steps)
             all_documents.extend(cycle_documents)
 
@@ -593,6 +684,15 @@ class ProfoundRAGMode(BaseRAGMode):
 
             summary = await self._create_iteration_summary(request.query, cycle_steps, llm)
             self._iteration_summaries.append(summary)
+            _c_refl_s = get_collector()
+            if _c_refl_s is not None:
+                _c_refl_s.add_trace(
+                    "reflection",
+                    detail={
+                        "cycle": self.iterations,
+                        "should_continue": bool(summary.get("should_continue", False)),
+                    },
+                )
             self.research_history.append(
                 {
                     "cycle": self.iterations,
@@ -608,7 +708,9 @@ class ProfoundRAGMode(BaseRAGMode):
                 }
             )
 
-            should_continue = bool(summary.get("should_continue", False)) and cycle < self.max_cycles - 1
+            should_continue = (
+                bool(summary.get("should_continue", False)) and cycle < self.max_cycles - 1
+            )
             if not should_continue:
                 yield StreamEvent.status("Profound RAG: Research complete based on iteration summary")
                 break
@@ -1513,6 +1615,7 @@ Follow the system instructions for this situation."""
                     provider=request.provider,
                     max_tokens=2000,
                     temperature=(0.3 if qc < 0.7 else 0.5),
+                    stage="profound.draft",
                 )
             return await llm.complete(
                 messages=messages,
@@ -1520,6 +1623,7 @@ Follow the system instructions for this situation."""
                 provider=request.provider,
                 max_tokens=2000,
                 temperature=0.3,
+                stage="profound.draft",
             )
         except Exception as e:
             logger.error("profound_final_answer_error", error=str(e))
@@ -1576,6 +1680,7 @@ Follow the system instructions for this situation."""
                 "model": request.model,
                 "provider": request.provider,
                 "max_tokens": 2500,
+                "stage": "profound.answer",
             }
             if not is_o_series:
                 fmt_kw["temperature"] = 0.2
@@ -1655,6 +1760,7 @@ Follow the system instructions for this situation."""
             "model": request.model,
             "provider": request.provider,
             "max_tokens": 2500,
+            "stage": "profound.answer",
         }
         if not is_o_series:
             fmt_kw["temperature"] = 0.2
