@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from perspicacite.logging import get_logger
@@ -113,3 +114,83 @@ class MultiKBRetriever:
     ) -> list[dict[str, Any]]:
         # v1: just delegate. (Two-pass paper-level expansion across KBs is a future refinement.)
         return await self.search(query, top_k=top_k, min_score=min_score)
+
+
+async def query_chunks_across_collections(
+    *,
+    vector_store: Any,
+    embedding_service: Any,
+    collection_names: list[str],
+    query: str,
+    top_k: int,
+    min_score: float = 0.0,
+) -> list[dict[str, Any]]:
+    """Fan vector_store.search across collections, merge by paper_id (best score),
+    tag each hit with kb_name (= collection_name), sort, return top_k."""
+    if not collection_names:
+        return []
+    query_embedding = (await embedding_service.embed([query]))[0]
+
+    async def _one(coll: str) -> list[Any]:
+        try:
+            results: list[Any] = await vector_store.search(
+                collection=coll, query_embedding=query_embedding, top_k=top_k * 2
+            )
+            return results
+        except Exception as e:
+            logger.warning("fanout_search_failed", collection=coll, error=str(e))
+            return []
+
+    per = await asyncio.gather(*(_one(c) for c in collection_names))
+    merged: dict[str, dict[str, Any]] = {}
+    orderless: list[dict[str, Any]] = []
+    for coll, hits in zip(collection_names, per, strict=False):
+        for r in hits:
+            chunk = getattr(r, "chunk", None)
+            meta = getattr(chunk, "metadata", None) if chunk is not None else None
+            pid = getattr(meta, "paper_id", None)
+            score = float(getattr(r, "score", 0.0) or 0.0)
+            if score < min_score:
+                continue
+            d = {
+                "text": getattr(chunk, "text", "") if chunk is not None else "",
+                "score": score,
+                "paper_id": pid,
+                "metadata": meta,
+                "kb_name": coll,
+            }
+            if pid:
+                prev = merged.get(pid)
+                if prev is None or score > prev["score"]:
+                    merged[pid] = d
+            else:
+                orderless.append(d)
+    combined = list(merged.values()) + orderless
+    combined.sort(key=lambda x: x["score"], reverse=True)
+    return combined[:top_k]
+
+
+async def get_chunks_by_paper_ids_across(
+    vector_store: Any,
+    *,
+    collection_names: list[str],
+    paper_ids: list[str],
+) -> list[Any]:
+    """Fan get_chunks_by_paper_ids across collections in parallel.
+    Returns concatenated DocumentChunk list (caller dedups if needed)."""
+    if not collection_names or not paper_ids:
+        return []
+
+    async def _one(coll: str) -> list[Any]:
+        try:
+            chunks: list[Any] = await vector_store.get_chunks_by_paper_ids(coll, paper_ids)
+            return chunks
+        except Exception as e:
+            logger.warning("fanout_get_chunks_failed", collection=coll, error=str(e))
+            return []
+
+    per = await asyncio.gather(*(_one(c) for c in collection_names))
+    out: list[Any] = []
+    for chunks in per:
+        out.extend(chunks)
+    return out
