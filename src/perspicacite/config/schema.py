@@ -293,6 +293,15 @@ class LocalDocsConfig(BaseModel):
         return out
 
 
+class CapsuleConfig(BaseModel):
+    """Per-paper capsule storage and build behaviour."""
+
+    enabled: bool = True
+    auto_build_on_ingest: bool = True
+    root: Path = Path("./data/capsules")
+    min_version: str = "0.1"
+
+
 class PDFDownloadConfig(BaseModel):
     """PDF download configuration."""
 
@@ -380,6 +389,7 @@ class Config(BaseModel):
     ui: UIConfig = Field(default_factory=UIConfig)
     zotero: ZoteroConfig = Field(default_factory=ZoteroConfig)
     local_docs: LocalDocsConfig = Field(default_factory=LocalDocsConfig)
+    capsule: CapsuleConfig = Field(default_factory=CapsuleConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":
