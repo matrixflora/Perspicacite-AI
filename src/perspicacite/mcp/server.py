@@ -14,6 +14,8 @@ Tools exposed:
 - generate_report: Synthesize a research report from a KB
 - screen_papers: Score candidate papers by relevance to a query
 - add_dois_to_kb: Bulk-add papers to a KB from a list of DOIs
+- push_to_zotero: Push DOIs to the configured Zotero library
+- build_kbs_from_zotero: Build one KB per Zotero top-level collection
 """
 
 from __future__ import annotations
@@ -1225,8 +1227,99 @@ async def push_to_zotero(dois: list[str] | str) -> str:
 
 
 # =============================================================================
+# Tool 12: build_kbs_from_zotero
+# =============================================================================
+
+
+@mcp.tool
+async def build_kbs_from_zotero(
+    top_level_collection_keys: list[str] | None = None,
+    include_unfiled: bool = True,
+    plan_only: bool = False,
+) -> dict[str, Any]:
+    """Build one KB per Zotero top-level collection.
+
+    Args:
+        top_level_collection_keys: Optional filter. None = all top-level collections.
+        include_unfiled: Also include items not in any collection (default True).
+        plan_only: If True, return the preview only without executing.
+
+    Returns either {"plan": [...]} (plan-only) or {"per_kb": [...]} (executed).
+    Requires zotero.enabled=true and credentials in config.yml.
+    """
+    from perspicacite.integrations import zotero_ingest
+    from perspicacite.integrations.zotero import ZoteroClient
+
+    cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
+    if not (cfg and cfg.enabled and cfg.api_key and cfg.library_id):
+        return {
+            "error": "Zotero not configured (zotero.enabled, zotero.api_key, zotero.library_id)"
+        }
+
+    client = ZoteroClient(
+        api_key=cfg.api_key,
+        library_id=cfg.library_id,
+        library_type=cfg.library_type,
+        collection_key=cfg.collection_key,
+    )
+    plan = await zotero_ingest.plan_kbs_from_zotero(
+        client,
+        top_level_collection_keys=top_level_collection_keys,
+        include_unfiled=include_unfiled,
+    )
+    if plan_only:
+        return {"plan": [p.model_dump() for p in plan]}
+
+    # Inline execution with a no-op registry — MCP returns the final summary.
+    class _InlineRegistry:
+        def __init__(self) -> None:
+            self.result: dict[str, Any] | None = None
+            self.err: str | None = None
+
+        async def publish(self, jid: str, ev: dict[str, Any]) -> None:
+            return None
+
+        async def finish(self, jid: str, res: dict[str, Any]) -> None:
+            self.result = res
+
+        async def fail(self, jid: str, err: str) -> None:
+            self.err = err
+
+    reg = _InlineRegistry()
+    try:
+        await zotero_ingest.build_kbs_from_zotero(
+            client,
+            plan=plan,
+            app_state=mcp_state,
+            registry=reg,
+            job_id="mcp-inline",
+        )
+    except Exception as exc:
+        return {"error": str(exc)}
+    if reg.err is not None:
+        return {"error": reg.err}
+    return reg.result or {"per_kb": []}
+
+
+# =============================================================================
 # Resource
 # =============================================================================
+
+
+_TOOL_NAMES: list[str] = [
+    "search_literature",
+    "get_paper_content",
+    "get_paper_references",
+    "list_knowledge_bases",
+    "search_knowledge_base",
+    "create_knowledge_base",
+    "add_papers_to_kb",
+    "generate_report",
+    "screen_papers",
+    "add_dois_to_kb",
+    "push_to_zotero",
+    "build_kbs_from_zotero",
+]
 
 
 @mcp.resource("perspicacite://info")
@@ -1236,19 +1329,8 @@ async def get_info() -> str:
         {
             "name": "Perspicacité v2",
             "description": "AI-powered scientific literature research assistant",
-            "tools": [
-                "search_literature",
-                "get_paper_content",
-                "get_paper_references",
-                "list_knowledge_bases",
-                "search_knowledge_base",
-                "create_knowledge_base",
-                "add_papers_to_kb",
-                "generate_report",
-                "screen_papers",
-                "add_dois_to_kb",
-                "push_to_zotero",
-            ],
+            "tools": _TOOL_NAMES,
+            "tool_count": len(_TOOL_NAMES),
             "initialized": mcp_state.initialized,
         }
     )
