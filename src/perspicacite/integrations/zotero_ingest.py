@@ -323,6 +323,19 @@ async def build_kbs_from_zotero(
                 kb.chunk_count += added_chunks
                 await app_state.session_store.save_kb_metadata(kb)
 
+            # Cycle A: on-disk capsule artifacts per added paper (metadata + resources + blocks).
+            # Skip per-paper if capsule auto-build disabled.
+            if app_state.config.capsule.auto_build_on_ingest and papers:
+                from perspicacite.pipeline.capsule_builder import build_capsule
+                for p in papers:
+                    try:
+                        await build_capsule(
+                            paper=p, pdf_path=None, kb_name=entry.kb_name,
+                            app_state=app_state, ingest_chunks=False,
+                        )
+                    except Exception as exc:
+                        logger.warning("capsule_build_failed", paper_id=p.id, error=str(exc))
+
             summary_per_kb.append(
                 {
                     "kb_name": entry.kb_name,
