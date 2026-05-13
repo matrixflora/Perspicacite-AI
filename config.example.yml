@@ -57,6 +57,8 @@ knowledge_base:
   default_top_k: 10
   similarity_threshold: 0.7
   use_two_pass: true
+  markdown_heading_aware: true   # heading-aware markdown chunking for local-doc ingest
+  code_language_aware: true      # language-aware code chunking for local-doc ingest
 
 # =============================================================================
 # Database Configuration
@@ -237,3 +239,16 @@ zotero:
   # Note: ingest does NOT use collection_key. Instead, /api/zotero/plan
   # generates one KB per top-level collection (with subcollections rolled up)
   # plus an "Unfiled" KB for items not in any collection.
+
+# =============================================================================
+# Local Documents
+# =============================================================================
+# Paths server-side ingest will accept. If empty, POST /api/kb/{name}/local-paths
+# returns 503 and the ingest_local_documents MCP tool refuses all calls.
+# Web upload (POST /api/kb/{name}/local-files, multipart) is unaffected.
+local_docs:
+  allowed_roots: []
+  # Example:
+  # allowed_roots:
+  #   - "/Users/me/Documents/research"
+  #   - "/data/lab-notes"

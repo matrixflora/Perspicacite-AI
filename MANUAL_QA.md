@@ -158,3 +158,27 @@ MCP path:
 - Call `build_kbs_from_zotero(plan_only=True)` from an MCP client; confirm `plan` is returned.
 - Call with `plan_only=False`; confirm `per_kb` summary is returned.
 - Call with `zotero.enabled=false`; confirm `{"error": ...}` is returned (no crash).
+
+## Local documents → KB (2026-05-13, cycle 3)
+
+Web upload:
+1. Open KB detail.
+2. Drag a PDF, a markdown file, and a Python file onto the drop zone.
+3. Confirm per-file progress lines stream in.
+4. After "Done", confirm chunk count went up.
+5. Run a chat query that should hit the markdown file; confirm a chunk with `heading_path` appears in sources.
+
+CLI:
+- `uv run perspicacite ingest-local --kb mykb --path /abs/path/to/file.md`
+- Confirm exit code 0 and `Done: {...}` output.
+
+Server-side path:
+- Without `local_docs.allowed_roots` set, `POST /api/kb/mykb/local-paths` returns 503.
+- With one root set, posting a path under it returns a `job_id`; posting `/etc/hosts` returns 400.
+
+MCP:
+- `ingest_local_documents(kb_name="mykb", paths=["/etc/hosts"])` → `{"error": "..."}` when no allow-list.
+
+Language tags in provenance:
+- Open a conversation that retrieved a code chunk.
+- Open the provenance JSONL sidecar; confirm the chunk row carries `language` and `content_type`.
