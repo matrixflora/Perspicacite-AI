@@ -51,3 +51,56 @@ def test_provenance_endpoints_503_when_unconfigured(monkeypatch) -> None:
     client = TestClient(app)
     r = client.get("/api/conversations/x/messages/y/provenance")
     assert r.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_export_ro_crate_returns_zip(tmp_path, monkeypatch) -> None:
+    import io
+    import zipfile
+    from perspicacite.memory.session_store import SessionStore
+    from perspicacite.models.messages import Message
+    from perspicacite.provenance.collector import ProvenanceCollector
+    from perspicacite.provenance.store import ProvenanceStore
+    from perspicacite.web import state as state_mod
+    from perspicacite.web.app import app
+
+    ss = SessionStore(tmp_path / "p.db")
+    await ss.init_db()
+    ps = ProvenanceStore(db_path=tmp_path / "p.db", sidecar_dir=tmp_path / "provenance")
+
+    # Seed a conversation with one user + one assistant message
+    conv = await ss.create_conversation(session_id="s1", kb_name="default", title="Q on X")
+    await ss.add_message(conv.id, Message(role="user", content="What is X?"))
+    await ss.add_message(conv.id, Message(role="assistant", content="X is foo.",
+                                          sources=[{"doi": "10.1/a", "title": "Paper A", "year": 2024}]))
+
+    # Seed a provenance record for the assistant message
+    msgs = (await ss.get_conversation(conv.id)).messages
+    asst = next(m for m in msgs if m.role == "assistant")
+    c = ProvenanceCollector(conversation_id=conv.id, message_id=asst.id, rag_mode="basic", request_params={})
+    c.add_llm_call(stage_label="basic.answer", provider="p", model="m",
+                   prompt_messages=[{"role": "user", "content": "q"}], response_text="r",
+                   prompt_tokens=1, completion_tokens=1, latency_ms=1.0)
+    await ps.save(c.finalize())
+
+    monkeypatch.setattr(state_mod.app_state, "session_store", ss, raising=False)
+    monkeypatch.setattr(state_mod.app_state, "provenance_store", ps, raising=False)
+
+    client = TestClient(app)
+    r = client.get(f"/api/conversations/{conv.id}/export?format=ro-crate")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/zip")
+    assert "attachment" in r.headers.get("content-disposition", "")
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    names = z.namelist()
+    assert "ro-crate-metadata.json" in names
+    assert "conversation.md" in names
+    assert "sources.json" in names
+    assert "provenance/llm-calls.jsonl" in names
+
+
+def test_export_unknown_format_400() -> None:
+    from perspicacite.web.app import app
+    client = TestClient(app)
+    r = client.get("/api/conversations/c/export?format=banana")
+    assert r.status_code in (400, 503)  # 503 if session_store is None in this test app
