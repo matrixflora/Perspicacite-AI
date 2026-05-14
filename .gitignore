@@ -102,6 +102,7 @@ packages_to_use/
 !docs/embedding-cache-*.md
 !docs/budget-caps-*.md
 !docs/rate-limit-*.md
+!docs/fallback-chain-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
