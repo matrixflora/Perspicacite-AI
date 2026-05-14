@@ -1300,6 +1300,65 @@ async def build_capsules_for_kb_async(name: str, force: bool = False) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# External-resource fetch (Cycle C)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/kb/{name}/paper/{paper_id:path}/fetch-resources")
+async def fetch_paper_resources_async(name: str, paper_id: str, body: dict | None = None) -> dict:
+    """Fetch external resources mined into a paper's capsule.
+
+    Body: ``{"kinds": ["github","zenodo","doi"], "ingest": true, "force": false}``
+    Returns: ``{"job_id": "...", "sse_url": "..."}``.
+    """
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="Job registry not available")
+    kb_meta = await app_state.session_store.get_kb_metadata(name)
+    if kb_meta is None:
+        raise HTTPException(status_code=404, detail=f"KB '{name}' not found")
+    rows = await app_state.vector_store.list_paper_metadata(kb_meta.collection_name)
+    row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail=f"paper '{paper_id}' not in KB '{name}'",
+        )
+
+    from perspicacite.pipeline.capsule_builder import (
+        capsule_dir_for,
+        resolve_paper_from_metadata,
+    )
+    from perspicacite.pipeline.external.fetch_orchestrator import (
+        fetch_paper_resources,
+    )
+
+    payload = body or {}
+    kinds = payload.get("kinds")
+    ingest = bool(payload.get("ingest", True))
+    force = bool(payload.get("force", False))
+
+    paper = resolve_paper_from_metadata(row)
+    cap_dir = capsule_dir_for(paper, root=app_state.config.capsule.root)
+    setattr(paper, "_kb_name", name)
+
+    job_id = await app_state.job_registry.create("external_fetch", total=0)
+
+    async def _runner():
+        try:
+            await fetch_paper_resources(
+                paper=paper, capsule_dir=cap_dir, kinds=kinds,
+                app_state=app_state, registry=app_state.job_registry,
+                job_id=job_id, ingest=ingest, force=force,
+            )
+        except Exception as exc:
+            await app_state.job_registry.fail(job_id, str(exc))
+
+    task = asyncio.create_task(_runner())
+    _local_tasks.add(task)
+    task.add_done_callback(_local_tasks.discard)
+    return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
+
+
+# ---------------------------------------------------------------------------
 # Capsule figure serving (Cycle B)
 # ---------------------------------------------------------------------------
 
