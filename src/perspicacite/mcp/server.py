@@ -1214,19 +1214,38 @@ async def add_dois_to_kb(
 
 
 @mcp.tool()
-async def push_to_zotero(dois: list[str] | str) -> str:
+async def push_to_zotero(
+    dois: list[str] | str,
+    attach_pdf: bool = False,
+    attach_supplementary: bool = False,
+) -> str:
     """Push one or more DOIs to the configured Zotero library.
 
-    Fetches metadata (abstract-only, no slow PDF download) via the unified
-    pipeline and calls ZoteroClient.create_item for each DOI.  Skips
-    duplicates automatically (ZoteroClient checks by DOI before creating).
+    Fetches metadata via the unified pipeline and calls
+    :meth:`ZoteroClient.create_item` for each DOI. Skips duplicates
+    automatically (ZoteroClient checks by DOI before creating).
+
+    Optionally attaches the cached PDF and/or supplementary files. The
+    PDF is sourced from ``pdf_download.cache_dir`` (see ``cache_pdfs``);
+    if no cached PDF exists we trigger a fetch via the unified pipeline
+    so the upload has something to attach. Supplementary attachment
+    requires the paper to already have a capsule with downloaded SI.
+
+    Cloud-only — the local desktop API rejects writes and attachment
+    upload via the documented 3-step protocol. Group libraries also
+    require the cloud API.
 
     Args:
         dois: A single DOI string or a list of DOIs (max 100 per call).
+        attach_pdf: If True, upload the cached PDF as a child attachment.
+        attach_supplementary: If True, upload any
+            ``data/capsules/<paper_id>/supplementary/files/*`` as
+            additional child attachments (only files already on disk).
 
     Returns:
-        JSON ``{"created": [...], "skipped": [], "failed": [...]}``.
-        Returns an error JSON when Zotero is not configured.
+        JSON ``{"created": [...], "skipped": [], "failed": [...]}`` where
+        each ``created`` entry includes ``{"doi", "key",
+        "attached_pdf"?, "attached_supplementary"?}``.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -1241,15 +1260,24 @@ async def push_to_zotero(dois: list[str] | str) -> str:
     if len(dois) > 100:
         return _json_error("at most 100 DOIs per call")
 
+    pdf_config = state.config.pdf_download
+    cache_dir = pdf_config.cache_dir if (pdf_config and pdf_config.cache_pdfs) else None
+    cookies_path = pdf_config.cookies_path if pdf_config else None
+
     try:
-        import httpx
         from perspicacite.integrations.zotero import ZoteroClient
         from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.pipeline.download.cookies import (
+            build_authenticated_client,
+        )
+        from perspicacite.pipeline.download.pdf_cache import (
+            cached_pdf_path,
+        )
 
         created: list[dict] = []
         failed: list[dict] = []
 
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http_client:
+        async with build_authenticated_client(cookies_path=cookies_path) as http_client:
             zotero = ZoteroClient(
                 api_key=cfg.api_key,
                 library_id=cfg.library_id,
@@ -1263,26 +1291,96 @@ async def push_to_zotero(dois: list[str] | str) -> str:
                 if not doi:
                     continue
                 try:
+                    # Step 1: metadata-only fetch to know what to write.
                     content = await retrieve_paper_content(
                         doi,
                         http_client=http_client,
-                        pdf_parser=None,  # metadata-only — no slow PDF download
+                        pdf_parser=None,  # metadata-only here
                     )
                     paper: dict[str, Any] = dict(content.metadata or {})
                     paper["doi"] = doi
                     paper["abstract"] = content.abstract or paper.get("abstract")
                     key = await zotero.create_item(paper)
-                    if key:
-                        created.append({"doi": doi, "key": key})
-                    else:
+                    if not key:
                         failed.append({"doi": doi, "reason": "no key returned"})
+                        continue
+                    entry: dict[str, Any] = {"doi": doi, "key": key}
+
+                    # Step 2 (optional): PDF attachment.
+                    if attach_pdf:
+                        pdf_path = (
+                            cached_pdf_path(doi, cache_dir) if cache_dir else None
+                        )
+                        if pdf_path is None and state.pdf_parser is not None:
+                            # Trigger a full fetch (which also populates the
+                            # cache for next time) before uploading.
+                            await retrieve_paper_content(
+                                doi,
+                                http_client=http_client,
+                                pdf_parser=state.pdf_parser,
+                                unpaywall_email=pdf_config.unpaywall_email,
+                                wiley_tdm_token=pdf_config.wiley_tdm_token,
+                                aaas_api_key=pdf_config.aaas_api_key,
+                                rsc_api_key=pdf_config.rsc_api_key,
+                                springer_api_key=pdf_config.springer_api_key,
+                                pdf_cache_dir=cache_dir,
+                            )
+                            pdf_path = (
+                                cached_pdf_path(doi, cache_dir) if cache_dir else None
+                            )
+                        if pdf_path is not None:
+                            try:
+                                att_key = await zotero.upload_attachment(
+                                    parent_item_key=key,
+                                    file_path=str(pdf_path),
+                                    filename=pdf_path.name,
+                                    content_type="application/pdf",
+                                )
+                                entry["attached_pdf"] = bool(att_key)
+                            except Exception as exc:
+                                entry["pdf_attach_error"] = str(exc)
+                        else:
+                            entry["attached_pdf"] = False
+                            entry["pdf_attach_error"] = "no PDF available"
+
+                    # Step 3 (optional): supplementary attachments from capsule.
+                    if attach_supplementary:
+                        from pathlib import Path
+                        si_dir = (
+                            Path(state.config.capsule.root)
+                            / doi.replace("/", "_")
+                            / "supplementary" / "files"
+                        )
+                        attached_si: list[str] = []
+                        si_errors: list[dict] = []
+                        if si_dir.exists():
+                            for f in sorted(si_dir.glob("*")):
+                                if not f.is_file():
+                                    continue
+                                try:
+                                    att_key = await zotero.upload_attachment(
+                                        parent_item_key=key,
+                                        file_path=str(f),
+                                        filename=f.name,
+                                    )
+                                    if att_key:
+                                        attached_si.append(f.name)
+                                except Exception as exc:
+                                    si_errors.append(
+                                        {"file": f.name, "error": str(exc)}
+                                    )
+                        entry["attached_supplementary"] = attached_si
+                        if si_errors:
+                            entry["si_attach_errors"] = si_errors
+
+                    created.append(entry)
                 except Exception as exc:
                     failed.append({"doi": doi, "reason": str(exc)})
 
         logger.info(
             "mcp_push_to_zotero",
-            created=len(created),
-            failed=len(failed),
+            created=len(created), failed=len(failed),
+            attach_pdf=attach_pdf, attach_supplementary=attach_supplementary,
         )
         return _json_ok({"created": created, "skipped": [], "failed": failed})
 

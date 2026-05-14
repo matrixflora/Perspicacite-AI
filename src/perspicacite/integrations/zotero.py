@@ -343,6 +343,159 @@ class ZoteroClient:
             return None
         return r.content
 
+    async def upload_attachment(
+        self,
+        *,
+        parent_item_key: str,
+        file_path: str,
+        filename: str | None = None,
+        content_type: str = "application/pdf",
+    ) -> str | None:
+        """Upload a file as a child attachment of ``parent_item_key``.
+
+        Implements Zotero's documented 3-step file-upload protocol
+        (https://www.zotero.org/support/dev/web_api/v3/file_upload):
+
+        1. POST `/items` with ``itemType=attachment, linkMode=imported_file,
+           parentItem, filename, contentType, md5, mtime, filesize``
+           to register the attachment metadata; receive its item key.
+        2. POST `/items/<key>/file` (form-encoded, with
+           ``If-None-Match: *``) to request upload credentials
+           (returns ``{url, params, uploadKey, ...}``; or ``{exists: 1}``
+           when the same content already exists server-side).
+        3. PUT the bytes to ``url`` with the returned ``params`` as a
+           multipart body.
+        4. POST `/items/<key>/file` again with ``upload=<uploadKey>``
+           and ``If-None-Match: *`` to register the upload as complete.
+
+        Cloud-only — the local desktop API doesn't support attachment
+        upload through this protocol; group writes also require the
+        cloud API. Returns the attachment item key on success; ``None``
+        on hard failure (logged via :exc:`ZoteroAPIError`).
+        """
+        import hashlib
+        import os
+
+        if self.is_local:
+            raise ZoteroWriteUnsupportedError(
+                "Zotero local API does not support attachment upload; "
+                "use the cloud API (api.zotero.org) instead."
+            )
+        from pathlib import Path
+        path = Path(file_path).expanduser()
+        if not path.exists() or not path.is_file():
+            raise ZoteroAPIError(f"upload_attachment: file not found: {path}")
+        data = path.read_bytes()
+        if not data:
+            raise ZoteroAPIError(f"upload_attachment: empty file: {path}")
+        fname = filename or path.name
+        md5 = hashlib.md5(data).hexdigest()
+        mtime_ms = int(path.stat().st_mtime * 1000)
+
+        c = await self._client()
+
+        # Step 1 — register the attachment shell.
+        register_body = [{
+            "itemType": "attachment",
+            "parentItem": parent_item_key,
+            "linkMode": "imported_file",
+            "title": fname,
+            "filename": fname,
+            "contentType": content_type,
+            "md5": md5,
+            "mtime": mtime_ms,
+        }]
+        r = await c.post(
+            f"{self._base()}/items",
+            json=register_body,
+            headers=self._headers(),
+        )
+        if r.status_code not in (200, 201):
+            raise ZoteroAPIError(
+                f"Zotero attach step1 (register) returned {r.status_code}: "
+                f"{r.text[:300]}"
+            )
+        body = r.json() or {}
+        successful = body.get("successful") or {}
+        if not successful:
+            failed = body.get("failed") or {}
+            raise ZoteroAPIError(
+                f"Zotero attach step1 (register) failed: {failed or body}"
+            )
+        attach_key = next(iter(successful.values())).get("key")
+        if not attach_key:
+            raise ZoteroAPIError("Zotero attach step1: no key returned")
+
+        # Step 2 — request upload credentials. Form-encoded body, NOT JSON.
+        # If-None-Match: * — required for a fresh attachment slot.
+        cred_headers = {
+            "Zotero-API-Key": self.api_key,
+            "Zotero-API-Version": "3",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "If-None-Match": "*",
+        }
+        cred_form = {
+            "md5": md5,
+            "filename": fname,
+            "filesize": str(len(data)),
+            "mtime": str(mtime_ms),
+        }
+        r2 = await c.post(
+            f"{self._base()}/items/{attach_key}/file",
+            data=cred_form,
+            headers=cred_headers,
+        )
+        if r2.status_code != 200:
+            raise ZoteroAPIError(
+                f"Zotero attach step2 (creds) returned {r2.status_code}: "
+                f"{r2.text[:300]}"
+            )
+        creds = r2.json() or {}
+        # Server-side dedup: identical content already uploaded; we're done.
+        if creds.get("exists"):
+            return attach_key
+
+        upload_url = creds.get("url")
+        upload_params = creds.get("params") or {}
+        upload_key = creds.get("uploadKey")
+        if not upload_url or not upload_key:
+            raise ZoteroAPIError(
+                f"Zotero attach step2: bad creds payload {list(creds)}"
+            )
+
+        # Step 3 — POST the bytes to the storage URL. Zotero's docs use
+        # multipart/form-data with the actual file under ``file``.
+        # Use a separate (un-authenticated) request — the upload URL is
+        # presigned.
+        files = {"file": (fname, data, content_type)}
+        # ``params`` from Zotero are form fields that must accompany the
+        # bytes (e.g. ``key``, ``acl``, ``policy``, etc. for the S3-like
+        # store). httpx multipart: pass them as ``data``.
+        r3 = await c.post(
+            upload_url,
+            data=upload_params,
+            files=files,
+        )
+        if r3.status_code not in (200, 201, 204):
+            raise ZoteroAPIError(
+                f"Zotero attach step3 (storage POST) returned "
+                f"{r3.status_code}: {r3.text[:300]}"
+            )
+
+        # Step 4 — finalize.
+        finalize_form = {"upload": upload_key}
+        r4 = await c.post(
+            f"{self._base()}/items/{attach_key}/file",
+            data=finalize_form,
+            headers=cred_headers,
+        )
+        if r4.status_code not in (200, 204):
+            raise ZoteroAPIError(
+                f"Zotero attach step4 (finalize) returned {r4.status_code}: "
+                f"{r4.text[:300]}"
+            )
+        return attach_key
+
     async def get_item_notes(self, item_key: str) -> list[str]:
         """Plain-text content of all 'note' children of item_key (HTML stripped)."""
         c = await self._client()
