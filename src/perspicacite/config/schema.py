@@ -107,6 +107,35 @@ class KnowledgeBaseConfig(BaseModel):
         description="Max chars of LLM-generated context prepended per chunk.",
     )
 
+    # ---- embedding cache (Wave 2.2) --------------------------------
+    # Cache embedding vectors keyed by (model, text). Embeddings are
+    # deterministic per (model, text), so the cache is safe to keep
+    # forever by default. See
+    # docs/superpowers/specs/2026-05-14-embedding-cache-design.md.
+    embedding_cache_enabled: bool = Field(
+        default=True,
+        description=(
+            "Cache embedding vectors on disk so repeated ingests don't "
+            "re-embed identical chunks. Default on; per-call bypass via "
+            "provider.embed(..., cache=False)."
+        ),
+    )
+    embedding_cache_path: Path = Field(
+        default=Path("data/embedding_cache.db"),
+        description=(
+            "SQLite file backing the embedding cache. Covered by the "
+            "data/*.db .gitignore rule."
+        ),
+    )
+    embedding_cache_ttl_days: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Days before a cached embedding expires. 0 = forever "
+            "(default — embeddings are deterministic per model+text)."
+        ),
+    )
+
 
 class CopyrightFilterConfig(BaseModel):
     """Runtime check on synthesis output to catch verbatim copies of
