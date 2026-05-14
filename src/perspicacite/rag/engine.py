@@ -149,18 +149,34 @@ class RAGEngine:
         handler = self._get_mode_handler(request.mode)
         collector = self._build_collector(request, message_id, conversation_id)
 
+        # NOTE: don't use `with collecting(collector)` here.
+        #
+        # When this generator yields under Starlette's StreamingResponse, the
+        # awaitable can resume in a different asyncio Context than the one
+        # that set the ContextVar's token. Then `ContextVar.reset(token)`
+        # raises `ValueError: Token was created in a different Context`,
+        # which surfaces as `rag_stream_error` and silently skips the
+        # `_save_provenance` call below — so no provenance row is written.
+        #
+        # Setting the ContextVar without trying to reset it is safe: each
+        # streaming request runs in its own task; the var goes out of scope
+        # with the task. The agentic save path uses the same pattern.
+        from perspicacite.provenance.context import set_collector
+        set_collector(collector)
+
+        saved = False
         try:
-            with collecting(collector):
-                async for event in handler.execute_stream(
-                    request=request,
-                    llm=self.llm_client,
-                    vector_store=self.vector_store,
-                    embedding_provider=self.embedding_provider,
-                    tools=self.tool_registry,
-                ):
-                    yield event
+            async for event in handler.execute_stream(
+                request=request,
+                llm=self.llm_client,
+                vector_store=self.vector_store,
+                embedding_provider=self.embedding_provider,
+                tools=self.tool_registry,
+            ):
+                yield event
 
             await self._save_provenance(collector, message_id)
+            saved = True
 
             logger.info("rag_stream_complete", mode=request.mode.value)
 
@@ -175,6 +191,16 @@ class RAGEngine:
                 event="error",
                 data=f'{{"message": "{e!s}"}}',
             )
+        finally:
+            # Async generators can be closed early (client disconnect,
+            # GeneratorExit), which bypasses the `except Exception` branch
+            # and skips the save above. Make a best-effort save here so
+            # provenance is still recorded for partially-consumed streams.
+            if not saved:
+                try:
+                    await self._save_provenance(collector, message_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("provenance_save_finally_failed", error=str(exc))
 
     def _build_collector(
         self,
