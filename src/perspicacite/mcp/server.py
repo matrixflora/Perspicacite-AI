@@ -184,6 +184,17 @@ async def search_literature(
 
     try:
         adapter = SciLExAdapter()
+        if not adapter.available:
+            # SciLEx is an optional internal package; without it, this tool
+            # has no backend. Tell the caller instead of silently returning
+            # zero results.
+            return _json_error(
+                "SciLEx is not installed. search_literature has no backend without it. "
+                "Install SciLEx separately (it's not on PyPI — see Perspicacité's README), "
+                "or use Perspicacité's KB-search tools (search_knowledge_base, "
+                "generate_report) on a pre-ingested KB instead.",
+                scilex_available=False,
+            )
         papers = await adapter.search(
             query=query,
             max_results=max_results,
