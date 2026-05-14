@@ -85,6 +85,26 @@ PROVIDER_REGISTRY: dict[str, dict[str, Any]] = {
             "sparingly. No prompt caching, no temperature control."
         ),
     },
+    "agent_cli": {
+        # Generic subprocess provider. Models are whatever the
+        # configured CLI accepts; we list the most common targets so
+        # validators and UIs don't reject sensible defaults.
+        "models": [
+            "sonnet", "haiku", "opus",        # Claude Code
+            "gpt-5", "gpt-5-mini", "o4-mini", # Codex (subject to OpenAI's flag schema)
+            "default",                        # OpenClaw / Hermes / any CLI that picks its own
+        ],
+        "env_key": None,  # CLI manages its own auth
+        "supports_streaming": False,
+        "supports_tools": False,
+        "max_tokens": 8192,
+        "notes": (
+            "Generic agent-CLI subprocess provider. Point "
+            "llm.providers.agent_cli at any single-shot completion CLI "
+            "(Codex, OpenClaw, Hermes, opencode, OpenHands, ...) via "
+            "the config.{name}.example.yml presets in the repo root."
+        ),
+    },
 }
 
 
@@ -143,7 +163,11 @@ def validate_provider_config(provider: str, model: str) -> None:
             f"Set {env_key} environment variable."
         )
 
-    # Check model
+    # Check model. For subprocess agent CLIs we can't enumerate every
+    # valid model name (depends on the binary the user wired up), so
+    # we accept anything — the CLI will reject bogus names itself.
+    if provider in ("claude_cli", "agent_cli"):
+        return
     if model not in provider_config["models"]:
         available = ", ".join(provider_config["models"])
         raise ValueError(

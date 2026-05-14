@@ -1,0 +1,71 @@
+# Perspicacité — OpenAI Codex CLI subscription preset
+#
+# Routes every internal LLM call through OpenAI's `codex` CLI as a
+# subprocess. Your ChatGPT Plus/Pro/Team subscription (the one bundled
+# with Codex CLI access) pays for inference; no OPENAI_API_KEY needed
+# in this config.
+#
+# **⚠ Best-effort preset.** Codex CLI flags have changed across
+# releases. Verify against your installed version with
+# `codex --help` and adjust the `extra_args`, `prompt_via`,
+# `output_format`, and `result_json_path` below if the defaults don't
+# match. The most common shapes:
+#
+#   codex exec "prompt"                          → prompt_via: arg
+#   codex exec --json "prompt"                   → output_format: json
+#   codex --quiet -p "prompt"                    → prompt_via: arg, prompt_flag: -p
+#
+# **Prerequisites:**
+# 1. Install Codex CLI (instructions at https://openai.com/codex/)
+# 2. Sign in:  `codex login`
+# 3. Verify:   `echo "say hi" | codex exec` (or `codex exec "say hi"`)
+# 4. Use this file as your config:
+#       perspicacite -c config.codex.example.yml serve
+#
+# Same caveats as Claude Code: subscription rate limits are shared,
+# no prompt caching, no per-call temperature/max_tokens control.
+
+llm:
+  default_provider: "agent_cli"
+  default_model:    "gpt-5"             # whatever your Codex subscription supports
+
+  # Use the same provider for every stage; Codex doesn't expose
+  # discrete "cheap" model tiers via the CLI today.
+  providers_per_stage:
+    routing:          "agent_cli"
+    screening:        "agent_cli"
+    rephrase:         "agent_cli"
+    contextual:       "agent_cli"
+    synthesis_basic:  "agent_cli"
+    synthesis_heavy:  "agent_cli"
+
+  providers:
+    agent_cli:
+      base_url: ""
+      executable: "codex"
+      timeout: 240
+      max_retries: 1
+
+      # Adjust to match your Codex version:
+      prompt_via: "arg"                 # codex exec takes the prompt as an argument
+      extra_args: ["exec"]              # subcommand to run
+
+      # Codex sometimes accepts `--system "..."`; if not, leave None
+      # and the system prompt will be prepended to the body.
+      system_flag: null
+
+      # Codex's `--model` flag (verify with `codex exec --help`):
+      model_flag: "--model"
+
+      # Output: assume plain text. If your version supports `--json`,
+      # set output_format: "json" and result_json_path to whichever
+      # key holds the assistant text (commonly "response" or
+      # "message.content[0].text").
+      output_format: "text"
+      result_json_path: null
+
+      # Model aliases — collapse provider-prefixed names if you set
+      # any in per-stage `models`. Empty by default.
+      model_aliases: {}
+
+      env_extra: {}

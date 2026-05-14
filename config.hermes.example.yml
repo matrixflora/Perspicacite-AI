@@ -1,0 +1,62 @@
+# Perspicacité — Hermes Agent preset (Nous Research)
+#
+# Routes every internal LLM call through your local Hermes Agent
+# (https://hermes-agent.nousresearch.com/) as a subprocess.
+#
+# **⚠ Best-effort preset.** Hermes is an autonomous persistent-memory
+# agent platform, not primarily a single-shot completion CLI. The
+# upstream docs don't yet publish a stable non-interactive flag
+# schema. The values below are reasonable starting points — verify
+# with `hermes --help` (or `hermes agent --help`) and adjust.
+#
+# Hermes manages its own model selection internally, so the
+# `default_model` field below is informational only. The
+# `agent.model` field in Hermes's own config file (set during
+# `hermes setup`) is the actual selector.
+#
+# **Prerequisites:**
+# 1. Install:  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+# 2. Configure:  `hermes setup`
+# 3. Verify:  `hermes` (interactive) or your version's one-shot flag
+# 4. Use this file as your config:
+#       perspicacite -c config.hermes.example.yml serve
+#
+# **Note:** If Hermes doesn't ship a one-shot completion mode in
+# your version, the alternative is to run Hermes models directly
+# via Ollama (the Hermes family is published on Ollama as e.g.
+# `hermes-3:70b`) — that's a fully supported path today via
+# config.ollama.example.yml.
+
+llm:
+  default_provider: "agent_cli"
+  default_model:    "default"
+
+  providers_per_stage:
+    routing:          "agent_cli"
+    screening:        "agent_cli"
+    rephrase:         "agent_cli"
+    contextual:       "agent_cli"
+    synthesis_basic:  "agent_cli"
+    synthesis_heavy:  "agent_cli"
+
+  providers:
+    agent_cli:
+      base_url: ""
+      executable: "hermes"
+      timeout: 240
+      max_retries: 1
+
+      # Assume a `hermes ask "prompt"` or similar one-shot mode.
+      # Adjust to match your installed version.
+      prompt_via: "arg"
+      prompt_flag: null                 # positional after subcommand
+      extra_args: ["ask"]               # change to whatever your version uses
+
+      system_flag: null
+      model_flag: null                  # model picked from hermes's own config
+
+      output_format: "text"
+      result_json_path: null
+
+      model_aliases: {}
+      env_extra: {}
