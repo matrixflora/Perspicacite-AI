@@ -103,6 +103,7 @@ packages_to_use/
 !docs/budget-caps-*.md
 !docs/rate-limit-*.md
 !docs/fallback-chain-*.md
+!docs/checkpoint-resume-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
