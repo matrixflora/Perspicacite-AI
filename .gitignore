@@ -94,6 +94,7 @@ packages_to_use/
 !docs/agent-cli-caveats.md
 !docs/roadmap-*.md
 !docs/test-status-*.md
+!docs/provider-matrix-status-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
