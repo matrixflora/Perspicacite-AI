@@ -144,12 +144,20 @@ async def generate_chunk_context(
     if len(doc) > 50_000:
         doc = doc[:50_000] + "\n...[truncated for context generation]"
 
-    messages = [
-        {"role": "system", "content": _PROMPT_SYSTEM},
-        {"role": "user", "content": _PROMPT_USER_TEMPLATE.format(
-            document=doc, chunk=chunk_text,
-        )},
-    ]
+    # The document is identical across every chunk of the same paper,
+    # so we mark it as the cacheable prefix. Anthropic's 5-minute cache
+    # TTL means all-chunks-of-paper-X within one ingestion ride the
+    # cache for ~90% off on the document tokens, which dominate cost.
+    from perspicacite.llm.client import build_cached_messages
+    messages = build_cached_messages(
+        system=_PROMPT_SYSTEM,
+        cacheable_context=f"<document>\n{doc}\n</document>",
+        user_message=(
+            f"<chunk>\n{chunk_text}\n</chunk>\n\n"
+            "Write the 50-100 word contextual sentence:"
+        ),
+        provider=provider,
+    )
     try:
         text = await llm_client.complete(
             messages=messages,

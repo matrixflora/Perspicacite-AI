@@ -17,6 +17,76 @@ from perspicacite.logging import get_logger
 logger = get_logger("perspicacite.llm")
 
 
+def build_cached_messages(
+    *,
+    system: str | None = None,
+    cacheable_context: str | None = None,
+    user_message: str,
+    provider: str = "anthropic",
+) -> list[dict[str, Any]]:
+    """Build a message list with Anthropic prompt-caching markers.
+
+    Anthropic's prompt-caching API charges 90% less on cached prefix
+    tokens (cache writes cost 1.25×, cache reads cost 0.1× of base).
+    A 5-minute TTL covers typical scientific-research session
+    cadence. Big wins are anywhere we re-send the same large prefix
+    across calls:
+
+      - kb_router: KB context block (descriptions + sampled titles)
+        is identical for every ``kb_name="auto"`` query.
+      - contextual retrieval: the source document is re-sent for
+        every chunk of the same paper.
+      - RAG synthesis: large system prompts shared across questions.
+
+    On non-Anthropic providers we collapse into a plain string message
+    so call sites don't have to branch.
+
+    Args:
+        system: Optional system prompt. Sent as its own ``system``
+            message (Anthropic-style) when provider == "anthropic",
+            otherwise prepended to user content.
+        cacheable_context: The big repeated prefix. Marked with
+            ``cache_control={"type": "ephemeral"}`` on Anthropic.
+        user_message: The variable per-call portion (question, chunk
+            being summarized, etc.). Never marked cacheable.
+        provider: Routing key; ``"anthropic"`` enables caching.
+
+    Returns:
+        Messages list ready to pass to :meth:`AsyncLLMClient.complete`.
+    """
+    if provider != "anthropic":
+        # OpenAI / DeepSeek / Ollama: plain text concatenation.
+        msgs: list[dict[str, Any]] = []
+        if system:
+            msgs.append({"role": "system", "content": system})
+        body_parts: list[str] = []
+        if cacheable_context:
+            body_parts.append(cacheable_context)
+        body_parts.append(user_message)
+        msgs.append({"role": "user", "content": "\n\n".join(body_parts)})
+        return msgs
+
+    # Anthropic via LiteLLM accepts content as either a string or a
+    # list of typed blocks; the ``cache_control`` flag attaches only
+    # to a block, so we always emit list form for user content here.
+    msgs = []
+    if system:
+        msgs.append({
+            "role": "system",
+            "content": [{"type": "text", "text": system}],
+        })
+    user_content: list[dict[str, Any]] = []
+    if cacheable_context:
+        user_content.append({
+            "type": "text",
+            "text": cacheable_context,
+            "cache_control": {"type": "ephemeral"},
+        })
+    user_content.append({"type": "text", "text": user_message})
+    msgs.append({"role": "user", "content": user_content})
+    return msgs
+
+
 class LLMClient(Protocol):
     """Protocol for LLM clients."""
 
