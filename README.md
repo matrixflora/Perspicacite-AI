@@ -372,6 +372,43 @@ work without SciLEx.
 `lxml`, etc. Installing it inside Perspicacité's venv may bump those
 for the whole environment.
 
+### Institutional-access PDFs via browser cookies
+
+For papers behind a publisher paywall that your institution licenses,
+Perspicacité can ride your existing browser session by replaying the
+cookies your browser already has — the same trick the Zotero Connector
+browser extension uses, just from server-side.
+
+**Setup:**
+
+1. In your browser, log in to your library's proxy / publisher SSO so
+   you can view paywalled PDFs.
+2. Install a "Get cookies.txt" / "EditThisCookie" extension (any
+   exporter that produces Netscape-format `cookies.txt`).
+3. Export cookies for the relevant publisher domains and save the
+   file somewhere private:
+   ```
+   ~/.config/perspicacite/proxy_cookies.txt
+   ```
+4. In `config.yml`:
+   ```yaml
+   pdf_download:
+     cookies_path: "/Users/me/.config/perspicacite/proxy_cookies.txt"
+     cookie_domains:
+       - "sciencedirect.com"
+       - "wiley.com"
+       - "onlinelibrary.wiley.com"
+       - "proxy.lib.example.edu"   # your library proxy
+   ```
+5. Restart. PDF requests to those domains now carry your cookies.
+
+**Notes:**
+- Empty `cookie_domains` list = attach cookies to all PDF requests.
+- Cookies expire — re-export from the browser when downloads start
+  failing again.
+- Keep the cookies file `chmod 600`; anyone with read access can
+  impersonate your library session.
+
 ### Use the local Zotero desktop API
 
 If you have Linked Files / ZotFile-managed PDFs or simply don't want to

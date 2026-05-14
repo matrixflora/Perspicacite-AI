@@ -126,11 +126,21 @@ class AppState:
         self.job_registry = JobRegistry(db_path=self.session_store.db_path)
         logger.info("Job registry initialized")
 
-        # Initialize PDF downloader and parser
+        # Initialize PDF downloader and parser. The downloader picks up
+        # the optional cookies.txt path + cookie-domain allowlist from
+        # config.pdf_download so PDF requests can ride a logged-in
+        # browser session (institutional access via SSO/proxy). The
+        # cookie jar is loaded lazily per-request inside
+        # PDFDownloader.download.
         from perspicacite.pipeline.download import PDFDownloader
         from perspicacite.pipeline.parsers.pdf import PDFParser
 
-        self.pdf_downloader = PDFDownloader()
+        self.pdf_downloader = PDFDownloader(
+            timeout=getattr(config.pdf_download, "timeout", 30.0),
+            max_retries=getattr(config.pdf_download, "max_retries", 3),
+            cookies_path=getattr(config.pdf_download, "cookies_path", None),
+            cookie_domains=getattr(config.pdf_download, "cookie_domains", []),
+        )
         self.pdf_parser = PDFParser()
         logger.info("PDF downloader and parser initialized")
 
