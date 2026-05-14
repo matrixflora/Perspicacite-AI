@@ -58,6 +58,10 @@ class MCPState:
         self.pdf_parser: Any = None
         self.tool_registry: Any = None
         self.provenance_store: Any = None
+        # MCP doesn't run with the FastAPI JobRegistry; tools that need
+        # one (fetch_paper_resources) fall back to a synchronous inline
+        # registry when this is None.
+        self.job_registry: Any = None
         self.initialized: bool = False
 
     async def initialize(self, config: Any) -> None:
