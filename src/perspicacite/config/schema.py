@@ -91,6 +91,31 @@ class KnowledgeBaseConfig(BaseModel):
     )
 
 
+class CopyrightFilterConfig(BaseModel):
+    """Runtime check on synthesis output to catch verbatim copies of
+    source-paper text. Defense-in-depth on top of the safeguard prompt
+    that already nudges the LLM to paraphrase.
+
+    Modes:
+    - ``log``: warn-only, answer returned unchanged (always-on default).
+    - ``quote``: wrap spans in “…” + citation (no LLM call).
+    - ``strip``: replace spans with ``[content paraphrased]``.
+    - ``rewrite``: LLM paraphrases the flagged spans (one extra call).
+    """
+
+    enabled: bool = Field(default=True, description="Run the copyright filter on synthesis output.")
+    action: Literal["log", "quote", "strip", "rewrite"] = Field(
+        default="log",
+        description="What to do when a verbatim span is detected.",
+    )
+    min_ngram: int = Field(
+        default=8, ge=3, le=30,
+        description="Minimum word-ngram length to flag as verbatim.",
+    )
+    rewrite_model: str = "claude-haiku-4-5"
+    rewrite_provider: str = "anthropic"
+
+
 class LLMProviderConfig(BaseModel):
     """Configuration for an LLM provider."""
 
@@ -457,6 +482,7 @@ class Config(BaseModel):
     capsule: CapsuleConfig = Field(default_factory=CapsuleConfig)
     multimodal: MultimodalConfig = Field(default_factory=MultimodalConfig)
     external_resources: ExternalResourcesConfig = Field(default_factory=ExternalResourcesConfig)
+    copyright_filter: CopyrightFilterConfig = Field(default_factory=CopyrightFilterConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":
