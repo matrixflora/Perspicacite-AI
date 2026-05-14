@@ -665,7 +665,8 @@ def build_capsule_cmd(ctx, paper_id: str, kb: str, force: bool) -> None:
             click.echo(f"Error: KB '{kb}' not found", err=True)
             raise SystemExit(1)
         rows = await state.vector_store.list_paper_metadata(kb_meta.collection_name)
-        row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+        _norm_pid = paper_id[4:] if paper_id.startswith("doi:") else paper_id
+        row = next((r for r in rows if r.get("paper_id") == _norm_pid), None)
         if row is None:
             click.echo(f"Error: paper '{paper_id}' not in KB '{kb}'", err=True)
             raise SystemExit(1)
@@ -758,7 +759,8 @@ def fetch_resources_cmd(
             click.echo(f"Error: KB '{kb_name}' not found", err=True)
             raise SystemExit(1)
         rows = await state.vector_store.list_paper_metadata(kb_meta.collection_name)
-        row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+        _norm_pid = paper_id[4:] if paper_id.startswith("doi:") else paper_id
+        row = next((r for r in rows if r.get("paper_id") == _norm_pid), None)
         if row is None:
             click.echo(f"Error: paper '{paper_id}' not in KB '{kb_name}'", err=True)
             raise SystemExit(1)

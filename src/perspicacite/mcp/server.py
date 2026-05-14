@@ -125,6 +125,13 @@ def _json_ok(data: dict[str, Any]) -> str:
     return json.dumps({"success": True, **data}, ensure_ascii=False, default=str)
 
 
+def _normalize_paper_id(paper_id: str) -> str:
+    """Strip the ``doi:`` prefix some surfaces use, so lookups match the
+    bare-DOI form stored in the KB. ``doi:10.1038/x`` → ``10.1038/x``.
+    """
+    return paper_id[4:] if paper_id.startswith("doi:") else paper_id
+
+
 def _json_error(message: str, **extra: Any) -> str:
     """Build an error JSON response."""
     return json.dumps({"success": False, "error": message, **extra}, default=str)
@@ -1402,7 +1409,7 @@ async def build_capsule(
     if kb is None:
         return {"error": f"KB '{kb_name}' not found"}
     rows = await mcp_state.vector_store.list_paper_metadata(kb.collection_name)
-    row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+    row = next((r for r in rows if r.get("paper_id") == _normalize_paper_id(paper_id)), None)
     if row is None:
         return {"error": f"paper '{paper_id}' not found in KB '{kb_name}'"}
     paper = resolve_paper_from_metadata(row)
@@ -1478,7 +1485,7 @@ async def fetch_paper_resources(
     if kb is None:
         return {"error": f"KB '{kb_name}' not found"}
     rows = await mcp_state.vector_store.list_paper_metadata(kb.collection_name)
-    row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+    row = next((r for r in rows if r.get("paper_id") == _normalize_paper_id(paper_id)), None)
     if row is None:
         return {"error": f"paper '{paper_id}' not found in KB '{kb_name}'"}
     paper = resolve_paper_from_metadata(row)
