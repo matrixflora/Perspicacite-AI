@@ -62,3 +62,7 @@ llm:
       executable: "claude"
       timeout: 180
       max_retries: 1                    # subprocess retries waste rate-limit
+      # Wave 2.3: report honest token counts in provenance. Claude
+      # Code surfaces these in its `--output-format json` payload.
+      usage_input_tokens_path:  "usage.input_tokens"
+      usage_output_tokens_path: "usage.output_tokens"

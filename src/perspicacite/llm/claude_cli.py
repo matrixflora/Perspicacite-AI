@@ -54,6 +54,8 @@ def ClaudeCLIClient(
     timeout: float = 180.0,
     cwd: str | None = None,
     env_extra: dict[str, str] | None = None,
+    usage_input_tokens_path: str | None = None,
+    usage_output_tokens_path: str | None = None,
 ) -> AgentCLIClient:  # noqa: N802 — preserve the legacy class-shaped name
     """Backwards-compatible factory returning an :class:`AgentCLIClient`
     pre-configured for Claude Code.
@@ -72,6 +74,10 @@ def ClaudeCLIClient(
         merged = dict(kw["env_extra"])
         merged.update(env_extra)
         kw["env_extra"] = merged
+    if usage_input_tokens_path is not None:
+        kw["usage_input_tokens_path"] = usage_input_tokens_path
+    if usage_output_tokens_path is not None:
+        kw["usage_output_tokens_path"] = usage_output_tokens_path
     return AgentCLIClient(**kw)
 
 
