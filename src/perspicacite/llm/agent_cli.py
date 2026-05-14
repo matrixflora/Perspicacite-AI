@@ -165,6 +165,7 @@ class AgentCLIClient:
         extra_args: list[str] | None = None,
         output_format: str = "text",
         result_json_path: str | None = None,
+        output_file_flag: str | None = None,
         timeout: float = 180.0,
         cwd: str | None = None,
         env_extra: dict[str, str] | None = None,
@@ -179,6 +180,12 @@ class AgentCLIClient:
         self.extra_args = list(extra_args or [])
         self.output_format = output_format
         self.result_json_path = result_json_path
+        # When set, a tempfile is created per call and passed to the
+        # CLI via this flag (e.g. Codex's `--output-last-message`).
+        # The result is read from that file instead of stdout — useful
+        # when the CLI prints banner / progress output to stdout that
+        # we'd otherwise need to scrape.
+        self.output_file_flag = output_file_flag
         self.timeout = timeout
         self.cwd = cwd
         self.env_extra = dict(env_extra or {})
@@ -217,6 +224,20 @@ class AgentCLIClient:
             cmd.extend([self.model_flag, resolved_model])
         if system and self.system_flag:
             cmd.extend([self.system_flag, system])
+        # When output_file_flag is set, the CLI writes its final
+        # message to a tempfile instead of (or in addition to)
+        # stdout. We allocate the tempfile here and read it after the
+        # subprocess exits. Done before prompt_via handling because
+        # the file arg should appear in the flag block, not at the
+        # tail where the prompt goes for arg-mode CLIs.
+        out_path: str | None = None
+        if self.output_file_flag:
+            import tempfile
+            fd, out_path = tempfile.mkstemp(
+                prefix=f"{self.provider_label}_", suffix=".out"
+            )
+            os.close(fd)
+            cmd.extend([self.output_file_flag, out_path])
         # When prompt_via == "arg", append the body as an argument.
         if self.prompt_via == "arg":
             if self.prompt_flag:
@@ -273,11 +294,29 @@ class AgentCLIClient:
 
         if proc.returncode != 0:
             err = stderr.decode("utf-8", errors="replace")[:500]
+            if out_path:
+                try:
+                    os.unlink(out_path)
+                except OSError:
+                    pass
             raise RuntimeError(
                 f"{self.provider_label}: CLI exited {proc.returncode}: {err}"
             )
 
-        raw = stdout.decode("utf-8", errors="replace").strip()
+        # Pick the source of truth: tempfile when output_file_flag is
+        # set (cleanest — many CLIs print banner/progress to stdout
+        # that would otherwise need scraping), stdout otherwise.
+        if out_path:
+            try:
+                with open(out_path, "r", encoding="utf-8", errors="replace") as fh:
+                    raw = fh.read().strip()
+            finally:
+                try:
+                    os.unlink(out_path)
+                except OSError:
+                    pass
+        else:
+            raw = stdout.decode("utf-8", errors="replace").strip()
         text = self._parse_output(raw)
 
         logger.info(

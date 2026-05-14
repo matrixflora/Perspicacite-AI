@@ -5,29 +5,30 @@
 # with Codex CLI access) pays for inference; no OPENAI_API_KEY needed
 # in this config.
 #
-# **⚠ Best-effort preset.** Codex CLI flags have changed across
-# releases. Verify against your installed version with
-# `codex --help` and adjust the `extra_args`, `prompt_via`,
-# `output_format`, and `result_json_path` below if the defaults don't
-# match. The most common shapes:
-#
-#   codex exec "prompt"                          → prompt_via: arg
-#   codex exec --json "prompt"                   → output_format: json
-#   codex --quiet -p "prompt"                    → prompt_via: arg, prompt_flag: -p
+# **Verified against codex-cli 0.130.0** (run `codex --version` to
+# check yours). If your version differs, run `codex exec --help` and
+# adjust the flags below.
 #
 # **Prerequisites:**
-# 1. Install Codex CLI (instructions at https://openai.com/codex/)
-# 2. Sign in:  `codex login`
-# 3. Verify:   `echo "say hi" | codex exec` (or `codex exec "say hi"`)
+# 1. Install Codex CLI:  `npm install -g @openai/codex`
+# 2. Sign in:  `codex login`  (browser-based ChatGPT auth)
+# 3. Verify:   `echo "say hi" | codex exec --skip-git-repo-check`
 # 4. Use this file as your config:
 #       perspicacite -c config.codex.example.yml serve
 #
-# Same caveats as Claude Code: subscription rate limits are shared,
-# no prompt caching, no per-call temperature/max_tokens control.
+# **Caveat — Codex is an agent, not a pure completion endpoint.**
+# Each call spins up Codex's full session machinery (sandbox, tool
+# loop, memory). Per-call latency is ~5–15 s even for tiny prompts
+# (we measured ~9 s for a trivial JSON response). For heavy
+# multi-paper ingests, expect minutes-to-hours and shared rate limits
+# with your interactive Codex session.
+#
+# Same general caveats as the other agent-CLI presets: no prompt
+# caching, no per-call temperature/max_tokens, no streaming.
 
 llm:
   default_provider: "agent_cli"
-  default_model:    "gpt-5"             # whatever your Codex subscription supports
+  default_model:    "gpt-5.5"           # whatever your Codex subscription supports
 
   # Use the same provider for every stage; Codex doesn't expose
   # discrete "cheap" model tiers via the CLI today.
@@ -43,29 +44,42 @@ llm:
     agent_cli:
       base_url: ""
       executable: "codex"
-      timeout: 240
+      timeout: 300                      # Codex is slow per call — give it room
       max_retries: 1
 
-      # Adjust to match your Codex version:
-      prompt_via: "arg"                 # codex exec takes the prompt as an argument
-      extra_args: ["exec"]              # subcommand to run
+      # Codex's `exec` subcommand is the non-interactive entry point.
+      # `--skip-git-repo-check` lets it run outside a git repo.
+      # `--sandbox read-only` prevents any model-generated shell
+      # commands from touching disk (we just want a completion).
+      # `--ephemeral` skips persisting session files for each call.
+      extra_args:
+        - "exec"
+        - "--skip-git-repo-check"
+        - "--sandbox"
+        - "read-only"
+        - "--ephemeral"
 
-      # Codex sometimes accepts `--system "..."`; if not, leave None
-      # and the system prompt will be prepended to the body.
+      # Codex reads the prompt from stdin when the positional arg is
+      # omitted. Stdin is cleaner than passing the prompt as a CLI
+      # arg (avoids shell quoting hazards on long prompts).
+      prompt_via: "stdin"
+
+      # No `--system` flag in Codex 0.130. The system prompt gets
+      # prepended to the body inside _flatten_messages.
       system_flag: null
 
-      # Codex's `--model` flag (verify with `codex exec --help`):
+      # Model selection: `codex exec --model <NAME>`. Set
+      # `default_model` above (or in per-stage `models`) to whatever
+      # your Codex account supports — `gpt-5.5`, `gpt-5`, `o4-mini`,
+      # etc. Run `codex` interactively once to see your options.
       model_flag: "--model"
 
-      # Output: assume plain text. If your version supports `--json`,
-      # set output_format: "json" and result_json_path to whichever
-      # key holds the assistant text (commonly "response" or
-      # "message.content[0].text").
+      # Cleanest extraction: `--output-last-message <FILE>` writes
+      # ONLY the final assistant text to a tempfile. Avoids parsing
+      # Codex's banner / token-counter / session-id stdout.
+      output_file_flag: "--output-last-message"
       output_format: "text"
       result_json_path: null
 
-      # Model aliases — collapse provider-prefixed names if you set
-      # any in per-stage `models`. Empty by default.
       model_aliases: {}
-
       env_extra: {}

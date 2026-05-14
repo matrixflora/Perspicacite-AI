@@ -219,6 +219,7 @@ class AsyncLLMClient:
                 extra_args=list(cli_cfg.extra_args),
                 output_format=cli_cfg.output_format,
                 result_json_path=cli_cfg.result_json_path,
+                output_file_flag=cli_cfg.output_file_flag,
                 timeout=float(cli_cfg.timeout),
                 cwd=cli_cfg.cwd,
                 env_extra=dict(cli_cfg.env_extra),
