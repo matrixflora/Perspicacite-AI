@@ -285,6 +285,50 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
             logger.warning(f"Failed to save assistant message: {e}")
 
 
+async def _copyright_filter_for_router(
+    *, full_answer: str, sources: list[dict[str, Any]],
+) -> str:
+    """Router-level copyright filter applied to the assembled answer.
+
+    The sources list emitted to the client contains paper metadata
+    (title, doi, year, relevance_score) but typically not full_text.
+    Without the original chunk text we can only run the detector on
+    whatever is in ``sources[i].get("text")`` / ``chunk_text`` (which
+    some modes do populate for citation snippets).
+
+    For action=log, this is a final observability hook. For
+    quote/strip/rewrite, per-mode synthesis is the better place to run
+    the filter (it has the actual chunk full_text) — see
+    rag/modes/basic.py::_apply_copyright_filter.
+    """
+    if not full_answer or not sources:
+        return full_answer
+    try:
+        from perspicacite.rag.copyright_filter import CopyrightFilter
+        cf_cfg = getattr(getattr(app_state, "config", None), "copyright_filter", None)
+        if cf_cfg is None or not getattr(cf_cfg, "enabled", True):
+            return full_answer
+        sources_for_check = [
+            {
+                "text": s.get("chunk_text") or s.get("text") or "",
+                "title": s.get("title"),
+            }
+            for s in sources
+        ]
+        cf = CopyrightFilter(
+            enabled=cf_cfg.enabled,
+            action=getattr(cf_cfg, "action", "log"),
+            min_ngram=getattr(cf_cfg, "min_ngram", 8),
+            llm_client=getattr(app_state, "llm_client", None),
+            rewrite_model=getattr(cf_cfg, "rewrite_model", "claude-haiku-4-5"),
+            rewrite_provider=getattr(cf_cfg, "rewrite_provider", "anthropic"),
+        )
+        return await cf.apply(full_answer, sources_for_check)
+    except Exception as exc:
+        logger.warning(f"router_copyright_filter_inner_failed: {exc}")
+        return full_answer
+
+
 async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] = None):
     """Stream using AgenticOrchestrator."""
     assistant_message_id = str(uuid.uuid4())
@@ -502,6 +546,21 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
                 yield f"data: {json.dumps(token_payload, separators=(',', ':'))}\n\n"
 
             elif event.event == "done":
+                # Defense-in-depth copyright filter: run BEFORE we emit
+                # the final answer event so any rewritten content goes
+                # into the same answer envelope (rather than as a
+                # follow-up revision event the client might miss).
+                # Sources here carry titles + relevance_score but not
+                # full_text; the per-mode synthesis path already ran the
+                # filter against full chunk text when configured for
+                # quote/strip/rewrite actions. This emits a log-only
+                # warning event when verbatim copies still escape.
+                try:
+                    full_answer = await _copyright_filter_for_router(
+                        full_answer=full_answer, sources=sources,
+                    )
+                except Exception as _exc:  # noqa: BLE001
+                    logger.warning(f"router_copyright_filter_failed: {_exc}")
                 # Send final answer as base64
                 safe = {
                     "type": "answer",
