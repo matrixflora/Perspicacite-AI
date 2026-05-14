@@ -237,6 +237,23 @@ class AsyncLLMClient:
 
         stage_label = kwargs.pop("stage", "llm")
 
+        # MCP sampling — first try the connected client's
+        # sampling/createMessage protocol when enabled and a ctx is
+        # bound. Falls through on capability error.
+        if getattr(self.config, "use_mcp_sampling", False):
+            from perspicacite.llm.mcp_sampling import try_sample
+            sampled = await try_sample(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            if sampled is not None:
+                logger.info(
+                    "llm_completion_via_sampling",
+                    stage=stage_label, output_len=len(sampled),
+                )
+                return sampled
+
         # Claude Code CLI takes a completely different path — subprocess
         # to `claude -p`, no LiteLLM, uses the user's subscription.
         # Branch here so we don't need to pretend LiteLLM understands it.

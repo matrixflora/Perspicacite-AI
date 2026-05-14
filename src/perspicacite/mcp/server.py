@@ -30,11 +30,12 @@ from perspicacite.logging import get_logger
 logger = get_logger("perspicacite.mcp.server")
 
 try:
-    from fastmcp import FastMCP
+    from fastmcp import Context, FastMCP
 
     mcp = FastMCP("perspicacite")
 except ImportError:
     mcp = None
+    Context = Any  # type: ignore[misc, assignment]
 
 
 # =============================================================================
@@ -800,6 +801,7 @@ async def generate_report(
     max_papers: int = 10,
     recency_weight: float = 0.0,
     kb_names: list[str] | None = None,
+    ctx: Context | None = None,
 ) -> str:
     """
     Generate a synthesized research report from a knowledge base.
@@ -826,6 +828,11 @@ async def generate_report(
     if isinstance(state, str):
         return state
 
+    # Bind ctx for any nested LLM call via sampling. We use the
+    # contextvar token directly here (rather than the `with` form) to
+    # avoid re-indenting this tool's large body.
+    from perspicacite.llm.mcp_sampling import _mcp_ctx as _sampling_ctx
+    _sampling_token = _sampling_ctx.set(ctx) if ctx is not None else None
     try:
         message_id = str(uuid.uuid4())
 
@@ -938,6 +945,9 @@ async def generate_report(
     except Exception as e:
         logger.error("mcp_generate_report_error", query=query, error=str(e))
         return _json_error(f"Report generation failed: {e}")
+    finally:
+        if _sampling_token is not None:
+            _sampling_ctx.reset(_sampling_token)
 
 
 # =============================================================================
@@ -952,6 +962,7 @@ async def screen_papers(
     method: str = "bm25",
     threshold: float = 0.3,
     max_results: int = 50,
+    ctx: Context | None = None,
 ) -> str:
     """Score candidate papers by relevance to a research query.
 
@@ -1023,7 +1034,14 @@ async def screen_papers(
             items.extend([{"title": c, "abstract": ""} for c in strings_only])
 
         if method == "llm":
-            results = await _llm(items, query=query, llm=state.llm_client, threshold=threshold)
+            from perspicacite.llm.client import resolve_stage_model
+            from perspicacite.llm.mcp_sampling import use_mcp_context
+            sp, sm = resolve_stage_model(state.config, "screening")
+            with use_mcp_context(ctx):
+                results = await _llm(
+                    items, query=query, llm=state.llm_client,
+                    threshold=threshold, model=sm, provider=sp,
+                )
         else:
             results = _bm25(items, reference=query, method="bm25", threshold=threshold)
 
@@ -1757,6 +1775,7 @@ async def route_kbs(
     method: str = "bm25",
     top_k: int = 3,
     score_threshold: float = 0.1,
+    ctx: Context | None = None,
 ) -> dict:
     """Pick the most-relevant KBs for a query without actually running it.
 
@@ -1792,18 +1811,20 @@ async def route_kbs(
         return {"hits": [], "note": "no candidate KBs"}
 
     from perspicacite.llm.client import resolve_stage_model
+    from perspicacite.llm.mcp_sampling import use_mcp_context
     route_provider, route_model = resolve_stage_model(state.config, "routing")
-    hits = await auto_route_kbs(
-        query=query,
-        kb_metas=all_kbs,
-        vector_store=state.vector_store,
-        method=method,
-        top_k=top_k,
-        score_threshold=score_threshold,
-        llm_client=state.llm_client,
-        llm_model=route_model,
-        llm_provider=route_provider,
-    )
+    with use_mcp_context(ctx):
+        hits = await auto_route_kbs(
+            query=query,
+            kb_metas=all_kbs,
+            vector_store=state.vector_store,
+            method=method,
+            top_k=top_k,
+            score_threshold=score_threshold,
+            llm_client=state.llm_client,
+            llm_model=route_model,
+            llm_provider=route_provider,
+        )
     return {"hits": [h.to_dict() for h in hits]}
 
 
@@ -1831,6 +1852,7 @@ async def build_kb_from_search(
     kb_aware: bool = False,
     kb_aware_terms: int = 8,
     rephrase: int = 0,
+    ctx: Context | None = None,
 ) -> str:
     """Build or enrich a KB from a SciLEx multi-database search.
 
@@ -1874,6 +1896,7 @@ async def build_kb_from_search(
             SearchFilter,
             search_filter_and_ingest,
         )
+        from perspicacite.llm.mcp_sampling import use_mcp_context
 
         flt = SearchFilter(
             min_year=min_year,
@@ -1882,23 +1905,24 @@ async def build_kb_from_search(
             require_doi=True,
             require_abstract=require_abstract,
         )
-        report = await search_filter_and_ingest(
-            app_state=state,
-            query=query,
-            kb_name=kb_name,
-            max_results=max_results,
-            databases=databases,
-            flt=flt,
-            article_type=article_type,
-            create_if_missing=create_if_missing,
-            description=description,
-            dry_run=dry_run,
-            screen_method=screen_method,
-            screen_threshold=screen_threshold,
-            kb_aware=kb_aware,
-            kb_aware_terms=kb_aware_terms,
-            rephrase=rephrase,
-        )
+        with use_mcp_context(ctx):
+            report = await search_filter_and_ingest(
+                app_state=state,
+                query=query,
+                kb_name=kb_name,
+                max_results=max_results,
+                databases=databases,
+                flt=flt,
+                article_type=article_type,
+                create_if_missing=create_if_missing,
+                description=description,
+                dry_run=dry_run,
+                screen_method=screen_method,
+                screen_threshold=screen_threshold,
+                kb_aware=kb_aware,
+                kb_aware_terms=kb_aware_terms,
+                rephrase=rephrase,
+            )
         logger.info(
             "mcp_build_kb_from_search",
             query=query, kb=kb_name,
@@ -1995,6 +2019,7 @@ async def expand_kb_via_citations(
     screen_threshold: float = 0.5,
     query: str | None = None,
     dry_run: bool = False,
+    ctx: Context | None = None,
 ) -> str:
     """Grow a KB by following citation edges from its existing papers.
 
@@ -2024,19 +2049,21 @@ async def expand_kb_via_citations(
     try:
         from perspicacite.pipeline.snowball import expand_kb_via_citations as _expand
         from perspicacite.pipeline.search_to_kb import SearchFilter
+        from perspicacite.llm.mcp_sampling import use_mcp_context
 
         flt = SearchFilter(
             min_year=min_year, max_year=max_year,
             min_citations=min_citations, require_doi=True,
             require_abstract=require_abstract,
         )
-        report = await _expand(
-            app_state=state, kb_name=kb_name,
-            direction=direction, max_per_seed=max_per_seed,
-            seed_dois=seed_dois, flt=flt,
-            screen_method=screen_method, screen_threshold=screen_threshold,
-            query=query, dry_run=dry_run,
-        )
+        with use_mcp_context(ctx):
+            report = await _expand(
+                app_state=state, kb_name=kb_name,
+                direction=direction, max_per_seed=max_per_seed,
+                seed_dois=seed_dois, flt=flt,
+                screen_method=screen_method, screen_threshold=screen_threshold,
+                query=query, dry_run=dry_run,
+            )
         logger.info(
             "mcp_expand_kb_via_citations",
             kb=kb_name, direction=direction,
