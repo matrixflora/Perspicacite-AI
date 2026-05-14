@@ -64,6 +64,14 @@ scilex = [
     "scilex @ git+https://github.com/Wimmics/SciLEx.git",
 ]
 
+# Browser cookie import (perspicacite import-browser-cookies CLI).
+# Reads + decrypts cookies from Chrome/Brave/Firefox/Edge/Safari for
+# institutional-access PDF downloads. On macOS the OS may prompt for
+# keychain access once when first reading Chromium-family cookies.
+cookies = [
+    "browser-cookie3>=0.20.0",
+]
+
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
 
@@ -80,6 +88,11 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/perspicacite"]
+
+[tool.uv]
+# Override scilex's transitive httpx<0.28 pin so fastmcp 3.x can resolve.
+# Safe while the [scilex] extra is unused by the core / KB / MCP paths.
+override-dependencies = ["httpx>=0.28.1"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

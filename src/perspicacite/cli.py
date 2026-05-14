@@ -789,6 +789,139 @@ def fetch_resources_cmd(
     asyncio.run(_run())
 
 
+@cli.command("import-browser-cookies")
+@click.option(
+    "--browser", "browser_name",
+    type=click.Choice(
+        ["chrome", "brave", "firefox", "edge", "opera", "chromium", "safari", "arc"],
+        case_sensitive=False,
+    ),
+    default="brave",
+    help="Browser to read cookies from.",
+)
+@click.option(
+    "--domain", "domains",
+    multiple=True,
+    help=(
+        "Cookie host substring filter. Pass multiple times. "
+        "E.g. --domain nature.com --domain wiley.com. "
+        "Empty = all cookies (NOT recommended)."
+    ),
+)
+@click.option(
+    "--output", "output_path",
+    type=click.Path(),
+    default="~/.config/perspicacite/cookies.txt",
+    help="Where to write the Netscape-format cookies.txt.",
+)
+@click.option(
+    "--print-config-snippet/--no-print-config-snippet",
+    default=True,
+    help="Print the config.yml block to copy.",
+)
+def import_browser_cookies_cmd(
+    browser_name: str,
+    domains: tuple[str, ...],
+    output_path: str,
+    print_config_snippet: bool,
+) -> None:
+    """Export browser cookies for institutional-access PDF downloads.
+
+    Server-side equivalent of how the Zotero Connector grabs paywalled
+    PDFs. Reads cookies your browser already has (after you've logged
+    in via your library proxy or SSO), writes a Netscape ``cookies.txt``
+    that pdf_download.cookies_path can consume.
+
+    On macOS, decrypting the browser's cookie store requires keychain
+    access — the OS may prompt once.
+
+    Examples:
+        perspicacite import-browser-cookies --browser brave \\
+            --domain nature.com --domain wiley.com
+    """
+    try:
+        import browser_cookie3
+    except ImportError:
+        click.echo(
+            "browser_cookie3 not installed. Install the cookies extras:\n"
+            "    uv pip install -e \".[cookies]\"",
+            err=True,
+        )
+        raise SystemExit(2)
+    from http.cookiejar import MozillaCookieJar
+    from pathlib import Path
+
+    fn = getattr(browser_cookie3, browser_name.lower(), None)
+    if fn is None:
+        click.echo(f"Unsupported browser: {browser_name}", err=True)
+        raise SystemExit(2)
+
+    out = Path(output_path).expanduser()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    click.echo(f"Reading cookies from {browser_name}…")
+    try:
+        # Pass domain_name to make extraction cheaper when filter is given.
+        # browser_cookie3.<browser>() returns a CookieJar of all cookies.
+        all_cookies = fn()
+    except Exception as exc:
+        click.echo(f"Failed to read {browser_name} cookies: {exc}", err=True)
+        click.echo(
+            "Make sure the browser is installed and you've logged in at "
+            "least once. On macOS you may need to grant keychain access.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    domain_filters = [d.lower() for d in (domains or ())]
+    jar = MozillaCookieJar()
+    total = 0
+    matched = 0
+    seen_hosts: dict[str, int] = {}
+    for c in all_cookies:
+        total += 1
+        host = (c.domain or "").lstrip(".").lower()
+        if domain_filters and not any(df in host for df in domain_filters):
+            continue
+        jar.set_cookie(c)
+        matched += 1
+        seen_hosts[host] = seen_hosts.get(host, 0) + 1
+
+    jar.save(str(out), ignore_discard=True, ignore_expires=True)
+    try:
+        out.chmod(0o600)
+    except OSError:
+        pass
+
+    click.echo(
+        f"Wrote {matched} of {total} cookies to {out}  "
+        f"(filters: {', '.join(domain_filters) or '(none — all hosts)'})"
+    )
+    if matched == 0:
+        click.echo(
+            "No cookies matched. Either you're not logged in to those "
+            "hosts in this browser profile, or the filter strings don't "
+            "match the cookie domain. Run without --domain to dump "
+            "everything and inspect.",
+            err=True,
+        )
+    elif matched < 50:
+        # Show the top hosts so the user can confirm they got what they expected
+        top = sorted(seen_hosts.items(), key=lambda x: -x[1])[:10]
+        click.echo("Top cookie hosts captured:")
+        for h, n in top:
+            click.echo(f"  {n:>4}  {h}")
+
+    if print_config_snippet and matched:
+        suggested = sorted({h for h in seen_hosts if not h.startswith(".")})[:10]
+        click.echo("\nAdd to your config.yml:\n")
+        click.echo("pdf_download:")
+        click.echo(f"  cookies_path: \"{out}\"")
+        click.echo("  cookie_domains:")
+        for h in suggested:
+            click.echo(f"    - \"{h}\"")
+
+
 @cli.command()
 def version() -> None:
     """Print version information."""
