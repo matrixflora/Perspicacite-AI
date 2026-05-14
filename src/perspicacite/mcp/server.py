@@ -1419,6 +1419,66 @@ async def build_capsules_for_kb(
     return {"total": len(rows), **counts, "per_paper": per_paper}
 
 
+@mcp.tool
+async def fetch_paper_resources(
+    kb_name: str,
+    paper_id: str,
+    kinds: list[str] | None = None,
+    ingest: bool = True,
+    force: bool = False,
+) -> dict:
+    """Fetch external resources mined into the paper's capsule resources.json.
+
+    Resources fetched per ``kinds`` (default = all supported: github/zenodo/doi).
+    With ``ingest=True``, fetched text-like files are routed into the KB as
+    ``is_external=True`` chunks tagged with ``parent_paper_id=<paper_id>``.
+    """
+    from perspicacite.pipeline.capsule_builder import (
+        capsule_dir_for,
+        resolve_paper_from_metadata,
+    )
+    from perspicacite.pipeline.external.fetch_orchestrator import (
+        fetch_paper_resources as _fetch,
+    )
+
+    kb = await mcp_state.session_store.get_kb_metadata(kb_name)
+    if kb is None:
+        return {"error": f"KB '{kb_name}' not found"}
+    rows = await mcp_state.vector_store.list_paper_metadata(kb.collection_name)
+    row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+    if row is None:
+        return {"error": f"paper '{paper_id}' not found in KB '{kb_name}'"}
+    paper = resolve_paper_from_metadata(row)
+    cap_dir = capsule_dir_for(paper, root=mcp_state.config.capsule.root)
+    setattr(paper, "_kb_name", kb_name)
+
+    if mcp_state.job_registry is None:
+        # Synchronous fallback registry — collects events into a list.
+        class _LocalReg:
+            def __init__(self):
+                self.events: list[dict] = []
+            async def publish(self, _job_id, payload):
+                self.events.append(payload)
+            async def finish(self, _job_id, payload):
+                self.events.append({"type": "done", **payload})
+            async def fail(self, _job_id, msg):
+                self.events.append({"type": "error", "error": msg})
+        reg = _LocalReg()
+        result = await _fetch(
+            paper=paper, capsule_dir=cap_dir, kinds=kinds,
+            app_state=mcp_state, registry=reg, job_id="local",
+            ingest=ingest, force=force,
+        )
+        return result
+    job_id = await mcp_state.job_registry.create("external_fetch", total=0)
+    result = await _fetch(
+        paper=paper, capsule_dir=cap_dir, kinds=kinds,
+        app_state=mcp_state, registry=mcp_state.job_registry, job_id=job_id,
+        ingest=ingest, force=force,
+    )
+    return {"job_id": job_id, **result}
+
+
 # =============================================================================
 # Resource
 # =============================================================================
@@ -1440,6 +1500,7 @@ _TOOL_NAMES: list[str] = [
     "ingest_local_documents",
     "build_capsule",
     "build_capsules_for_kb",
+    "fetch_paper_resources",
 ]
 
 
