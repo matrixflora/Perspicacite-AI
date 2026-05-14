@@ -1119,6 +1119,12 @@ def import_browser_cookies_cmd(
 @click.option("--screen-threshold", type=float, default=0.5,
               show_default=True,
               help="Drop screened candidates below this score (0.0–1.0).")
+@click.option("--kb-aware/--no-kb-aware", default=False,
+              help="When the KB exists, append its top topic terms "
+                   "(from description + titles) to the query to bias "
+                   "SciLEx toward adjacent literature.")
+@click.option("--kb-aware-terms", type=int, default=8, show_default=True,
+              help="Max number of KB-derived terms to inject.")
 @click.pass_context
 def search_to_kb_cmd(
     ctx: click.Context,
@@ -1136,6 +1142,8 @@ def search_to_kb_cmd(
     description: str | None,
     screen_method: str | None,
     screen_threshold: float,
+    kb_aware: bool,
+    kb_aware_terms: int,
 ) -> None:
     """Build or enrich a KB from a SciLEx multi-database search.
 
@@ -1178,12 +1186,19 @@ def search_to_kb_cmd(
             dry_run=dry_run,
             screen_method=screen_method,
             screen_threshold=screen_threshold,
+            kb_aware=kb_aware,
+            kb_aware_terms=kb_aware_terms,
         )
         if as_json:
             import json as _json
             click.echo(_json.dumps(report.to_dict(), indent=2, default=str))
             return
         click.echo(f"🔎 search-to-kb: '{query}' → KB '{kb_name}'")
+        if report.injected_terms:
+            click.echo(
+                f"  • KB-aware: query augmented with "
+                f"{', '.join(report.injected_terms)}"
+            )
         if report.kb_created:
             click.echo(f"  • KB created")
         click.echo(
