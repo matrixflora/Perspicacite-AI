@@ -2191,3 +2191,34 @@ async def get_info() -> str:
             "initialized": mcp_state.initialized,
         }
     )
+
+
+# =============================================================================
+# KB resources (Wave 5.1)
+# =============================================================================
+
+from perspicacite.mcp import resources as _resources  # noqa: E402
+
+
+@mcp.resource("perspicacite://kbs")
+async def _kbs_resource() -> str:
+    """List all knowledge bases."""
+    return await _resources.kbs_resource()
+
+
+@mcp.resource("perspicacite://kb/{name}")
+async def _kb_resource(name: str) -> str:
+    """Metadata + sub-resource URIs for a single KB."""
+    return await _resources.kb_resource(name)
+
+
+@mcp.resource("perspicacite://kb/{name}/papers")
+async def _kb_papers_resource(name: str) -> str:
+    """Papers in a KB, sourced from the kb_log (fallback to Chroma)."""
+    return await _resources.kb_papers_resource(name)
+
+
+@mcp.resource("perspicacite://kb/{name}/log")
+async def _kb_log_resource(name: str) -> str:
+    """Most-recent KB-log events (bounded by kb.mcp_resource_max_events)."""
+    return await _resources.kb_log_resource(name)
