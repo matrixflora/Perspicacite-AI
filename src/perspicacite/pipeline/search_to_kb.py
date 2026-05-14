@@ -69,6 +69,8 @@ class IngestReport:
     searched: int = 0
     filtered_out: int = 0
     candidates: int = 0
+    screened_out: int = 0
+    after_screen: int = 0
     added_papers: int = 0
     added_chunks: int = 0
     skipped_duplicates: int = 0
@@ -76,10 +78,72 @@ class IngestReport:
     pdf_download: dict[str, int] = field(default_factory=dict)
     selected_dois: list[str] = field(default_factory=list)
     filter_reasons: dict[str, int] = field(default_factory=dict)
+    screen_scores: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
         return asdict(self)
+
+
+async def screen_candidates(
+    papers: list[Any],
+    *,
+    query: str,
+    method: str,
+    threshold: float,
+    llm_client: Any = None,
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """Score candidates by relevance to ``query`` and drop those below threshold.
+
+    Thin wrapper around :func:`perspicacite.search.screening.screen_papers`
+    / ``screen_papers_llm`` that takes SciLEx-style :class:`Paper`
+    objects (rather than dicts). ``method`` is ``"bm25"`` (no LLM) or
+    ``"llm"`` (cheap LLM call per batch). Returns the surviving papers
+    and the full score table (kept + dropped, for the IngestReport).
+    """
+    if not papers:
+        return [], []
+    items: list[dict[str, Any]] = []
+    for p in papers:
+        items.append({
+            "doi": (getattr(p, "doi", None) or "").strip() or None,
+            "title": getattr(p, "title", None) or "",
+            "abstract": getattr(p, "abstract", None) or "",
+        })
+    if method == "llm":
+        if llm_client is None:
+            logger.warning("screen_papers_llm_no_client_falling_back_to_bm25")
+            method = "bm25"
+    if method == "llm":
+        from perspicacite.search.screening import screen_papers_llm as _llm
+        results = await _llm(items, query=query, llm=llm_client, threshold=threshold)
+    else:
+        from perspicacite.search.screening import screen_papers as _bm25
+        results = _bm25(items, reference=query, method="bm25", threshold=threshold)
+    # Map results back to original Papers by DOI (preferred) or title.
+    by_doi: dict[str, Any] = {}
+    by_title: dict[str, Any] = {}
+    for p in papers:
+        if getattr(p, "doi", None):
+            by_doi[p.doi.lower().strip()] = p
+        if getattr(p, "title", None):
+            by_title[p.title.strip().lower()] = p
+    kept: list[Any] = []
+    score_table: list[dict[str, Any]] = []
+    for r in results:
+        doi_key = (r.item.get("doi") or "").lower().strip()
+        title_key = (r.item.get("title") or "").strip().lower()
+        paper = by_doi.get(doi_key) or by_title.get(title_key)
+        score_table.append({
+            "doi": r.item.get("doi"),
+            "title": r.item.get("title"),
+            "score": float(r.score),
+            "kept": bool(r.kept),
+            "reason": r.reason,
+        })
+        if paper is not None and r.kept:
+            kept.append(paper)
+    return kept, score_table
 
 
 async def run_search(
@@ -313,6 +377,8 @@ async def search_filter_and_ingest(
     create_if_missing: bool = True,
     description: str | None = None,
     dry_run: bool = False,
+    screen_method: str | None = None,
+    screen_threshold: float = 0.5,
 ) -> IngestReport:
     """End-to-end: SciLEx search → filter → optionally create KB → ingest.
 
@@ -339,6 +405,21 @@ async def search_filter_and_ingest(
     report.candidates = len(kept)
     report.filtered_out = report.searched - report.candidates
     report.filter_reasons = reasons
+
+    # Optional LLM / BM25 relevance screen between filter and ingest.
+    # Filters drop hits that can't be ingested (no DOI, wrong year);
+    # screening drops hits that aren't *topically* on-question. Run
+    # in this order so the LLM only sees viable candidates.
+    if screen_method and kept:
+        survivors, score_table = await screen_candidates(
+            kept, query=query, method=screen_method,
+            threshold=screen_threshold, llm_client=app_state.llm_client,
+        )
+        report.screened_out = len(kept) - len(survivors)
+        report.after_screen = len(survivors)
+        report.screen_scores = score_table
+        kept = survivors
+
     report.selected_dois = [
         (getattr(p, "doi", None) or "").strip() for p in kept if getattr(p, "doi", None)
     ]
