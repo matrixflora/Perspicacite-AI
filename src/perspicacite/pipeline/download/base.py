@@ -74,11 +74,58 @@ class PaperContent:
 
 
 class PDFDownloader:
-    """Generic PDF downloader with retry logic."""
+    """Generic PDF downloader with retry logic.
 
-    def __init__(self, timeout: float = 30.0, max_retries: int = 3):
+    Optional **cookie jar**: when ``cookies_path`` is set, the
+    Netscape-format ``cookies.txt`` (exported from a browser logged into
+    a library proxy / publisher) is attached to outgoing requests whose
+    host matches ``cookie_domains``. This is the server-side equivalent
+    of how the Zotero Connector browser extension grabs paywalled
+    PDFs — the user does the actual SSO/proxy login in their browser
+    and re-exports the cookie jar; Perspicacité just replays it.
+    """
+
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        max_retries: int = 3,
+        *,
+        cookies_path: str | None = None,
+        cookie_domains: list[str] | None = None,
+    ):
         self.timeout = timeout
         self.max_retries = max_retries
+        self.cookies_path = cookies_path
+        self.cookie_domains = list(cookie_domains or [])
+
+    def _matches_cookie_domains(self, url: str) -> bool:
+        """True when this URL's host matches the configured allowlist
+        (or the allowlist is empty, meaning attach to everything)."""
+        if not self.cookie_domains:
+            return True
+        from urllib.parse import urlparse
+        host = (urlparse(url).hostname or "").lower()
+        return any(d.lower() in host for d in self.cookie_domains)
+
+    def _load_cookie_jar(self) -> Any:
+        """Load Netscape-format cookies.txt. Returns an http.cookiejar
+        compatible jar or None on failure / missing file."""
+        if not self.cookies_path:
+            return None
+        try:
+            from http.cookiejar import MozillaCookieJar
+            from pathlib import Path
+            p = Path(self.cookies_path).expanduser()
+            if not p.exists():
+                logger.warning("pdf_cookies_path_missing", path=str(p))
+                return None
+            jar = MozillaCookieJar(str(p))
+            jar.load(ignore_discard=True, ignore_expires=True)
+            logger.info("pdf_cookies_loaded", path=str(p), count=len(jar))
+            return jar
+        except Exception as e:
+            logger.warning("pdf_cookies_load_failed", error=str(e))
+            return None
 
     async def download(
         self,
@@ -87,7 +134,22 @@ class PDFDownloader:
         headers: dict[str, str] | None = None,
     ) -> bytes | None:
         """Download PDF from URL."""
-        client = http_client or httpx.AsyncClient(timeout=self.timeout, follow_redirects=True)
+        # Build a client. When the caller supplied one, respect it
+        # (cookies from this jar can be patched into the request);
+        # otherwise build one carrying the configured cookie jar.
+        cookie_jar = None
+        if http_client is None and self.cookies_path:
+            cookie_jar = self._load_cookie_jar()
+        if http_client is None:
+            client_kwargs: dict[str, Any] = {
+                "timeout": self.timeout,
+                "follow_redirects": True,
+            }
+            if cookie_jar is not None and self._matches_cookie_domains(url):
+                client_kwargs["cookies"] = cookie_jar
+            client = httpx.AsyncClient(**client_kwargs)
+        else:
+            client = http_client
         should_close = http_client is None
         # Browser-like UA prevents NCBI PMC / Europe PMC from serving
         # HTML landing pages instead of actual PDFs.

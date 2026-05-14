@@ -213,6 +213,23 @@ pdf_download:
   # Maximum retries for failed downloads
   max_retries: 3
 
+  # Optional cookie jar for institutional-access PDFs. Server-side
+  # equivalent of what the Zotero Connector browser extension does:
+  # the user logs into their library proxy / publisher SSO in their
+  # browser, exports cookies via a "Get cookies.txt"-style extension,
+  # and points Perspicacité at the file. PDF requests then carry the
+  # user's session cookies — paywalled PDFs the user is entitled to
+  # become reachable. Cookies expire; re-export as needed.
+  #
+  # cookies_path: "/Users/me/Library/perspicacite/proxy_cookies.txt"
+  # cookie_domains:
+  #   - "sciencedirect.com"
+  #   - "wiley.com"
+  #   - "onlinelibrary.wiley.com"
+  #   - "proxy.lib.example.edu"
+  cookies_path: ""
+  cookie_domains: []
+
 # =============================================================================
 # MCP Server Configuration
 # =============================================================================

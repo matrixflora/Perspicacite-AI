@@ -454,6 +454,30 @@ class PDFDownloadConfig(BaseModel):
     timeout: float = Field(default=30.0, gt=0)
     max_retries: int = Field(default=3, ge=0)
 
+    # Cookie jar for institutional-access PDF fetch.
+    # Path to a Netscape-format cookies.txt exported from a browser
+    # logged into the user's library proxy (e.g. via the "Get
+    # cookies.txt" / "EditThisCookie" extension). When set, those
+    # cookies are attached to every PDF-download request so the
+    # publisher serves the entitled PDF over the user's session.
+    # This is the server-side equivalent of what the Zotero Connector
+    # extension does in the browser. Cookies expire — re-export as
+    # needed.
+    cookies_path: Optional[str] = Field(
+        default=None,
+        description="Path to Netscape-format cookies.txt for institutional PDF access.",
+    )
+    cookie_domains: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Only attach the cookie jar to requests whose host matches one "
+            "of these substrings (e.g. ['sciencedirect.com', 'wiley.com', "
+            "'proxy.lib.example.edu']). Empty list = attach to all PDF "
+            "requests (broadest access, slight risk of cookie leakage to "
+            "third-party hosts in the redirect chain)."
+        ),
+    )
+
 
 class LoggingConfig(BaseModel):
     """Logging configuration."""
