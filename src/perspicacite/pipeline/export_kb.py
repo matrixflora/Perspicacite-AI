@@ -153,6 +153,114 @@ def render_bibtex_entry(paper: dict[str, Any], file_path: Path | None = None) ->
     return "\n".join(lines)
 
 
+def _parse_authors(authors: Any) -> list[dict[str, str]]:
+    """Normalise a paper's `authors` field to a list of CSL author dicts.
+
+    Accepts:
+    - ``list[str]`` of ``"Family, Given"`` entries.
+    - ``str`` joined by ``" and "`` (BibTeX style).
+    - ``list[dict]`` with ``family`` / ``given`` already present
+      (pass-through after light validation).
+    """
+    if not authors:
+        return []
+    if isinstance(authors, str):
+        names = [a.strip() for a in authors.split(" and ") if a.strip()]
+    elif isinstance(authors, list):
+        names = []
+        for a in authors:
+            if isinstance(a, str):
+                names.append(a.strip())
+            elif isinstance(a, dict) and ("family" in a or "given" in a):
+                # Already CSL-shaped — keep as-is.
+                names.append(a)  # type: ignore[arg-type]
+    else:
+        return []
+    out: list[dict[str, str]] = []
+    for n in names:
+        if isinstance(n, dict):
+            out.append(n)  # already shaped
+            continue
+        if "," in n:
+            family, _, given = n.partition(",")
+            out.append({"family": family.strip(), "given": given.strip()})
+        else:
+            # Single name — treat as family-only.
+            out.append({"family": n, "given": ""})
+    return out
+
+
+def render_csl_json_entry(paper: dict[str, Any]) -> dict[str, Any]:
+    """Render one paper as a CSL JSON item.
+
+    Schema: https://github.com/citation-style-language/schema
+    """
+    item: dict[str, Any] = {
+        "id": _bibtex_citation_key(paper),
+        "type": "article-journal",
+    }
+    if paper.get("title"):
+        item["title"] = str(paper["title"])
+    authors = _parse_authors(paper.get("authors"))
+    if authors:
+        item["author"] = authors
+    if paper.get("year"):
+        try:
+            year = int(paper["year"])
+        except (TypeError, ValueError):
+            year = None
+        if year is not None:
+            item["issued"] = {"date-parts": [[year]]}
+    if paper.get("journal"):
+        item["container-title"] = str(paper["journal"])
+    if paper.get("doi"):
+        item["DOI"] = str(paper["doi"])
+        item["URL"] = f"https://doi.org/{paper['doi']}"
+    if paper.get("abstract"):
+        item["abstract"] = str(paper["abstract"])
+    return item
+
+
+def _ris_clean(value: str) -> str:
+    """Collapse newlines so the line-oriented RIS format stays valid."""
+    return " ".join(value.split())
+
+
+def render_ris_entry(paper: dict[str, Any]) -> str:
+    """Render one paper as a RIS record.
+
+    Type is always ``JOUR`` (journal article) for now — extending to
+    book / chapter / other types would mean carrying a structured
+    `type` field in the paper metadata.
+    """
+    lines: list[str] = ["TY  - JOUR"]
+    key = _bibtex_citation_key(paper)
+    lines.append(f"ID  - {key}")
+    if paper.get("title"):
+        lines.append(f"T1  - {_ris_clean(str(paper['title']))}")
+    for a in _parse_authors(paper.get("authors")):
+        family = a.get("family", "")
+        given = a.get("given", "")
+        name = f"{family}, {given}".strip(", ").strip()
+        if name:
+            lines.append(f"AU  - {_ris_clean(name)}")
+    if paper.get("year"):
+        try:
+            year = int(paper["year"])
+            lines.append(f"PY  - {year}")
+        except (TypeError, ValueError):
+            pass
+    if paper.get("journal"):
+        lines.append(f"JO  - {_ris_clean(str(paper['journal']))}")
+    if paper.get("doi"):
+        lines.append(f"DO  - {paper['doi']}")
+        lines.append(f"UR  - https://doi.org/{paper['doi']}")
+    if paper.get("abstract"):
+        lines.append(f"AB  - {_ris_clean(str(paper['abstract']))}")
+    lines.append("ER  - ")
+    return "\n".join(lines)
+
+
 async def export_kb(
     *,
     app_state: Any,
