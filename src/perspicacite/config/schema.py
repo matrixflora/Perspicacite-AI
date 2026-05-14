@@ -64,16 +64,33 @@ class KnowledgeBaseConfig(BaseModel):
         default=True,
         description="Use language-aware chunking for source-code files",
     )
-    # Anthropic "contextual retrieval": per chunk, the LLM generates a
-    # 50-100 token summary that situates the chunk in its document. The
-    # summary is prepended to chunk.text before embedding only (not
-    # stored, not shown to synthesis prompts). Per Anthropic's benchmark
-    # this lifts retrieval recall by 30-40% on technical/scientific
-    # content — at the cost of ~1 LLM call per chunk during ingest.
-    # Off by default. Enable per-KB by setting this flag at ingest time.
+    # Contextual retrieval — three tiers, pick by cost / quality:
+    #
+    #   "none"     — structural prefix only (title + section), free.
+    #                Already happens unconditionally.
+    #   "abstract" — also prepend the paper's abstract (or first ~500
+    #                chars of full_text) to every chunk of that paper.
+    #                Zero LLM calls; uses Crossref/OpenAlex metadata
+    #                we already have. Same prefix on every chunk of a
+    #                paper.
+    #   "summary"  — one LLM call per paper to produce a 50-100 word
+    #                summary, cached, applied to every chunk of that
+    #                paper. 1/N the cost of "chunk" for N chunks.
+    #   "chunk"    — Anthropic-style: one LLM call per chunk produces
+    #                a contextual sentence specific to that chunk.
+    #                Most expensive, best recall (30-40% lift on
+    #                technical content per Anthropic's benchmark).
+    #
+    # The `contextual_retrieval: bool` field below stays for backwards
+    # compat — True maps to "chunk", False maps to "none". The new
+    # `contextual_retrieval_tier` overrides when set.
+    contextual_retrieval_tier: Literal["none", "abstract", "summary", "chunk"] = Field(
+        default="none",
+        description="Contextual-retrieval cost/quality tier.",
+    )
     contextual_retrieval: bool = Field(
         default=False,
-        description="Use LLM-generated context prefix per chunk (Anthropic-style).",
+        description="(legacy) shorthand for contextual_retrieval_tier='chunk'.",
     )
     contextual_retrieval_model: str = Field(
         default="claude-haiku-4-5",

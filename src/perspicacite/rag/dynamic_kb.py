@@ -203,41 +203,79 @@ Abstract:
                     ),
                 ))
 
-        # Anthropic-style contextual retrieval: when enabled via config,
-        # generate a short LLM context per chunk and pass it through to
-        # the vector store's add_documents (which prepends it to the
-        # embedding text only — chunk.text is unchanged). Off by default
-        # because it costs one LLM call per chunk during ingest.
+        # Contextual retrieval — dispatch by tier:
+        #   none     → no extra prefix (structural-only)
+        #   abstract → paper.abstract (or leading slice) repeated per chunk, 0 LLM
+        #   summary  → 1 LLM call → reused for every chunk of this paper
+        #   chunk    → 1 LLM call per chunk (Anthropic-style)
+        # Stored chunk.text is never modified — only the embedding sees
+        # the prefix.
         per_chunk_context: list[str] | None = None
         kb_cfg = getattr(self.config, "_kb_config", None) or getattr(self.config, "kb_config", None)
         if kb_cfg is None:
-            # Some construction paths set the full KB config on .config
             kb_cfg = self.config
-        use_contextual = bool(getattr(kb_cfg, "contextual_retrieval", False))
+        tier = getattr(kb_cfg, "contextual_retrieval_tier", "none")
+        # Legacy shorthand: contextual_retrieval=True ⇒ tier="chunk"
+        if getattr(kb_cfg, "contextual_retrieval", False) and tier == "none":
+            tier = "chunk"
         llm_client = getattr(self, "llm_client", None)
-        if use_contextual and llm_client is not None and (paper.full_text or paper.abstract):
+        doc_text = paper.full_text or paper.abstract or ""
+
+        if tier == "abstract" and doc_text:
+            try:
+                from perspicacite.retrieval.contextual import abstract_prefix_for_paper
+                prefix = abstract_prefix_for_paper(
+                    paper_text=doc_text, abstract=paper.abstract,
+                    max_chars=getattr(kb_cfg, "contextual_retrieval_max_chars", 400),
+                )
+                if prefix:
+                    per_chunk_context = [prefix] * len(chunks)
+                    logger.info(
+                        "contextual_abstract_applied",
+                        paper_id=paper.id, chars=len(prefix), chunks=len(chunks),
+                    )
+            except Exception as exc:
+                logger.warning("contextual_abstract_failed", paper_id=paper.id, error=str(exc))
+
+        elif tier == "summary" and llm_client is not None and doc_text:
+            try:
+                from perspicacite.retrieval.contextual import generate_document_summary
+                summary = await generate_document_summary(
+                    paper_id=paper.id, document_text=doc_text,
+                    llm_client=llm_client,
+                    model=getattr(kb_cfg, "contextual_retrieval_model", "claude-haiku-4-5"),
+                    provider=getattr(kb_cfg, "contextual_retrieval_provider", "anthropic"),
+                    max_chars=getattr(kb_cfg, "contextual_retrieval_max_chars", 400),
+                )
+                if summary:
+                    per_chunk_context = [summary] * len(chunks)
+                    logger.info(
+                        "contextual_summary_applied",
+                        paper_id=paper.id, chars=len(summary), chunks=len(chunks),
+                    )
+            except Exception as exc:
+                logger.warning("contextual_summary_failed", paper_id=paper.id, error=str(exc))
+
+        elif tier == "chunk" and llm_client is not None and doc_text:
             try:
                 from perspicacite.retrieval.contextual import generate_chunk_contexts_bulk
                 per_chunk_context = await generate_chunk_contexts_bulk(
-                    paper_id=paper.id,
-                    chunks=chunks,
-                    document_text=paper.full_text or paper.abstract or "",
+                    paper_id=paper.id, chunks=chunks, document_text=doc_text,
                     llm_client=llm_client,
                     model=getattr(kb_cfg, "contextual_retrieval_model", "claude-haiku-4-5"),
                     provider=getattr(kb_cfg, "contextual_retrieval_provider", "anthropic"),
                     max_chars=getattr(kb_cfg, "contextual_retrieval_max_chars", 400),
                 )
                 logger.info(
-                    "contextual_retrieval_applied",
+                    "contextual_chunk_applied",
                     paper_id=paper.id,
                     contexts=sum(1 for c in per_chunk_context if c),
                     chunks=len(chunks),
                 )
             except Exception as exc:
                 logger.warning(
-                    "contextual_retrieval_failed_falling_back",
-                    paper_id=paper.id,
-                    error=str(exc),
+                    "contextual_chunk_failed_falling_back",
+                    paper_id=paper.id, error=str(exc),
                 )
 
         # Add to vector store (embeddings generated internally)
