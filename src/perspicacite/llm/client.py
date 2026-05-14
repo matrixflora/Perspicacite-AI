@@ -796,3 +796,48 @@ class AsyncLLMClient:
                 provider=fallback_provider,
                 **kwargs,
             )
+
+    async def complete_with_chain(
+        self,
+        messages: list[dict[str, Any]],
+        chain: list[tuple[str, str]],
+        **kwargs: Any,
+    ) -> str:
+        """Try each ``(provider, model)`` in order. Returns the first
+        success. On :class:`RateLimitError` or other ``Exception`` (but
+        not :class:`BudgetExceededError`), logs and tries the next.
+        Raises the last exception when all fail.
+
+        See docs/superpowers/specs/2026-05-14-fallback-chain-design.md.
+        """
+        if not chain:
+            raise ValueError("complete_with_chain requires a non-empty chain")
+
+        from perspicacite.llm.budget import BudgetExceededError
+
+        last_exc: Exception | None = None
+        for i, (provider, model) in enumerate(chain):
+            try:
+                return await self.complete(
+                    messages=messages,
+                    model=model,
+                    provider=provider,
+                    **kwargs,
+                )
+            except BudgetExceededError:
+                # Switching providers won't help a budget breach.
+                raise
+            except Exception as e:
+                last_exc = e
+                logger.warning(
+                    "llm_chain_step_failed",
+                    attempt=i + 1,
+                    chain_length=len(chain),
+                    provider=provider,
+                    model=model,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+        # All steps failed.
+        assert last_exc is not None  # chain non-empty → at least one attempt
+        raise last_exc
