@@ -48,7 +48,9 @@ def load_from_env() -> dict[str, Any]:
     """Load configuration overrides from environment variables."""
     overrides = {}
 
-    # Map of env var -> config path
+    # Map of env var -> config path. Keep secrets (api keys, tokens) here so
+    # they don't have to live in config.yml. Standard ZOTERO_API_KEY also
+    # accepted for convenience.
     env_mappings = {
         "PERSPICACITE_SERVER_HOST": ("server", "host"),
         "PERSPICACITE_SERVER_PORT": ("server", "port"),
@@ -61,6 +63,12 @@ def load_from_env() -> dict[str, Any]:
         "PERSPICACITE_LOG_LEVEL": ("logging", "level"),
         "PERSPICACITE_AUTH_ENABLED": ("auth", "enabled"),
         "PERSPICACITE_AUTH_TOKEN": ("auth", "token"),
+        # Zotero secrets — keep out of config.yml.
+        "PERSPICACITE_ZOTERO_API_KEY": ("zotero", "api_key"),
+        "ZOTERO_API_KEY": ("zotero", "api_key"),  # convenience alias
+        "PERSPICACITE_ZOTERO_LIBRARY_ID": ("zotero", "library_id"),
+        "PERSPICACITE_ZOTERO_LIBRARY_TYPE": ("zotero", "library_type"),
+        "PERSPICACITE_ZOTERO_BASE_URL": ("zotero", "base_url"),
     }
 
     for env_var, (section, key) in env_mappings.items():
