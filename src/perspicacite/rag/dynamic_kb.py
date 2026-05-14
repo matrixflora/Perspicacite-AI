@@ -14,6 +14,7 @@ from perspicacite.retrieval.chroma_store import _metadata_to_chunk
 
 if TYPE_CHECKING:
     from perspicacite.models.papers import Paper
+    from perspicacite.models.search import SearchFilters
 
 logger = get_logger("perspicacite.rag.dynamic_kb")
 
@@ -292,6 +293,7 @@ Abstract:
         query: str,
         top_k: int | None = None,
         min_score: float | None = None,
+        filters: "SearchFilters | None" = None,
     ) -> list[dict[str, Any]]:
         """
         Search the knowledge base.
@@ -300,6 +302,9 @@ Abstract:
             query: Search query
             top_k: Number of results (default: config.top_k)
             min_score: Minimum relevance score
+            filters: Optional ``SearchFilters`` (year_min/year_max/...).
+                Translated to Chroma where-clauses inside the vector
+                store. See Wave 4.2.
 
         Returns:
             List of search results with text and metadata
@@ -319,6 +324,7 @@ Abstract:
             collection=self.collection_name,
             query_embedding=query_embedding,
             top_k=top_k * 2,  # Get extra for filtering
+            filters=filters,
         )
 
         # Filter by score and deduplicate by paper
