@@ -32,7 +32,7 @@ except ImportError:
 from perspicacite.config.schema import LoggingConfig
 
 
-def setup_logging(config: LoggingConfig) -> None:
+def setup_logging(config: LoggingConfig, *, stream: Any = None) -> None:
     """
     Configure structured logging.
 
@@ -41,15 +41,20 @@ def setup_logging(config: LoggingConfig) -> None:
 
     Args:
         config: Logging configuration
+        stream: Optional output stream override. The web/serve path
+            uses stdout (default); CLI subcommands pass ``sys.stderr``
+            so structured log output doesn't pollute stdout where the
+            user expects clean JSON / answer text.
     """
     log_level = _get_log_level(config.level)
+    out_stream = stream if stream is not None else sys.stdout
 
     if not STRUCTLOG_AVAILABLE:
         # Fall back to standard logging
         logging.basicConfig(
             level=log_level,
             format="%(levelname)s: %(message)s",
-            stream=sys.stdout,
+            stream=out_stream,
         )
         return
 
@@ -89,7 +94,7 @@ def setup_logging(config: LoggingConfig) -> None:
         foreign_pre_chain=shared_processors,
     )
 
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(out_stream)
     handler.setFormatter(formatter)
 
     root = logging.getLogger()
