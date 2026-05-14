@@ -80,8 +80,8 @@ Within a wave, items are roughly ordered by dependency / leverage.
 
 | # | Item | Notes |
 |---|------|-------|
-| 5.1 | **KBs as MCP resources** | Today everything is a tool. Exposing KBs as resources lets clients browse / preview before querying. |
-| 5.2 | **MCP `prompts`** (canned workflows) | "Literature review on X", "compare paper A vs paper B". Reduces UX friction in Claude Desktop. |
+| 5.1 ✅ | **KBs as MCP resources** | Shipped 2026-05-14 — `perspicacite://kbs`, `perspicacite://kb/{name}[/papers,/log]`. See `docs/mcp-resources-prompts-2026-05-14.md`. |
+| 5.2 ✅ | **MCP `prompts`** (canned workflows) | Shipped 2026-05-14 — `literature_review`, `compare_papers`, `summarize_kb`, `ingest_dois`, `screen_topic`. |
 | 5.3 | **MCP sampling retest** | When [anthropics/claude-code#1785](https://github.com/anthropics/claude-code/issues/1785) lands, the adapter is already in place — just verify and flip `use_mcp_sampling: true` in the relevant presets. |
 
 ## Wave 6 — E2E validation
