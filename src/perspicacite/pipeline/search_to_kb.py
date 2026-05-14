@@ -485,6 +485,12 @@ async def ingest_dois_into_kb(
     dois_to_process = list(ck_state.remaining_ids(retry_failed=retry_failed))
     # --------------------------------------------------------------------
 
+    # ---- KB log setup (Wave 4.3) ----------------------------------------
+    from perspicacite.pipeline.kb_log import KBEvent, KBLogWriter
+    log_dir = _Path(getattr(app_state.config.kb, "log_dir", "data/kb_logs"))
+    kb_log = KBLogWriter(path=log_dir / f"{kb_name}.jsonl")
+    # ---------------------------------------------------------------------
+
     kb_meta = await app_state.session_store.get_kb_metadata(kb_name)
     if not kb_meta:
         raise ValueError(f"Knowledge base '{kb_name}' not found")
@@ -520,6 +526,10 @@ async def ingest_dois_into_kb(
                 skipped.append({"doi": doi})
                 ck_state.record(doi, "skipped")
                 ckpt.save(ck_state)
+                kb_log.append(KBEvent(
+                    event="paper_skipped", kb_name=kb_name, paper_id=doi,
+                    source_command="ingest_dois_into_kb",
+                ))
                 continue
             dl["attempted"] += 1
             try:
@@ -534,12 +544,20 @@ async def ingest_dois_into_kb(
                 dl["failed"] += 1
                 ck_state.record(doi, "failed", reason=str(e))
                 ckpt.save(ck_state)
+                kb_log.append(KBEvent(
+                    event="paper_failed", kb_name=kb_name, paper_id=doi,
+                    reason=str(e)[:500], source_command="ingest_dois_into_kb",
+                ))
                 continue
             if not result or not result.success:
                 failed.append({"doi": doi, "reason": "no content"})
                 dl["failed"] += 1
                 ck_state.record(doi, "failed", reason="no content")
                 ckpt.save(ck_state)
+                kb_log.append(KBEvent(
+                    event="paper_failed", kb_name=kb_name, paper_id=doi,
+                    reason="no content", source_command="ingest_dois_into_kb",
+                ))
                 continue
             md = result.metadata or {}
             paper = Paper(
@@ -558,6 +576,11 @@ async def ingest_dois_into_kb(
             else:
                 dl["failed"] += 1
             papers_to_add.append(paper)
+            kb_log.append(KBEvent(
+                event="paper_added", kb_name=kb_name, paper_id=doi,
+                title=md.get("title"),
+                source_command="ingest_dois_into_kb",
+            ))
             # Mark as added immediately on successful retrieval (Wave 3.3).
             ck_state.record(doi, "added")
             ckpt.save(ck_state)

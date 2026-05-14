@@ -146,6 +146,16 @@ class KnowledgeBaseConfig(BaseModel):
         ),
     )
 
+    # ---- per-KB append-only event log (Wave 4.3) -------------------
+    log_dir: Path = Field(
+        default=Path("data/kb_logs"),
+        description=(
+            "Directory for per-KB append-only event logs (Wave 4.3). "
+            "Each KB writes <kb_name>.jsonl with paper_added / "
+            "paper_skipped / paper_failed events for audit + rollback."
+        ),
+    )
+
     # ---- multimodal visual extraction (Wave 4.1) -------------------
     # Render each PDF page and ask a vision-capable LLM to extract
     # figures / tables / formulas. Off by default — opt-in safety.
