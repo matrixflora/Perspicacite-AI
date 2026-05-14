@@ -140,6 +140,7 @@ class ZoteroClient:
     async def _paginated(
         self, path: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
+        import asyncio as _asyncio
         c = await self._client()
         out: list[dict[str, Any]] = []
         start = 0
@@ -148,9 +149,31 @@ class ZoteroClient:
             p: dict[str, Any] = {"start": start, "limit": limit, "format": "json"}
             if params:
                 p.update(params)
-            r = await c.get(f"{self._base()}{path}", params=p, headers=self._headers())
-            if r.status_code != 200:
-                break
+            # Up to 3 retries on 429/5xx — Zotero returns a Retry-After
+            # header on 429; respect it (clamped to 60s for the test
+            # path). On unrecoverable error, raise so callers can surface
+            # the failure instead of silently returning a short list.
+            attempt = 0
+            while True:
+                r = await c.get(f"{self._base()}{path}", params=p, headers=self._headers())
+                if r.status_code == 200:
+                    break
+                if r.status_code in (429, 500, 502, 503, 504) and attempt < 3:
+                    retry_after = r.headers.get("retry-after") or r.headers.get("Retry-After")
+                    try:
+                        wait = float(retry_after) if retry_after else 2.0 * (2 ** attempt)
+                    except ValueError:
+                        wait = 2.0 * (2 ** attempt)
+                    wait = min(wait, 60.0)
+                    await _asyncio.sleep(wait)
+                    attempt += 1
+                    continue
+                raise httpx.HTTPStatusError(
+                    f"Zotero API returned {r.status_code} for {path} "
+                    f"(retry-after={r.headers.get('retry-after')})",
+                    request=r.request,
+                    response=r,
+                )
             page = r.json() or []
             if not page:
                 break

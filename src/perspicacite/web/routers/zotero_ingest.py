@@ -24,29 +24,51 @@ _ingest_tasks: set[asyncio.Task[Any]] = set()
 
 class BuildKBsRequest(BaseModel):
     plan: list[ZoteroKBPlanEntry]
+    # Optional per-call overrides so a caller can drive multiple libraries
+    # (e.g. BioMedOmicsAI + MetaboLinkAI) without restarting the server.
+    library_id: str | None = None
+    library_type: str | None = None
 
 
-def _client_from_state() -> ZoteroClient:
+def _client_from_state(
+    *, library_id: str | None = None, library_type: str | None = None
+) -> ZoteroClient:
     cfg = getattr(getattr(app_state, "config", None), "zotero", None)
-    if not (cfg and cfg.enabled and cfg.library_id):
+    if not (cfg and cfg.enabled):
         raise HTTPException(status_code=503, detail="Zotero not configured")
+    eff_library_id = library_id or cfg.library_id
+    eff_library_type = library_type or cfg.library_type
+    if not eff_library_id:
+        raise HTTPException(
+            status_code=400,
+            detail="library_id required (query/body arg or zotero.library_id in config)",
+        )
     base_url = getattr(cfg, "base_url", "") or None
     is_local = base_url and ("localhost" in base_url or "127.0.0.1" in base_url)
     if not cfg.api_key and not is_local:
         raise HTTPException(status_code=503, detail="Zotero api_key required for non-local base_url")
     return ZoteroClient(
         api_key=cfg.api_key,
-        library_id=cfg.library_id,
-        library_type=cfg.library_type,
+        library_id=eff_library_id,
+        library_type=eff_library_type,
         collection_key=cfg.collection_key,
         base_url=base_url,
     )
 
 
 @router.get("/plan")
-async def get_plan() -> dict[str, Any]:
-    client = _client_from_state()
-    plan = await plan_kbs_from_zotero(client, include_unfiled=True)
+async def get_plan(
+    include_unfiled: bool = True,
+    library_id: str | None = None,
+    library_type: str | None = None,
+) -> dict[str, Any]:
+    """Plan the KBs that would be built from a Zotero library.
+
+    Pass ``library_id`` / ``library_type`` to preview a different library
+    than the one in config without restarting the server.
+    """
+    client = _client_from_state(library_id=library_id, library_type=library_type)
+    plan = await plan_kbs_from_zotero(client, include_unfiled=include_unfiled)
     return {"library_name": "Library", "plan": [p.model_dump() for p in plan]}
 
 
@@ -54,7 +76,9 @@ async def get_plan() -> dict[str, Any]:
 async def build_kbs_async(payload: BuildKBsRequest) -> dict[str, Any]:
     if app_state.job_registry is None:
         raise HTTPException(status_code=503, detail="Job registry not available")
-    client = _client_from_state()
+    client = _client_from_state(
+        library_id=payload.library_id, library_type=payload.library_type
+    )
     job_id = await app_state.job_registry.create("zotero_ingest", total=len(payload.plan))
     task = asyncio.create_task(
         build_kbs_from_zotero(

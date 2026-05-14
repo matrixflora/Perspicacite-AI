@@ -1250,6 +1250,8 @@ async def build_kbs_from_zotero(
     top_level_collection_keys: list[str] | None = None,
     include_unfiled: bool = True,
     plan_only: bool = False,
+    library_id: str | None = None,
+    library_type: str | None = None,
 ) -> dict[str, Any]:
     """Build one KB per Zotero top-level collection.
 
@@ -1257,6 +1259,11 @@ async def build_kbs_from_zotero(
         top_level_collection_keys: Optional filter. None = all top-level collections.
         include_unfiled: Also include items not in any collection (default True).
         plan_only: If True, return the preview only without executing.
+        library_id: Optional override for zotero.library_id from config.
+            Pass this to switch libraries per-call without restarting.
+            e.g. for BioMedOmicsAI → "5691738", MetaboLinkAI → "5453037".
+        library_type: Optional override for zotero.library_type ("user" or
+            "group"). Defaults to the configured value.
 
     Returns either {"plan": [...]} (plan-only) or {"per_kb": [...]} (executed).
     Requires zotero.enabled=true and credentials in config.yml.
@@ -1265,10 +1272,17 @@ async def build_kbs_from_zotero(
     from perspicacite.integrations.zotero import ZoteroClient
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
-    if not (cfg and cfg.enabled and cfg.library_id):
-        return {
-            "error": "Zotero not configured (zotero.enabled, zotero.library_id)"
-        }
+    if not (cfg and cfg.enabled):
+        return {"error": "Zotero not configured (zotero.enabled)"}
+
+    # Allow per-call overrides for library_id / library_type so an agent
+    # can drive multiple libraries (e.g. BioMedOmicsAI + MetaboLinkAI)
+    # without restarting the server.
+    eff_library_id = library_id or cfg.library_id
+    eff_library_type = library_type or cfg.library_type
+    if not eff_library_id:
+        return {"error": "library_id required (pass as argument or set zotero.library_id)"}
+
     base_url = getattr(cfg, "base_url", "") or None
     is_local = base_url and ("localhost" in base_url or "127.0.0.1" in base_url)
     if not cfg.api_key and not is_local:
@@ -1276,8 +1290,8 @@ async def build_kbs_from_zotero(
 
     client = ZoteroClient(
         api_key=cfg.api_key,
-        library_id=cfg.library_id,
-        library_type=cfg.library_type,
+        library_id=eff_library_id,
+        library_type=eff_library_type,
         collection_key=cfg.collection_key,
         base_url=base_url,
     )
