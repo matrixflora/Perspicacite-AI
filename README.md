@@ -55,6 +55,7 @@
 - **Obsidian vault export** — Export any KB as an Obsidian-compatible Markdown vault
 - **Async ingestion** — Long BibTeX / DOI import jobs run in the background with SSE progress streaming
 - **Local-first** — Data stays on your machine; only API calls go to LLM providers
+- **Flexible LLM routing** — Five paths: direct API (Anthropic / OpenAI / DeepSeek / Gemini), Ollama (local, free), `claude_cli` (subprocess wrapper around `claude -p` using your Pro/Max subscription), MCP `sampling/createMessage` (uses the connected client's credentials), and Anthropic prompt caching (~90% discount on repeated prefixes — already enabled on the two hottest call sites). Per-stage tiering: Haiku for routing/screening, Sonnet for synthesis
 
 ---
 
@@ -378,36 +379,114 @@ mcp:
 
 Academic database search APIs are configured under `scilex:` — enabled sources include Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, and DBLP by default.
 
-### Cheap / local-only mode (zero API cost)
+### LLM routing — pick the path that fits your wallet
 
-To run Perspicacité with no paid API calls — useful for dev, CI, or on
-an air-gapped machine — point both the LLM and the embedding model at
-local backends:
+Perspicacité supports five complementary paths for internal LLM
+calls. Mix and match per stage; preserve the multi-provider design.
+
+| Path | Pays | Best for | Caveats |
+|------|------|----------|---------|
+| **Direct API** (Anthropic, OpenAI, DeepSeek, Gemini, Minimax) | Per-token API key | Default. Streaming, full control, prompt caching. | Per-token billing. |
+| **Ollama** (`config.ollama.example.yml`) | Nothing | Privacy-first, offline, dev/CI. | Quality < Sonnet-4.5. Tool-use limited (agentic mode best avoided). |
+| **`claude_cli`** (subprocess wrapper) | Your Claude subscription | Use Pro/Max for Perspicacité without an API key. | Shares rate limits with your interactive Claude Code; no streaming/temperature; brittle. |
+| **MCP sampling** (`use_mcp_sampling: true`) | Client's credentials | Cleanest path *if* your MCP client implements `sampling/createMessage`. | Claude Code CLI does not yet (anthropics/claude-code#1785); Claude Desktop has partial support. |
+| **Anthropic prompt caching** | Anthropic API but 90 % cheaper on cached prefix | Per-chunk contextual retrieval, repeated `kb_name="auto"` routing. | Already enabled — no config needed. |
+
+#### Per-stage model tiering
+
+Mix Sonnet for synthesis with Haiku (or local Ollama) for the cheap
+roles:
 
 ```yaml
 llm:
-  default_provider: "ollama"
-  default_model: "llama3.1"          # or mistral, phi3
-  providers:
-    ollama:
-      base_url: "http://localhost:11434"
-      timeout: 120
+  default_provider: "anthropic"
+  default_model:    "claude-sonnet-4-5"      # synthesis (profound, agentic)
 
-knowledge_base:
-  embedding_model: "all-MiniLM-L6-v2"  # local sentence-transformers (~80MB, 384-dim)
+  models:                                     # per-stage overrides
+    routing:    "claude-haiku-4-5"            # kb_router LLM
+    screening:  "claude-haiku-4-5"            # screen_papers LLM
+    rephrase:   "claude-haiku-4-5"            # rephrase_query
+    contextual: "claude-haiku-4-5"            # contextual retrieval
+
+  providers_per_stage:                        # optional per-stage provider
+    screening: "ollama"                        # e.g. screen locally,
+                                                # synthesize on Anthropic
 ```
 
-Then start Ollama (`brew install ollama && ollama serve && ollama pull llama3.1`)
-and launch Perspicacité as usual.
+Empty `models` (today's default) sends every stage to
+`(default_provider, default_model)` — no behaviour change for
+existing configs.
 
-**Caveats:**
-- Ollama's tool-use support is limited, so agentic mode is best avoided —
-  basic/advanced/contradiction modes work fine.
-- A given KB is bound to the embedding model that wrote it. Cheap-mode
-  only makes sense for **fresh KBs**; you can't query a KB built with
-  OpenAI embeddings using a local model (different vector spaces).
-- Local sentence-transformers will download once on first use (the
-  `~/.cache/torch/sentence_transformers/` directory).
+#### Claude Code subscription routing (`claude_cli`)
+
+Use your Claude Pro/Max subscription instead of an API key:
+
+```yaml
+llm:
+  default_provider: "claude_cli"
+  default_model:    "claude-sonnet-4-5"       # mapped to `sonnet` alias
+
+  models:
+    routing:   "haiku"
+    screening: "haiku"
+    rephrase:  "haiku"
+```
+
+Each LLM call spawns `claude -p --model haiku/sonnet/opus`
+under the hood and parses the JSON result. **Caveat**: rate limits
+are shared with your interactive Claude Code session, so a heavy
+contextual-retrieval ingest may freeze you out for hours. Combine
+with the PDF cache (`pdf_download.cache_pdfs: true`) and the
+built-in prompt cache so re-ingest doesn't burn fresh requests.
+
+#### MCP sampling (`use_mcp_sampling`)
+
+When Perspicacité runs as an MCP server, the protocol-native way to
+use the client's credentials is `sampling/createMessage`. Opt in:
+
+```yaml
+llm:
+  use_mcp_sampling: true
+  default_provider: "anthropic"     # fallback when sampling fails
+  default_model:    "claude-sonnet-4-5"
+```
+
+Inside the 5 LLM-heavy MCP tools (`route_kbs`, `screen_papers`,
+`build_kb_from_search`, `expand_kb_via_citations`, `generate_report`)
+Perspicacité asks the connected client to produce the completion. On
+success: client pays. On failure (client doesn't advertise the
+capability): silent fall-through to LiteLLM with the configured
+provider. Status as of May 2026:
+
+- **Claude Code CLI**: not yet implemented
+  ([anthropics/claude-code#1785](https://github.com/anthropics/claude-code/issues/1785)).
+- **Claude Desktop**: partial support — works for many calls.
+- **Cursor / Cline / community clients**: vary, opt-in per-client.
+
+Design doc:
+[`docs/superpowers/specs/2026-05-14-claude-code-sampling-integration-design.md`](docs/superpowers/specs/2026-05-14-claude-code-sampling-integration-design.md).
+
+#### Cheap / local-only mode (Ollama)
+
+Run with no paid API calls — dev, CI, air-gapped machine, full data
+privacy. Use the dedicated preset:
+
+```bash
+perspicacite -c config.ollama.example.yml serve
+```
+
+See [`config.ollama.example.yml`](config.ollama.example.yml) for
+the recommended model split (70B for synthesis, 3B for cheap roles).
+
+**Caveats** (same for any local route):
+- Ollama's tool-use support is limited, so agentic mode is best
+  avoided — basic / advanced / contradiction modes work fine.
+- A given KB is bound to the embedding model that wrote it. Local
+  mode only makes sense for **fresh KBs**; you can't query a KB
+  built with OpenAI embeddings using a local model (different
+  vector spaces).
+- Local sentence-transformers download once on first use
+  (`~/.cache/torch/sentence_transformers/`).
 
 ### Zotero secrets via environment variables
 
