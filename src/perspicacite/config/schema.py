@@ -280,6 +280,35 @@ class LLMConfig(BaseModel):
         ),
     )
 
+    # ---- disk cache (Wave 2.1) -------------------------------------
+    # Cache complete() responses on disk keyed by
+    # (provider, model, messages, temperature, max_tokens). Pays back
+    # on every dev iteration and on slow agent-CLI paths (6–16 s →
+    # <10 ms). See docs/superpowers/specs/2026-05-14-llm-disk-cache-design.md.
+    cache_enabled: bool = Field(
+        default=True,
+        description=(
+            "Cache LLM responses on disk so repeated identical calls "
+            "return instantly. Default on; bypass per-call with "
+            "client.complete(..., cache=False)."
+        ),
+    )
+    cache_path: Path = Field(
+        default=Path("data/llm_cache.db"),
+        description=(
+            "SQLite file backing the cache. Created on first use. "
+            "Already covered by the `data/*.db` .gitignore rule."
+        ),
+    )
+    cache_ttl_hours: int = Field(
+        default=24,
+        ge=0,
+        description=(
+            "Cached responses expire after this many hours. 0 means "
+            "never expire (kept until manually cleared)."
+        ),
+    )
+
     providers: dict[str, LLMProviderConfig] = Field(
         default_factory=lambda: {
             "anthropic": LLMProviderConfig(
