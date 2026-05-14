@@ -92,6 +92,7 @@ packages_to_use/
 !perspicacite_skills.md
 !docs/superpowers/**/*.md
 !docs/agent-cli-caveats.md
+!docs/roadmap-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
