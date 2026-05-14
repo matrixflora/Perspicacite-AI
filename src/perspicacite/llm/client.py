@@ -158,6 +158,20 @@ class AsyncLLMClient:
     def __init__(self, config: LLMConfig):
         self.config = config
         self._litellm = None
+        self._claude_cli: Any = None
+
+    def _get_claude_cli_client(self) -> Any:
+        """Lazy-init the Claude Code CLI subprocess provider."""
+        if self._claude_cli is None:
+            from perspicacite.llm.claude_cli import ClaudeCLIClient
+            cli_cfg = self.config.providers.get("claude_cli")
+            kw: dict[str, Any] = {}
+            if cli_cfg is not None:
+                # Reuse the existing timeout field; base_url is unused.
+                if getattr(cli_cfg, "timeout", None):
+                    kw["timeout"] = float(cli_cfg.timeout)
+            self._claude_cli = ClaudeCLIClient(**kw)
+        return self._claude_cli
 
     def _get_litellm(self) -> Any:
         """Lazy import litellm."""
@@ -222,6 +236,17 @@ class AsyncLLMClient:
             model = self.config.default_model
 
         stage_label = kwargs.pop("stage", "llm")
+
+        # Claude Code CLI takes a completely different path — subprocess
+        # to `claude -p`, no LiteLLM, uses the user's subscription.
+        # Branch here so we don't need to pretend LiteLLM understands it.
+        if provider == "claude_cli":
+            cli = self._get_claude_cli_client()
+            return await cli.complete(
+                messages=messages, model=model, provider=provider,
+                temperature=temperature, max_tokens=max_tokens,
+                stage=stage_label, **kwargs,
+            )
 
         provider_config = self._get_provider_config(provider)
         model_str = self._build_model_string(provider, model)
