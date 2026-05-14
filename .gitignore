@@ -110,6 +110,7 @@ packages_to_use/
 !docs/export-formats-*.md
 !docs/versioned-kbs-*.md
 !docs/orcid-disambiguation-*.md
+!docs/mcp-resources-prompts-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
