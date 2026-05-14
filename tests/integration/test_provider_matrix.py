@@ -222,6 +222,7 @@ def test_liveness_anthropic():
             model="claude-haiku-4-5",
             max_tokens=10,
             temperature=0.0,
+            cache=False,           # Wave 2.1: never cache liveness responses
         )
     )
     assert isinstance(result, str), f"Expected str, got {type(result)}"
@@ -243,6 +244,7 @@ def test_liveness_openai():
             model="gpt-4o-mini",
             max_tokens=10,
             temperature=0.0,
+            cache=False,           # Wave 2.1: never cache liveness responses
         )
     )
     assert isinstance(result, str)
@@ -264,6 +266,7 @@ def test_liveness_deepseek():
             model="deepseek-chat",
             max_tokens=10,
             temperature=0.0,
+            cache=False,           # Wave 2.1: never cache liveness responses
         )
     )
     assert isinstance(result, str)
@@ -285,6 +288,7 @@ def test_liveness_gemini():
             model="gemini-1.5-flash",
             max_tokens=10,
             temperature=0.0,
+            cache=False,           # Wave 2.1: never cache liveness responses
         )
     )
     assert isinstance(result, str)
@@ -309,6 +313,7 @@ def test_liveness_ollama():
             model=model,
             max_tokens=10,
             temperature=0.0,
+            cache=False,           # Wave 2.1: never cache liveness responses
         )
     )
     assert isinstance(result, str)
@@ -330,6 +335,7 @@ def test_liveness_claude_cli():
             model="haiku",
             max_tokens=10,
             temperature=0.0,
+            cache=False,           # Wave 2.1: never cache liveness responses
         )
     )
     assert isinstance(result, str)
@@ -351,6 +357,7 @@ def test_liveness_agent_cli_codex():
             model="gpt-5.5",
             max_tokens=10,
             temperature=0.0,
+            cache=False,           # Wave 2.1: never cache liveness responses
         )
     )
     assert isinstance(result, str)
