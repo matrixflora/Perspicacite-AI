@@ -318,6 +318,15 @@ class AgentCLIClient:
                     provider=self.provider_label,
                     retry_after_seconds=hit.retry_after_seconds,
                 )
+            from perspicacite.llm.errors import (
+                AuthError, detect_auth_error,
+            )
+            if detect_auth_error(err_full) or detect_auth_error(out_str):
+                raise AuthError(
+                    f"{self.provider_label}: auth failed. "
+                    f"{suggested_action(self.provider_label)}",
+                    provider=self.provider_label,
+                )
             raise RuntimeError(
                 f"{self.provider_label}: CLI exited {proc.returncode}: {err}"
             )
