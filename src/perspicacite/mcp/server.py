@@ -1967,6 +1967,78 @@ async def export_kb(
 
 
 # =============================================================================
+# Tool 21: expand_kb_via_citations
+# =============================================================================
+
+
+@mcp.tool()
+async def expand_kb_via_citations(
+    kb_name: str,
+    direction: str = "both",
+    max_per_seed: int = 10,
+    seed_dois: list[str] | None = None,
+    min_year: int | None = None,
+    max_year: int | None = None,
+    min_citations: int | None = None,
+    require_abstract: bool = False,
+    screen_method: str | None = None,
+    screen_threshold: float = 0.5,
+    query: str | None = None,
+    dry_run: bool = False,
+) -> str:
+    """Grow a KB by following citation edges from its existing papers.
+
+    Forward snowball: papers that cite the seeds. Backward snowball:
+    papers the seeds cite. Uses OpenAlex (no SciLEx dependency).
+    Optionally screens candidates by BM25 / LLM relevance against
+    ``query`` (or the KB description) before ingest.
+
+    Args:
+        kb_name: Target KB. Must already exist.
+        direction: ``"forward"`` / ``"backward"`` / ``"both"``.
+        max_per_seed: Cap on hits per seed per direction (max 25).
+        seed_dois: Restrict to these seeds. ``None`` = every DOI in
+            the KB.
+        min_year / max_year / min_citations / require_abstract:
+            Pre-screen filters.
+        screen_method / screen_threshold: Optional LLM/BM25 relevance
+            gate; ``query`` falls back to the KB description.
+        dry_run: Skip PDF fetch + ingest; return the candidate DOIs only.
+
+    Returns:
+        JSON :class:`SnowballReport`.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+    try:
+        from perspicacite.pipeline.snowball import expand_kb_via_citations as _expand
+        from perspicacite.pipeline.search_to_kb import SearchFilter
+
+        flt = SearchFilter(
+            min_year=min_year, max_year=max_year,
+            min_citations=min_citations, require_doi=True,
+            require_abstract=require_abstract,
+        )
+        report = await _expand(
+            app_state=state, kb_name=kb_name,
+            direction=direction, max_per_seed=max_per_seed,
+            seed_dois=seed_dois, flt=flt,
+            screen_method=screen_method, screen_threshold=screen_threshold,
+            query=query, dry_run=dry_run,
+        )
+        logger.info(
+            "mcp_expand_kb_via_citations",
+            kb=kb_name, direction=direction,
+            raw_hits=report.raw_hits, added=report.added_papers,
+        )
+        return _json_ok(report.to_dict())
+    except Exception as e:
+        logger.error("mcp_expand_kb_via_citations_error", kb=kb_name, error=str(e))
+        return _json_error(f"expand_kb_via_citations failed: {e}")
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -1992,6 +2064,7 @@ _TOOL_NAMES: list[str] = [
     "route_kbs",
     "build_kb_from_search",
     "export_kb",
+    "expand_kb_via_citations",
 ]
 
 
