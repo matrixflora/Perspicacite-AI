@@ -93,7 +93,15 @@ async def _ingest_files(
     app_state,
     registry,
     job_id: str,
+    external_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """When ``external_metadata`` is provided, every chunk is annotated with
+    ``parent_paper_id`` / ``is_external=True`` / ``resource_refs`` for the
+    Cycle C fetched-resource ingest path.
+
+    .ipynb files are pre-processed via ``strip_notebook_outputs`` before
+    chunking so embedded image blobs don't enter the KB.
+    """
     try:
         kb = await app_state.session_store.get_kb_metadata(kb_name)
         if kb is None:
@@ -110,15 +118,33 @@ async def _ingest_files(
                     "type": "progress", "done": idx + 1, "file": str(fp), "status": "empty",
                 })
                 continue
+            # Cycle C: strip notebook outputs before chunking.
+            if fp.suffix.lower() == ".ipynb":
+                from perspicacite.pipeline.external.notebooks import (
+                    strip_notebook_outputs,
+                )
+                text = strip_notebook_outputs(text)
             chunks = await chunk_document(
                 text, paper,
                 content_type=content_type, language=language, config=kb_cfg,
             )
-            # ChunkMetadata is frozen — recreate with source_file_path set
+            # ChunkMetadata is frozen — recreate with source_file_path set,
+            # plus optional external_metadata annotations (Cycle C).
+            ext_parent = (external_metadata or {}).get("parent_paper_id")
+            ext_resource_id = (external_metadata or {}).get("resource_id")
             for c in chunks:
-                c.metadata = ChunkMetadata(
-                    **{**c.metadata.model_dump(), "source_file_path": str(fp.resolve())}
-                )
+                base = c.metadata.model_dump()
+                base["source_file_path"] = str(fp.resolve())
+                if external_metadata is not None:
+                    base["is_external"] = True
+                    if ext_parent:
+                        base["parent_paper_id"] = ext_parent
+                    if ext_resource_id:
+                        existing = list(base.get("resource_refs") or [])
+                        if ext_resource_id not in existing:
+                            existing.append(ext_resource_id)
+                        base["resource_refs"] = existing
+                c.metadata = ChunkMetadata(**base)
             if chunks:
                 texts = [c.text for c in chunks]
                 embeds = await app_state.embedding_provider.embed(texts)
@@ -160,12 +186,19 @@ async def ingest_local_documents(
     registry,
     job_id: str,
     recursive: bool = True,
+    external_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Top-level entry used by routers, CLI, and MCP.
 
     Routes capsule directories (those containing a ``metadata.json`` with
     ``capsule_version``) through ``CapsuleReader.ingest_capsule``; other
     inputs go through the regular per-file ingest path.
+
+    ``external_metadata`` (Cycle C): when provided, every chunk written by the
+    per-file path is tagged with ``is_external=True`` plus
+    ``parent_paper_id``/``resource_refs`` from the dict. Used by the
+    fetch-resources orchestrator to mark fetched-repo / fetched-Zenodo
+    content distinctly from primary paper content.
     """
     capsule_dirs = [p for p in paths if p.is_dir() and is_capsule_dir(p)]
     non_capsule_paths = [p for p in paths if p not in capsule_dirs]
@@ -189,6 +222,7 @@ async def ingest_local_documents(
         expanded = expand_paths(non_capsule_paths, recursive=recursive)
         r2 = await _ingest_files(
             kb_name=kb_name, files=expanded, app_state=app_state,
+            external_metadata=external_metadata,
             registry=registry, job_id=job_id,
         )
         # _ingest_files already calls registry.finish — we returned via that
