@@ -136,6 +136,16 @@ class KnowledgeBaseConfig(BaseModel):
         ),
     )
 
+    # ---- checkpoint / resume (Wave 3.3) ----------------------------
+    checkpoint_dir: Path = Field(
+        default=Path("data/checkpoints"),
+        description=(
+            "Directory for ingest checkpoint files (Wave 3.3). "
+            "Each multi-paper ingest writes <kb>__<op>.json here "
+            "and removes it on clean completion."
+        ),
+    )
+
 
 class CopyrightFilterConfig(BaseModel):
     """Runtime check on synthesis output to catch verbatim copies of
