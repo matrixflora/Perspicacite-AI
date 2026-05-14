@@ -296,14 +296,19 @@ def _extract_supplementary_from_xml(xml_bytes: bytes, pmcid: str) -> list[dict] 
                                 or sub.attrib.get("mime-subtype")
                                 or ""
                             )
-                # PMC mirrors SI files at /pmc/articles/<pmcid>/bin/<href>
-                # when href is a relative filename. External href (http://...)
-                # passes through unchanged.
+                # PMC mirrors SI files at /articles/instance/<numeric_id>/bin/<href>
+                # on the new pmc.ncbi.nlm.nih.gov domain (the older
+                # www.ncbi.nlm.nih.gov/pmc/articles/<pmcid>/bin/... pattern
+                # 301-redirects, but NCBI's bot detection often returns an
+                # HTML interstitial instead of the file — the caller
+                # checks content-type to detect that).
+                # External href (http://...) passes through unchanged.
                 if href.startswith("http://") or href.startswith("https://"):
                     url = href
                 else:
+                    numeric_id = pmcid[3:] if pmcid.upper().startswith("PMC") else pmcid
                     url = (
-                        f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/bin/{href}"
+                        f"https://pmc.ncbi.nlm.nih.gov/articles/instance/{numeric_id}/bin/{href}"
                     )
                 out.append({
                     "id": child.attrib.get("id"),
