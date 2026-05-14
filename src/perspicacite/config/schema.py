@@ -218,6 +218,23 @@ class RAGModesConfig(BaseModel):
         description="HuggingFace cross-encoder model used for reranking",
     )
 
+    # KB auto-routing — triggered by `kb_name="auto"` in /api/chat or
+    # MCP route_kbs(). The router scores each KB's description +
+    # sampled paper titles against the query and picks top-N to query
+    # in parallel via the multi-KB path.
+    route_method: Literal["bm25", "llm"] = Field(
+        default="bm25",
+        description="bm25 = free + fast; llm = one cheap LLM call per route, better on semantics.",
+    )
+    route_top_k: int = Field(
+        default=3, ge=1, le=10,
+        description="Max KBs the router will return.",
+    )
+    route_threshold: float = Field(
+        default=0.1, ge=0.0, le=1.0,
+        description="Drop KBs whose normalized score is below this.",
+    )
+
     # Basic: Single query, no refinement, fastest
     basic: RAGModeSettings = Field(
         default_factory=lambda: RAGModeSettings(
