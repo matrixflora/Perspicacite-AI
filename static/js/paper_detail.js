@@ -97,6 +97,97 @@ function renderPaperDetail(panel, data) {
             }
         });
     }
+
+    /* Cycle C: Fetch external resources button (only when paper has a DOI
+       and the current KB is known). */
+    if (data.doi && typeof selectedKb !== 'undefined' && selectedKb) {
+        const fetchBtn = document.createElement('button');
+        fetchBtn.className = 'fetch-resources-btn';
+        fetchBtn.textContent = 'Fetch external resources';
+        fetchBtn.addEventListener('click', function() {
+            fetchExternalResources('doi:' + data.doi, fetchBtn);
+        });
+        const innerDiv = panel.querySelector('.paper-detail-inner');
+        if (innerDiv) innerDiv.appendChild(fetchBtn);
+
+        const progress = document.createElement('div');
+        progress.className = 'fetch-resources-progress';
+        progress.id = 'fetch-resources-progress';
+        progress.hidden = true;
+        if (innerDiv) innerDiv.appendChild(progress);
+    }
+}
+
+async function fetchExternalResources(paperId, buttonEl) {
+    if (typeof selectedKb === 'undefined' || !selectedKb) {
+        alert('No KB selected.');
+        return;
+    }
+    const prog = document.getElementById('fetch-resources-progress');
+    if (prog) {
+        prog.hidden = false;
+        prog.innerHTML = '<div class="fetch-resources-header">Fetching…</div>';
+    }
+    if (buttonEl) {
+        buttonEl.disabled = true;
+        buttonEl.textContent = 'Fetching…';
+    }
+    try {
+        const url = '/api/kb/' + encodeURIComponent(selectedKb) +
+                    '/paper/' + encodeURIComponent(paperId) + '/fetch-resources';
+        const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kinds: null, ingest: true, force: false }),
+        });
+        if (r.status === 503) {
+            if (prog) prog.innerHTML = '<div class="fetch-resources-error">Job registry unavailable on the server.</div>';
+            return;
+        }
+        const body = await r.json();
+        const sseUrl = body.sse_url || (body.job_id ? '/api/jobs/' + body.job_id + '/events' : null);
+        if (!sseUrl) {
+            if (prog) prog.innerHTML = '<div class="fetch-resources-error">No SSE URL returned.</div>';
+            return;
+        }
+        const events = [];
+        const ev = new EventSource(sseUrl);
+        ev.onmessage = function(e) {
+            try {
+                const payload = JSON.parse(e.data);
+                events.push(payload);
+                if (prog) {
+                    const lines = events.map(function(p) {
+                        if (p.type === 'progress') {
+                            return '  ' + (p.kind || '') + ' ' + (p.identifier || '') + ': ' + (p.status || '');
+                        }
+                        if (p.type === 'done' || p.type === 'finished') {
+                            return 'Done.';
+                        }
+                        if (p.type === 'error' || p.error) {
+                            return 'Error: ' + (p.error || JSON.stringify(p));
+                        }
+                        return JSON.stringify(p);
+                    });
+                    prog.innerHTML = '<div class="fetch-resources-header">Fetching…</div><pre class="fetch-resources-log">' +
+                        lines.map(escapeHtml).join('\n') + '</pre>';
+                }
+            } catch (err) { /* ignore parse errors */ }
+        };
+        ev.onerror = function() {
+            ev.close();
+            if (buttonEl) {
+                buttonEl.disabled = false;
+                buttonEl.textContent = 'Fetch external resources';
+            }
+        };
+    } catch (e) {
+        if (prog) prog.innerHTML = '<div class="fetch-resources-error">Failed: ' + escapeHtml(String(e)) + '</div>';
+        if (buttonEl) {
+            buttonEl.disabled = false;
+            buttonEl.textContent = 'Fetch external resources';
+        }
+    }
 }
 
 /* Zotero integration (lazily initialized once per page) */
