@@ -1223,6 +1223,127 @@ def search_to_kb_cmd(
     asyncio.run(_run())
 
 
+@cli.command("expand-kb")
+@click.option("--kb", "-k", "kb_name", required=True, help="KB to grow.")
+@click.option("--direction", type=click.Choice(["forward", "backward", "both"]),
+              default="both", show_default=True,
+              help="forward=papers citing seeds; backward=papers seeds cite.")
+@click.option("--max-per-seed", type=int, default=10, show_default=True,
+              help="Cap on hits per seed paper per direction.")
+@click.option("--seed-doi", "seed_dois", multiple=True,
+              help="Restrict to these seed DOIs. Repeatable. Default: all KB papers.")
+@click.option("--min-year", type=int, default=None, help="Drop hits before this year.")
+@click.option("--max-year", type=int, default=None, help="Drop hits after this year.")
+@click.option("--min-citations", type=int, default=None,
+              help="Drop hits below this citation count.")
+@click.option("--require-abstract/--no-require-abstract", default=False,
+              help="Drop hits without an abstract.")
+@click.option("--screen", "screen_method",
+              type=click.Choice(["bm25", "llm"]), default=None,
+              help='Relevance-screen against --query (or the KB description).')
+@click.option("--screen-threshold", type=float, default=0.5,
+              show_default=True, help="Drop screened candidates below this score.")
+@click.option("--query", default=None,
+              help="Prompt for the relevance screen. Defaults to the KB description.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Show which DOIs would be ingested without fetching PDFs.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Emit the SnowballReport as JSON.")
+@click.pass_context
+def expand_kb_cmd(
+    ctx: click.Context,
+    kb_name: str,
+    direction: str,
+    max_per_seed: int,
+    seed_dois: tuple[str, ...],
+    min_year: int | None,
+    max_year: int | None,
+    min_citations: int | None,
+    require_abstract: bool,
+    screen_method: str | None,
+    screen_threshold: float,
+    query: str | None,
+    dry_run: bool,
+    as_json: bool,
+) -> None:
+    """Grow a KB by following citation edges from its existing papers.
+
+    Forward snowball pulls newer work that cites the seeds; backward
+    snowball pulls the intellectual lineage the seeds cite. Uses
+    OpenAlex; no SciLEx dependency.
+
+    Examples:
+        # Grow a KB by 1 hop in both directions, screening for topic fit
+        perspicacite expand-kb -k diamond_sensors --direction both \\
+            --max-per-seed 8 --min-year 2020 --screen llm
+
+        # Just see what backward citations would be added (no ingest)
+        perspicacite expand-kb -k diamond_sensors --direction backward \\
+            --dry-run
+    """
+    from perspicacite.web.state import AppState
+    from perspicacite.pipeline.search_to_kb import SearchFilter
+    from perspicacite.pipeline.snowball import expand_kb_via_citations
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        flt = SearchFilter(
+            min_year=min_year, max_year=max_year,
+            min_citations=min_citations, require_doi=True,
+            require_abstract=require_abstract,
+        )
+        report = await expand_kb_via_citations(
+            app_state=state,
+            kb_name=kb_name,
+            direction=direction,
+            max_per_seed=max_per_seed,
+            seed_dois=list(seed_dois) or None,
+            flt=flt,
+            screen_method=screen_method,
+            screen_threshold=screen_threshold,
+            query=query,
+            dry_run=dry_run,
+        )
+        if as_json:
+            import json as _json
+            click.echo(_json.dumps(report.to_dict(), indent=2, default=str))
+            return
+        click.echo(f"🌱 expand-kb: '{kb_name}' (direction={direction})")
+        click.echo(
+            f"  • seeds={len(report.seed_dois)} raw_hits={report.raw_hits} "
+            f"unique={report.unique_dois}"
+        )
+        click.echo(
+            f"  • dropped: existing={report.dropped_existing}, "
+            f"filtered={report.dropped_filtered}, "
+            f"screened={report.dropped_screened}"
+        )
+        if dry_run:
+            click.echo(f"  • dry-run; would ingest {len(report.ingested_dois)} DOIs:")
+            for d in report.ingested_dois[:25]:
+                click.echo(f"      {d}")
+            if len(report.ingested_dois) > 25:
+                click.echo(f"      … and {len(report.ingested_dois) - 25} more")
+            return
+        click.echo(
+            f"  • added: {report.added_papers} papers, "
+            f"{report.added_chunks} chunks"
+        )
+        st = report.pdf_download
+        if st:
+            click.echo(
+                f"  • PDF download: attempted={st.get('attempted', 0)} "
+                f"success={st.get('success', 0)} failed={st.get('failed', 0)}"
+            )
+        if report.failed:
+            click.echo(f"  • {len(report.failed)} failures (first 5):")
+            for f in report.failed[:5]:
+                click.echo(f"      {f.get('doi')}: {f.get('reason')}")
+
+    asyncio.run(_run())
+
+
 @cli.command("export-kb")
 @click.option("--kb", "-k", "kb_name", required=True, help="KB to export.")
 @click.option("--out", "-o", "out_dir", required=True,
