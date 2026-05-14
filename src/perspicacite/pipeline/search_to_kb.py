@@ -59,6 +59,98 @@ class SearchFilter:
     require_abstract: bool = False
 
 
+# Tiny stopword list — enough to skim generic filler off KB title text.
+# Not trying to be a real NLP toolkit; KB-aware expansion just wants
+# the topic-bearing nouns to surface so SciLEx finds adjacent papers.
+_KB_AWARE_STOPWORDS = {
+    "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for",
+    "from", "by", "with", "is", "are", "was", "were", "be", "been",
+    "being", "as", "this", "that", "these", "those", "we", "our",
+    "their", "his", "her", "its", "it", "into", "via", "using", "use",
+    "used", "uses", "show", "shown", "show", "study", "studies", "based",
+    "novel", "new", "method", "methods", "approach", "paper", "papers",
+    "result", "results", "data", "datasets",
+    "imported", "references", "smoke", "test", "audit", "demo", "kb",
+}
+
+
+def _kb_aware_term_candidates(text: str) -> list[str]:
+    """Tokenize ``text`` to lower-cased alpha words (>=4 chars), with
+    stopwords removed. Used both for description and per-title term
+    extraction."""
+    import re
+    tokens = re.findall(r"[A-Za-z][A-Za-z\-]+", text)
+    return [
+        t.lower() for t in tokens
+        if len(t) >= 4 and t.lower() not in _KB_AWARE_STOPWORDS
+    ]
+
+
+async def kb_aware_query(
+    *,
+    app_state: Any,
+    kb_name: str,
+    query: str,
+    max_terms: int = 8,
+    sample_papers: int = 20,
+) -> tuple[str, list[str]]:
+    """Augment ``query`` with KB-derived topic terms.
+
+    Returns ``(augmented_query, injected_terms)``. The augmented query
+    is the original ``query`` followed by the top-N most-frequent
+    content words across the KB's description + sampled paper titles
+    (after stopword removal). This biases SciLEx toward the KB's
+    existing topic surface without overriding the user's intent.
+
+    When the KB doesn't exist or has no titles/description we return
+    ``(query, [])`` unchanged — callers can treat the empty injection
+    as "KB-aware was a no-op".
+
+    Why simple frequency and not an LLM rephrasing call:
+    - Free, deterministic, debuggable (the user sees the injected terms).
+    - Works on KBs of any size, including 1-paper KBs.
+    - LLM rephrasing is a separate feature (--rephrase) that handles
+      the "find lexically different but semantically equivalent
+      phrasings" problem.
+    """
+    kb_meta = await app_state.session_store.get_kb_metadata(kb_name)
+    if not kb_meta:
+        return query, []
+    desc = (kb_meta.description or "").strip()
+    # Skip generic placeholder descriptions — same set the kb_router uses.
+    if desc.lower() in {
+        "imported from references.bib", "smoke test", "audit test kb",
+        "test", "demo",
+    }:
+        desc = ""
+    from perspicacite.models.kb import chroma_collection_name_for_kb
+    collection = kb_meta.collection_name or chroma_collection_name_for_kb(kb_name)
+    try:
+        rows = await app_state.vector_store.list_paper_metadata(collection)
+    except Exception:
+        rows = []
+    titles = [r.get("title") or "" for r in rows[:sample_papers]]
+
+    # Bag-of-words frequency across description + titles.
+    counts: dict[str, int] = {}
+    for t in _kb_aware_term_candidates(desc):
+        counts[t] = counts.get(t, 0) + 2  # weight description higher
+    for tt in titles:
+        for t in _kb_aware_term_candidates(tt):
+            counts[t] = counts.get(t, 0) + 1
+    # Remove any term already present in the query (don't duplicate).
+    q_lower = query.lower()
+    for k in list(counts.keys()):
+        if k in q_lower:
+            counts.pop(k, None)
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    top = [k for k, _v in ranked[:max_terms]]
+    if not top:
+        return query, []
+    augmented = f"{query} {' '.join(top)}"
+    return augmented, top
+
+
 @dataclass
 class IngestReport:
     """Result of one end-to-end search→ingest run."""
@@ -66,6 +158,8 @@ class IngestReport:
     query: str
     kb_name: str
     kb_created: bool = False
+    augmented_query: str | None = None
+    injected_terms: list[str] = field(default_factory=list)
     searched: int = 0
     filtered_out: int = 0
     candidates: int = 0
@@ -379,6 +473,8 @@ async def search_filter_and_ingest(
     dry_run: bool = False,
     screen_method: str | None = None,
     screen_threshold: float = 0.5,
+    kb_aware: bool = False,
+    kb_aware_terms: int = 8,
 ) -> IngestReport:
     """End-to-end: SciLEx search → filter → optionally create KB → ingest.
 
@@ -389,8 +485,26 @@ async def search_filter_and_ingest(
     flt = flt or SearchFilter()
     report = IngestReport(query=query, kb_name=kb_name)
 
+    # KB-aware expansion (optional): if the KB already exists, mix
+    # its top topic terms into the query so SciLEx surfaces papers
+    # adjacent to the existing literature. No-op when the KB is new.
+    effective_query = query
+    if kb_aware:
+        augmented, injected = await kb_aware_query(
+            app_state=app_state, kb_name=kb_name,
+            query=query, max_terms=kb_aware_terms,
+        )
+        if injected:
+            effective_query = augmented
+            report.augmented_query = augmented
+            report.injected_terms = injected
+            logger.info(
+                "search_to_kb_kb_aware",
+                original=query, injected=injected,
+            )
+
     papers = await run_search(
-        query=query,
+        query=effective_query,
         max_results=max_results,
         databases=databases,
         year_min=flt.min_year,
