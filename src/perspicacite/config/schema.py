@@ -268,6 +268,14 @@ class ZoteroConfig(BaseModel):
     library_id: str = ""
     library_type: str = "user"  # "user" or "group"
     collection_key: str = ""
+    # Base URL for the Zotero API. Empty = cloud (api.zotero.org). To use
+    # the desktop app's local API (which serves attachments from local
+    # storage — including Linked Files), set to
+    # "http://localhost:23119/api" and enable
+    # "Allow other applications on this computer to communicate with Zotero"
+    # in Zotero's Settings → Advanced. api_key may be omitted when base_url
+    # is on loopback.
+    base_url: str = ""
 
 
 class LocalDocsConfig(BaseModel):

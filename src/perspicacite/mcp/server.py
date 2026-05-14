@@ -1204,6 +1204,7 @@ async def push_to_zotero(dois: list[str] | str) -> str:
                 library_id=cfg.library_id,
                 library_type=cfg.library_type,
                 collection_key=cfg.collection_key,
+                base_url=getattr(cfg, "base_url", "") or None,
                 http_client=http_client,
             )
             for raw_doi in dois:
@@ -1264,16 +1265,21 @@ async def build_kbs_from_zotero(
     from perspicacite.integrations.zotero import ZoteroClient
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
-    if not (cfg and cfg.enabled and cfg.api_key and cfg.library_id):
+    if not (cfg and cfg.enabled and cfg.library_id):
         return {
-            "error": "Zotero not configured (zotero.enabled, zotero.api_key, zotero.library_id)"
+            "error": "Zotero not configured (zotero.enabled, zotero.library_id)"
         }
+    base_url = getattr(cfg, "base_url", "") or None
+    is_local = base_url and ("localhost" in base_url or "127.0.0.1" in base_url)
+    if not cfg.api_key and not is_local:
+        return {"error": "Zotero api_key required for non-local base_url"}
 
     client = ZoteroClient(
         api_key=cfg.api_key,
         library_id=cfg.library_id,
         library_type=cfg.library_type,
         collection_key=cfg.collection_key,
+        base_url=base_url,
     )
     plan = await zotero_ingest.plan_kbs_from_zotero(
         client,

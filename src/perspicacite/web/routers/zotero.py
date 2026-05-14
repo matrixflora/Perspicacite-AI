@@ -69,6 +69,7 @@ async def zotero_push(payload: PushRequest) -> dict[str, Any]:
             library_id=cfg.library_id,
             library_type=cfg.library_type,
             collection_key=cfg.collection_key,
+            base_url=getattr(cfg, "base_url", "") or None,
             http_client=http_client,
         )
         created: list[dict[str, Any]] = []

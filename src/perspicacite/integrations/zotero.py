@@ -8,6 +8,14 @@ from typing import Any
 import httpx
 
 ZOTERO_API = "https://api.zotero.org"
+"""Default base URL for the cloud Zotero Web API v3.
+
+Override per-client by passing ``base_url`` to :class:`ZoteroClient`. For the
+desktop app's local API (which serves attachments from local storage,
+including Linked Files), point at ``http://localhost:23119/api`` and make sure
+"Allow other applications on this computer to communicate with Zotero" is
+enabled (Settings → Advanced → Config Editor → ``extensions.zotero.httpServer.enabled``).
+"""
 
 
 class _HTMLStripper(HTMLParser):
@@ -37,10 +45,17 @@ class ZoteroClient:
         library_id: str,
         library_type: str = "user",
         collection_key: str = "",
+        base_url: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ):
-        if not api_key or not library_id:
-            raise ValueError("Zotero api_key and library_id are required")
+        # Cloud requires api_key. Local desktop API (port 23119) accepts an
+        # empty api_key — it trusts loopback clients. Allow both by only
+        # requiring api_key when talking to a non-loopback host.
+        if not library_id:
+            raise ValueError("Zotero library_id is required")
+        self.base_url = (base_url or ZOTERO_API).rstrip("/")
+        if not api_key and "localhost" not in self.base_url and "127.0.0.1" not in self.base_url:
+            raise ValueError("Zotero api_key is required for non-local base_url")
         self.api_key = api_key
         self.library_id = library_id
         self.library_type = "groups" if library_type == "group" else "users"
@@ -48,7 +63,7 @@ class ZoteroClient:
         self._http = http_client
 
     def _base(self) -> str:
-        return f"{ZOTERO_API}/{self.library_type}/{self.library_id}"
+        return f"{self.base_url}/{self.library_type}/{self.library_id}"
 
     def _headers(self) -> dict[str, str]:
         return {
