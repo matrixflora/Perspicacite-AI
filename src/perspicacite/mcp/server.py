@@ -854,12 +854,25 @@ async def generate_report(
         }
         rag_mode = mode_map.get(mode, RAGMode.ADVANCED)
 
+        # Resolve provider/model from server-side config so MCP respects
+        # llm.default_provider / llm.default_model rather than the
+        # hard-coded RAGRequest defaults (deepseek). Matches the fix in
+        # web/routers/chat.py::_stream_rag_mode.
+        default_provider = "deepseek"
+        default_model = "deepseek-chat"
+        cfg_llm = getattr(state, "config", None)
+        if cfg_llm is not None and getattr(cfg_llm, "llm", None) is not None:
+            default_provider = cfg_llm.llm.default_provider or default_provider
+            default_model = cfg_llm.llm.default_model or default_model
+
         rag_request = RAGRequest(
             query=query,
             kb_name=effective_kb_name,
             kb_names=effective_kb_names,
             mode=rag_mode,
             recency_weight=recency_weight if recency_weight > 0 else None,
+            provider=default_provider,
+            model=default_model,
         )
 
         async for event in engine.query_stream(rag_request, message_id=message_id):
