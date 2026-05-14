@@ -96,6 +96,7 @@ packages_to_use/
 !docs/test-status-*.md
 !docs/provider-matrix-status-*.md
 !docs/mcp-smoke-status-*.md
+!docs/config-audit-status-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 

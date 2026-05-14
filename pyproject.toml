@@ -102,6 +102,7 @@ markers = [
     "integration: Integration tests (may need services)",
     "live: Tests requiring API keys (deselect with -m 'not live')",
     "smoke: MCP tool inventory smoke tests (fast, no real I/O)",
+    "config: Config loading audit tests (fast, no LLM calls, small YAML reads only)",
 ]
 
 [tool.ruff]
