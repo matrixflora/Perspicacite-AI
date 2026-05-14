@@ -45,6 +45,7 @@ class AppState:
         # Load config
         from perspicacite.config.loader import load_config
         from perspicacite.llm import AsyncLLMClient, LiteLLMEmbeddingProvider
+        from perspicacite.llm.embeddings import create_embedding_provider
         from perspicacite.retrieval import ChromaVectorStore
         from perspicacite.rag.agentic import AgenticOrchestrator, LLMAdapter
         from perspicacite.rag.tools import ToolRegistry, LotusSearchTool
@@ -55,8 +56,10 @@ class AppState:
         self.llm_client = AsyncLLMClient(config.llm)
         logger.info("LLM client initialized")
 
-        # Initialize embeddings
-        self.embedding_provider = LiteLLMEmbeddingProvider(
+        # Initialize embeddings (uses factory so local sentence-transformers
+        # models like "all-MiniLM-L6-v2" work without an OpenAI key, and
+        # API-based models still get a local fallback).
+        self.embedding_provider = create_embedding_provider(
             model=config.knowledge_base.embedding_model,
         )
         logger.info("Embedding provider initialized")
