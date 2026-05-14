@@ -44,7 +44,11 @@ class TimeoutError(LLMError):
 
 
 class AuthError(LLMError):
-    """Provider auth failed (401, missing creds, etc.)."""
+    """Provider auth failed (401, missing creds, expired session)."""
+
+    def __init__(self, message: str, *, provider: str = "unknown"):
+        super().__init__(message)
+        self.provider = provider
 
 
 # (compiled pattern, retry_seconds_extractor). Extractors return None
@@ -97,6 +101,24 @@ def detect_rate_limit(text: str) -> _RateLimitHit | None:
                 seconds = None
             return _RateLimitHit(retry_after_seconds=seconds)
     return None
+
+
+_AUTH_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\bauthentication\s*error\b", re.IGNORECASE),
+    re.compile(r"\b(api[_\s]?key)\b.*\b(missing|not\s*set|required|invalid)\b",
+               re.IGNORECASE),
+    re.compile(r"\b(missing|not\s*set)\b.*\b(api[_\s]?key)\b", re.IGNORECASE),
+    re.compile(r"environment\s*variable.*\bnot\s*set\b", re.IGNORECASE),
+    re.compile(r"please\s+run\s+['\"]?\w+\s+login", re.IGNORECASE),
+    re.compile(r"\b401\b|\bunauthorized\b", re.IGNORECASE),
+]
+
+
+def detect_auth_error(text: str) -> bool:
+    """Return True when ``text`` looks like an auth failure."""
+    if not text:
+        return False
+    return any(p.search(text) for p in _AUTH_PATTERNS)
 
 
 _SUGGESTED_ACTIONS: dict[str, str] = {
