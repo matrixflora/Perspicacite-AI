@@ -58,12 +58,14 @@ def test_token_cap_warns_in_warn_mode(caplog):
     assert s["tokens_out"] == 510
 
 
-def test_check_raises_before_call():
-    t = BudgetTracker(max_input_tokens=10, action="abort")
+def test_check_raises_when_state_already_over_budget():
+    """check() must detect an existing breach even if the breaching
+    record() happened under warn mode. Useful when an orchestrator
+    flips action='warn'→'abort' midway through a run."""
+    t = BudgetTracker(max_input_tokens=10, action="warn")
     t.record(provider="anthropic", model="claude-haiku-4-5",
-             input_tokens=20, output_tokens=0)  # already over
-    # check() called before next call should raise without needing record.
-    # Actually record() raises first — verify check() also catches it.
+             input_tokens=20, output_tokens=0)  # over, but warn — doesn't raise
+    t.action = "abort"
     with pytest.raises(BudgetExceededError):
         t.check()
 
