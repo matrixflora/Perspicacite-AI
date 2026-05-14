@@ -234,3 +234,35 @@ CapsuleReader (ingest an ASB-shaped capsule):
 - [ ] Trigger `ingest_local_documents` with that directory (CLI / MCP / UI).
 - [ ] Confirm chunks are written: each chunk's `metadata.source_section` matches a block's `section`, `metadata.figure_refs` propagates from the block, and `metadata.resource_refs` is populated from `resources.json`.
 - [ ] Mixing capsule-dirs and regular PDFs in the same call should route each path correctly (capsule via `ingest_capsule`, PDFs via `_ingest_files`).
+
+## Capsule + external resources V2 (2026-05-14, cycle C)
+
+Prerequisites: at least one paper whose text references a GitHub repo and/or a Zenodo record (Cycle A V1 mining must have populated `<capsule>/resources.json`). For unauthenticated GitHub use only public repos. To lift the 60 req/hr GitHub rate limit, `export GITHUB_TOKEN=...` before starting the server.
+
+Verify mining (Cycle A; sanity):
+- [ ] Inspect `<data_root>/capsules/<paper_id>/resources.json`. Confirm at least one record with `kind` ∈ {`github`, `zenodo`, `doi`} and a populated `evidence_span`.
+
+CLI fetch (default = all kinds, ingest):
+- [ ] `uv run perspicacite fetch-resources --kb <name> --paper <doi-or-id> --include github,zenodo,doi --ingest`
+- [ ] Confirm `<capsule>/external/github/<owner>__<repo>/` exists with `README.md`, `tree.json`, and `.extra_fetched` sentinel.
+- [ ] Confirm `<capsule>/external/zenodo/<id>.json` (metadata only) exists. Confirm no archive blobs (`.zip`, `.tar.gz`) are present.
+- [ ] Confirm `<capsule>/external/crossref/<doi_slug>.json` and `<capsule>/external/unpaywall/<doi_slug>.json` written.
+- [ ] If a repo had notebooks: confirm `notebooks/*.ipynb` exist and have empty `outputs` arrays and `execution_count: null`.
+
+MCP fetch:
+- [ ] Call `fetch_paper_resources(kb_name=<name>, paper_id=<id>, kinds=["github"], ingest=True)`. Confirm summary returns `{"github": N, "files_fetched": M, "ingested_chunks": K}`.
+
+Web fetch:
+- [ ] In the UI paper detail panel, click "Fetch external resources" → confirm an SSE progress pane renders one event per resource ending with a "done" summary.
+- [ ] If `external_resources.fetch_on_demand: false` in config, the orchestrator short-circuits with `{"disabled": true}` and the UI surfaces that cleanly.
+
+Cap enforcement (run with a Zenodo record that has large + small files):
+- [ ] After fetch with `--include zenodo --ingest`, confirm only files ≤ `zenodo_max_bytes_per_file` (default 500 KB) AND within `zenodo_max_bytes_per_record` (default 5 MB cumulative) are downloaded. Archives are skipped regardless.
+
+Ingested external content:
+- [ ] After `--ingest`, the KB chunk count increases. Inspect the provenance JSONL sidecar (or query the vector store directly): the new chunks carry `is_external=True`, `parent_paper_id=<paper>`, and at least one matching `resource_refs` entry.
+- [ ] Ask a question whose answer only appears in the repo README (not the paper). Confirm the answer cites repo-file content with the paper as the parent provenance.
+
+Cache + rate-limit:
+- [ ] Re-run the same `fetch-resources` command; confirm runs in <1s (cache hits, no network calls). `<config.external_resources.cache_dir>/<api>__*.json` files exist.
+- [ ] Without `GITHUB_TOKEN` set, repeated unrelated repos beyond the 60/hr limit see 403s logged as `external_http_client_error`; orchestrator continues to other resources.
