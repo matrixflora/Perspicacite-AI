@@ -23,6 +23,8 @@ Capsules drive Perspicacité's multimodal RAG: retrieved chunks pull their refer
 │   ├── blocks.jsonl               # one row per block
 │   └── figure_mentions.jsonl      # one row per (block_id, figure_id) detected mention
 ├── resources.json                 # list[resource]  (V1 mining output)
+├── supplementary/                 # SI manifest (PMC OA papers only)
+│   └── index.json                 # {"items": [{label, caption, url, mime_type, …}], "source": "pmc_jats"}
 ├── external/                      # V2 — fetched resources (Cycle C)
 │   ├── github/{owner}__{repo}/
 │   ├── zenodo/{record_id}.json
