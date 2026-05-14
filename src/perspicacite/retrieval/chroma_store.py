@@ -136,13 +136,17 @@ class ChromaVectorStore:
             await self.create_collection(collection)
             coll = self.client.get_collection(name=collection)
 
-        # Generate embeddings for chunks that don't have them
+        # Generate embeddings for chunks that don't have them.
+        # We prefix the chunk text with title + section/heading_path so the
+        # embedding picks up structural context. Stored `documents` and
+        # downstream `chunk.text` are unchanged so display/synthesis aren't
+        # affected — only the embedding sees the prefix.
         texts_to_embed = []
         indices_to_embed = []
 
         for i, chunk in enumerate(chunks):
             if chunk.embedding is None:
-                texts_to_embed.append(chunk.text)
+                texts_to_embed.append(_compose_embedding_text(chunk))
                 indices_to_embed.append(i)
 
         if texts_to_embed:
@@ -430,6 +434,47 @@ class ChromaVectorStore:
                 error=str(e),
             )
             raise
+
+
+def _compose_embedding_text(chunk: DocumentChunk) -> str:
+    """Build the text that goes into the embedding model for a chunk.
+
+    Prefixes the chunk body with light structural context derived from
+    metadata that's already available — the paper title, the resolved
+    section (or markdown heading_path), and any explicit ``source_section``
+    annotation. This is the cheap form of contextual retrieval: no extra
+    LLM calls, just attaching context that's already on the chunk.
+
+    Stored chunk.text and Chroma's `documents` field are unchanged. Only
+    the embedding sees the prefix, so display / synthesis prompts are
+    unaffected.
+
+    Format:
+        [<title>] · [<section> | <heading_path>] · [<source_section>]
+        <chunk.text>
+
+    Empty/missing fields are skipped. Total prefix is capped to avoid
+    drowning short chunks in metadata.
+    """
+    md = chunk.metadata
+    parts: list[str] = []
+    if md.title:
+        parts.append(md.title.strip())
+    # Prefer explicit `section`; fall back to joined `heading_path`.
+    section = md.section
+    if not section and md.heading_path:
+        section = " > ".join(str(h) for h in md.heading_path if h)
+    if section:
+        parts.append(section.strip())
+    if md.source_section and md.source_section != section:
+        parts.append(str(md.source_section).strip())
+    if not parts:
+        return chunk.text
+    prefix = " · ".join(parts)
+    # Cap prefix at 280 chars so we don't dilute short chunks.
+    if len(prefix) > 280:
+        prefix = prefix[:277] + "..."
+    return f"{prefix}\n\n{chunk.text}"
 
 
 def _chunk_to_metadata(metadata: ChunkMetadata) -> dict[str, Any]:
