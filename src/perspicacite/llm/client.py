@@ -213,6 +213,10 @@ class AsyncLLMClient:
                 kw["cwd"] = cli_cfg.cwd
             if getattr(cli_cfg, "env_extra", None):
                 kw["env_extra"] = dict(cli_cfg.env_extra)
+            if getattr(cli_cfg, "usage_input_tokens_path", None):
+                kw["usage_input_tokens_path"] = cli_cfg.usage_input_tokens_path
+            if getattr(cli_cfg, "usage_output_tokens_path", None):
+                kw["usage_output_tokens_path"] = cli_cfg.usage_output_tokens_path
             client = ClaudeCLIClient(**kw)
         else:
             from perspicacite.llm.agent_cli import AgentCLIClient

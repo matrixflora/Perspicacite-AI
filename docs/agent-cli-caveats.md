@@ -57,6 +57,23 @@ The CLI's response is plain text. Tool-using stages (agentic mode)
 that depend on Anthropic's `tool_use` blocks won't work through this
 route. Use direct API for agentic mode.
 
+## Token usage in provenance (Wave 2.3+)
+
+`AgentCLIClient` can extract input / output token counts from the
+CLI's JSON output when `usage_input_tokens_path` and
+`usage_output_tokens_path` are set in the provider config. Today:
+
+| CLI | Status |
+|---|---|
+| Claude Code | ✅ Live — preset wires `usage.input_tokens` / `usage.output_tokens` |
+| Codex | ❌ Out — `--output-last-message` returns plain text. Would require switching to `--json` event-stream parsing (followup). |
+| OpenClaw | ❓ Unverified — set paths in config if known |
+| Hermes | ❓ Unverified — set paths in config if known |
+
+When paths are unset or the CLI doesn't surface usage, provenance
+records `prompt_tokens=0, completion_tokens=0` (today's behaviour, no
+regression). Budget caps (Wave 2.4) treat those as "unknown cost".
+
 ## Per-CLI caveats
 
 ### Claude Code (`claude_cli`) — verified live ✅
