@@ -192,6 +192,15 @@ class LLMProviderConfig(BaseModel):
             "when output_format='json'."
         ),
     )
+    output_file_flag: str | None = Field(
+        default=None,
+        description=(
+            "When set, allocate a tempfile per call and pass it via "
+            "this flag (e.g. Codex's '--output-last-message'). Read "
+            "the result from that file instead of stdout — cleaner "
+            "for CLIs that pollute stdout with banner / progress."
+        ),
+    )
     cwd: str | None = Field(
         default=None,
         description="Working directory for the subprocess. ``None`` = inherit.",
