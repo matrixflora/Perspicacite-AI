@@ -12,6 +12,7 @@ from tenacity import (
 )
 
 from perspicacite.config.schema import LLMConfig, LLMProviderConfig
+from perspicacite.llm.cache import LLMResponseCache, build_cache_key
 from perspicacite.logging import get_logger
 
 logger = get_logger("perspicacite.llm")
@@ -161,6 +162,20 @@ class AsyncLLMClient:
         # Cache one AgentCLIClient instance per provider key (claude_cli,
         # agent_cli, plus any user-defined alias).
         self._agent_clis: dict[str, Any] = {}
+        # Disk cache (Wave 2.1). Constructed lazily on first access so
+        # callers that disable caching never touch the filesystem.
+        self._cache: LLMResponseCache | None = None
+
+    def _get_cache(self) -> LLMResponseCache | None:
+        """Lazy-init the disk cache. Returns None when disabled."""
+        if not getattr(self.config, "cache_enabled", False):
+            return None
+        if self._cache is None:
+            self._cache = LLMResponseCache(
+                path=self.config.cache_path,
+                ttl_hours=self.config.cache_ttl_hours,
+            )
+        return self._cache
 
     def _get_agent_cli_client(self, provider: str) -> Any:
         """Lazy-init an :class:`AgentCLIClient` for the given provider key.
@@ -306,6 +321,46 @@ class AsyncLLMClient:
 
         stage_label = kwargs.pop("stage", "llm")
 
+        # ---- disk cache lookup (Wave 2.1) -----------------------------
+        # Cache key is computed from the resolved (provider, model)
+        # pair plus everything that affects the response. Volatile
+        # kwargs (stage, cache, timeout) are filtered inside
+        # build_cache_key.
+        cache_bypass = kwargs.pop("cache", True) is False
+        cache = None if cache_bypass else self._get_cache()
+        cache_key: str | None = None
+        if cache is not None:
+            cache_key = build_cache_key(
+                provider=provider, model=model,
+                messages=messages, temperature=temperature,
+                max_tokens=max_tokens, extra_kwargs=kwargs,
+            )
+            hit = await cache.get(cache_key)
+            if hit is not None:
+                logger.info(
+                    "llm_cache_hit",
+                    stage=stage_label, provider=provider, model=model,
+                    age_seconds=int(time.time()) - hit.created_at,
+                )
+                from perspicacite.provenance.context import get_collector
+                _c = get_collector()
+                if _c is not None:
+                    _c.add_llm_call(
+                        stage_label=stage_label,
+                        provider=provider,
+                        model=model,
+                        prompt_messages=messages,
+                        response_text=hit.response,
+                        prompt_tokens=hit.input_tokens,
+                        completion_tokens=hit.output_tokens,
+                        latency_ms=hit.latency_ms,
+                    )
+                return hit.response
+            logger.debug(
+                "llm_cache_miss",
+                stage=stage_label, provider=provider, model=model,
+            )
+
         # MCP sampling — first try the connected client's
         # sampling/createMessage protocol when enabled and a ctx is
         # bound. Falls through on capability error.
@@ -329,11 +384,18 @@ class AsyncLLMClient:
         # Branch here so we don't need to pretend LiteLLM understands them.
         if self._is_agent_cli_provider(provider):
             cli = self._get_agent_cli_client(provider)
-            return await cli.complete(
+            content = await cli.complete(
                 messages=messages, model=model, provider=provider,
                 temperature=temperature, max_tokens=max_tokens,
                 stage=stage_label, **kwargs,
             )
+            if cache is not None and cache_key is not None:
+                await cache.put(
+                    key=cache_key, provider=provider, model=model,
+                    response=content, latency_ms=0.0,
+                    input_tokens=0, output_tokens=0,
+                )
+            return content
 
         provider_config = self._get_provider_config(provider)
         model_str = self._build_model_string(provider, model)
@@ -407,6 +469,13 @@ class AsyncLLMClient:
                         completion_tokens=int(usage.get("completion_tokens", 0) or 0),
                         latency_ms=latency_ms,
                     )
+                if cache is not None and cache_key is not None:
+                    await cache.put(
+                        key=cache_key, provider=provider, model=model,
+                        response=content or "", latency_ms=latency_ms,
+                        input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                        output_tokens=int(usage.get("completion_tokens", 0) or 0),
+                    )
                 return content
 
             completion_kwargs.update(kwargs)
@@ -438,6 +507,13 @@ class AsyncLLMClient:
                     prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
                     completion_tokens=int(usage.get("completion_tokens", 0) or 0),
                     latency_ms=latency_ms,
+                )
+            if cache is not None and cache_key is not None:
+                await cache.put(
+                    key=cache_key, provider=provider, model=model,
+                    response=content or "", latency_ms=latency_ms,
+                    input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                    output_tokens=int(usage.get("completion_tokens", 0) or 0),
                 )
 
             return content
