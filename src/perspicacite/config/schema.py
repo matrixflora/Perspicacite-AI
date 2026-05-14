@@ -325,11 +325,14 @@ class LLMConfig(BaseModel):
     )
     # Optional per-stage provider override (parallel to ``models``).
     # Use when you want one stage on Ollama, another on Anthropic, etc.
-    providers_per_stage: dict[str, str] = Field(
+    providers_per_stage: dict[str, str | list[str]] = Field(
         default_factory=dict,
         description=(
-            "Per-stage provider override. Same keys as `models`. "
-            "Falls back to `default_provider` for unset stages."
+            "Per-stage provider override. Value may be a single "
+            "provider string (today's behaviour) or a list of "
+            "providers — the client tries each in order on failure "
+            "(see fallback-chain spec Wave 3.2). "
+            "Same keys as `models`. Falls back to `default_provider`."
         ),
     )
     # MCP sampling: when True, LLM calls made inside MCP tool bodies
