@@ -28,13 +28,18 @@ class BuildKBsRequest(BaseModel):
 
 def _client_from_state() -> ZoteroClient:
     cfg = getattr(getattr(app_state, "config", None), "zotero", None)
-    if not (cfg and cfg.enabled and cfg.api_key and cfg.library_id):
+    if not (cfg and cfg.enabled and cfg.library_id):
         raise HTTPException(status_code=503, detail="Zotero not configured")
+    base_url = getattr(cfg, "base_url", "") or None
+    is_local = base_url and ("localhost" in base_url or "127.0.0.1" in base_url)
+    if not cfg.api_key and not is_local:
+        raise HTTPException(status_code=503, detail="Zotero api_key required for non-local base_url")
     return ZoteroClient(
         api_key=cfg.api_key,
         library_id=cfg.library_id,
         library_type=cfg.library_type,
         collection_key=cfg.collection_key,
+        base_url=base_url,
     )
 
 
