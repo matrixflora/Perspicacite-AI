@@ -266,3 +266,25 @@ Ingested external content:
 Cache + rate-limit:
 - [ ] Re-run the same `fetch-resources` command; confirm runs in <1s (cache hits, no network calls). `<config.external_resources.cache_dir>/<api>__*.json` files exist.
 - [ ] Without `GITHUB_TOKEN` set, repeated unrelated repos beyond the 60/hr limit see 403s logged as `external_http_client_error`; orchestrator continues to other resources.
+
+## Institutional-access PDFs via browser cookies (2026-05-14)
+
+Setup:
+- [ ] `uv pip install -e ".[cookies]"` succeeds; `browser-cookie3`, `pycryptodomex`, `lz4` appear in the install summary.
+- [ ] In Brave/Chrome/Firefox, log in to your library proxy or publisher SSO (visit a paywalled article URL and confirm you can read it).
+- [ ] `perspicacite import-browser-cookies --browser brave --domain nature.com --domain wiley.com --output ~/.config/perspicacite/cookies.txt` writes the file; macOS prompts once for keychain access on first run.
+- [ ] CLI output: shows "Wrote N of M cookies" with N > 0, a top-hosts breakdown, and a `pdf_download:` config snippet to paste.
+- [ ] `stat -f "%Lp" ~/.config/perspicacite/cookies.txt` returns `600`.
+
+Wire-up:
+- [ ] Paste the suggested block into `config.yml` under `pdf_download:` and restart `perspicacite serve`.
+- [ ] Server log on startup: `pdf_cookies_loaded count=<N>` appears (lazy load on first PDF fetch).
+
+End-to-end:
+- [ ] `POST /api/kb/<kb>/dois/async` with a paywalled DOI from a publisher in `cookie_domains` (e.g. `10.1038/s41586-023-06924-6`); SSE `done` event reports `pdf_download.success=1` and `added_chunks > 0`.
+- [ ] `POST /api/chat` with `mode=basic` against that KB returns a grounded answer citing the paper title — not just the metadata abstract.
+
+Failure modes (each should NOT silently succeed):
+- [ ] Set `cookies_path` to a nonexistent file → server log shows `pdf_cookies_path_missing path=<path>` and PDF fetches still try without cookies (no exception, no crash).
+- [ ] Use a DOI from a publisher NOT in `cookie_domains` (e.g. arxiv) → cookies are not attached (host-substring check) but OA fetch still works.
+- [ ] Empty `cookie_domains: []` → cookies attach to every PDF request; works but logged as the broader path.
