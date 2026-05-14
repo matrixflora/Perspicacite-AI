@@ -43,10 +43,11 @@
 - **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
 - **6 RAG modes** — From fast KB retrieval to multi-cycle agentic research, systematic literature surveys, and cross-paper contradiction detection
 - **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
-- **MCP server** — 11 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
+- **MCP server** — 17 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
 - **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
 - **Provenance tracking** — Per-answer trace (retrieved chunks, mode, model, latency) stored in SQLite and exportable as RO-Crate 1.1 zip bundles
-- **Zotero push** — One-click push of discovered papers to a personal Zotero library
+- **Institutional-access PDFs** — Ride your browser's logged-in session via `perspicacite import-browser-cookies`; paywalled journals your institution licenses become reachable server-side
+- **Zotero integration** — Push to cloud, or point at the desktop app's local API to reach Linked Files / non-cloud-synced PDFs
 - **Obsidian vault export** — Export any KB as an Obsidian-compatible Markdown vault
 - **Async ingestion** — Long BibTeX / DOI import jobs run in the background with SSE progress streaming
 - **Local-first** — Data stays on your machine; only API calls go to LLM providers
@@ -163,7 +164,7 @@ Structured content (PMC, arXiv) provides sections and references. PDF content pr
 
 ## MCP Server
 
-Perspicacité exposes an MCP server with 11 tools at `http://localhost:8000/mcp`, accessible via:
+Perspicacité exposes an MCP server with 17 tools at `http://localhost:8000/mcp`, accessible via:
 - **MCP protocol** — native tool discovery and invocation
 - **HTTP JSON-RPC** — `POST /mcp` with standard JSON-RPC 2.0 envelope
 
@@ -182,6 +183,12 @@ Perspicacité exposes an MCP server with 11 tools at `http://localhost:8000/mcp`
 | `generate_report` | Synthesize a research report using RAG |
 | `screen_papers` | Score candidate papers by relevance to a query (BM25 or LLM-rated) |
 | `push_to_zotero` | Push a list of DOIs to a configured Zotero library |
+| `build_kbs_from_zotero` | Build one KB per Zotero top-level collection (per-call `library_id` override) |
+| `ingest_local_documents` | Server-side ingest of local PDFs / docs under configured allowlist roots |
+| `build_capsule` | Build per-paper Capsule (figures + structured text + mined resources) |
+| `build_capsules_for_kb` | Build Capsules for every paper in a KB (idempotent) |
+| `fetch_paper_resources` | Fetch GitHub / Zenodo / Crossref / Unpaywall / PubMed external resources |
+| `fetch_supplementary` | Download Supplementary Information files (PMC OA S3 → Springer ESM → ACS) |
 
 Full usage details and parameter documentation: [`docs/perspicacite_skills.md`](docs/perspicacite_skills.md)
 
@@ -273,6 +280,12 @@ perspicacite -c config.yml screen-papers --input refs.bib --candidates cand.bib 
 
 # Search PubMed and export to BibTeX (no server needed)
 perspicacite -c config.yml pubmed-search --query "microbiome" --max-results 50 --output hits.bib
+
+# Export browser cookies for institutional-access PDF downloads
+# (requires the `cookies` extras: uv pip install -e ".[cookies]")
+perspicacite import-browser-cookies --browser brave \
+    --domain nature.com --domain wiley.com \
+    --output ~/.config/perspicacite/cookies.txt
 
 # Show version
 perspicacite version
@@ -379,35 +392,76 @@ Perspicacité can ride your existing browser session by replaying the
 cookies your browser already has — the same trick the Zotero Connector
 browser extension uses, just from server-side.
 
-**Setup:**
+**One-command setup:**
 
-1. In your browser, log in to your library's proxy / publisher SSO so
-   you can view paywalled PDFs.
-2. Install a "Get cookies.txt" / "EditThisCookie" extension (any
-   exporter that produces Netscape-format `cookies.txt`).
-3. Export cookies for the relevant publisher domains and save the
-   file somewhere private:
-   ```
-   ~/.config/perspicacite/proxy_cookies.txt
-   ```
-4. In `config.yml`:
-   ```yaml
-   pdf_download:
-     cookies_path: "/Users/me/.config/perspicacite/proxy_cookies.txt"
-     cookie_domains:
-       - "sciencedirect.com"
-       - "wiley.com"
-       - "onlinelibrary.wiley.com"
-       - "proxy.lib.example.edu"   # your library proxy
-   ```
-5. Restart. PDF requests to those domains now carry your cookies.
+```bash
+# 1. Log in to your library proxy / publisher SSO in your browser
+#    (Chrome / Brave / Firefox / Edge / Safari / Opera / Arc).
+# 2. Install the cookies helper:
+uv pip install -e ".[cookies]"
+
+# 3. Export the cookies you care about:
+perspicacite import-browser-cookies \
+    --browser brave \
+    --domain nature.com \
+    --domain wiley.com \
+    --domain sciencedirect.com \
+    --domain pubs.acs.org \
+    --output ~/.config/perspicacite/cookies.txt
+```
+
+The command reads + decrypts cookies via the OS keychain (macOS may
+prompt once), filters to the requested domains, writes a Netscape
+`cookies.txt` with `chmod 600`, and prints the matching `config.yml`
+block to paste under `pdf_download:`. Typical output:
+
+```text
+Wrote 54 of 3122 cookies to /Users/me/.config/perspicacite/cookies.txt
+Top cookie hosts captured:
+   18  www.nature.com
+   12  onlinelibrary.wiley.com
+   ...
+
+Add to your config.yml:
+
+pdf_download:
+  cookies_path: "/Users/me/.config/perspicacite/cookies.txt"
+  cookie_domains:
+    - "nature.com"
+    - "onlinelibrary.wiley.com"
+    - "pubs.acs.org"
+    ...
+```
+
+After updating `config.yml` and restarting, every PDF request to those
+hosts carries your session — paywalled PDFs the institution licenses
+become reachable.
+
+**Verifying it works:**
+
+```bash
+# Add a paywalled DOI; check pdf_download.success in the response:
+curl -s -X POST http://localhost:8000/api/kb/<your-kb>/dois/async \
+  -H "Content-Type: application/json" \
+  -d '{"dois":["10.1038/s41586-023-06924-6"]}'
+
+curl -sN "http://localhost:8000/api/jobs/<job_id>/events"
+# Expect: {"pdf_download":{"attempted":1,"success":1,"failed":0}}
+```
 
 **Notes:**
-- Empty `cookie_domains` list = attach cookies to all PDF requests.
-- Cookies expire — re-export from the browser when downloads start
+- Empty `cookie_domains` list = attach cookies to **all** PDF requests
+  (broader access, slight cookie-leak risk in third-party redirect hops).
+- Cookies expire — re-run `import-browser-cookies` when downloads start
   failing again.
-- Keep the cookies file `chmod 600`; anyone with read access can
+- The CLI's auto-suggested `cookie_domains` may include extra subdomains
+  (`assets.nature.com`, etc.); trim to what your institution licenses.
+- The cookies file is written `chmod 600`; anyone with read access can
   impersonate your library session.
+
+**Manual export still works** — drop a Netscape-format `cookies.txt`
+from any "Get cookies.txt" / "EditThisCookie" browser extension at the
+configured `cookies_path` and Perspicacité picks it up the same way.
 
 ### Use the local Zotero desktop API
 
@@ -491,7 +545,7 @@ uv run mypy src/
 src/perspicacite/
   cli.py                        # CLI commands (serve, create-kb, screen-papers, pubmed-search, version)
   config/schema.py              # Pydantic configuration model
-  mcp/server.py                 # MCP server with 11 tools
+  mcp/server.py                 # MCP server with 17 tools
   pipeline/
     download/                   # Content retrieval pipeline
       discovery.py              # OpenAlex + Unpaywall discovery
