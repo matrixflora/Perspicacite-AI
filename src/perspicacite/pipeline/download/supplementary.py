@@ -386,11 +386,29 @@ async def download_supplementary_to_capsule(
             if total_bytes >= max_bytes_per_record:
                 skipped.append({"item": it, "reason": "record_cap_reached"})
                 continue
-            data = await fetch_supplementary_file(
-                url, http_client=client, max_bytes=max_bytes_per_file,
-            )
+            # Try primary URL first, then any alt_urls (e.g. PMC items
+            # have alt_urls=[<gated web URL>] when primary is the S3
+            # OA bucket — fall through if S3 misses).
+            urls_to_try: list[str] = [url]
+            for alt in (it.get("alt_urls") or []):
+                if alt and alt not in urls_to_try:
+                    urls_to_try.append(alt)
+            data: bytes | None = None
+            tried_urls: list[str] = []
+            for candidate in urls_to_try:
+                tried_urls.append(candidate)
+                data = await fetch_supplementary_file(
+                    candidate, http_client=client, max_bytes=max_bytes_per_file,
+                )
+                if data is not None:
+                    url = candidate  # record the URL that worked
+                    break
             if data is None:
-                skipped.append({"item": it, "reason": "fetch_failed"})
+                skipped.append({
+                    "item": it,
+                    "reason": "fetch_failed",
+                    "urls_tried": tried_urls,
+                })
                 continue
             # Use filename from manifest when present; fall back to URL tail.
             fname = (
