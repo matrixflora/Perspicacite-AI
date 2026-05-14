@@ -100,6 +100,7 @@ packages_to_use/
 !docs/ci-setup-*.md
 !docs/llm-cache-*.md
 !docs/embedding-cache-*.md
+!docs/budget-caps-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
