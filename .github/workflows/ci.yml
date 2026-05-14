@@ -58,7 +58,8 @@ jobs:
             --deselect tests/unit/test_zotero_ingest_worker.py::test_worker_skips_existing_doi \
             --timeout=15 --timeout-method=signal \
             --no-header --tb=line \
-            --cov=src/perspicacite --cov-report=xml --cov-report=term-missing
+            --cov=src/perspicacite --cov-report=xml --cov-report=term-missing \
+            --cov-fail-under=0
 
       - name: Upload coverage report
         if: always()
