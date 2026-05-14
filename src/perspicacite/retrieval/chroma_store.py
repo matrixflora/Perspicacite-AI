@@ -390,6 +390,48 @@ class ChromaVectorStore:
                     cur["year"] = m["year"]
         return list(by_pid.values())
 
+    async def list_paper_ids_in_collection(
+        self, collection_name: str
+    ) -> list[tuple[str, str, int]]:
+        """Return distinct ``(paper_id, title, chunk_count)`` for a collection.
+
+        Backs the ``perspicacite://kb/{name}/papers`` MCP resource when the
+        per-KB event log (Wave 4.3) is missing or empty (older KBs).
+        Returns ``[]`` if the collection doesn't exist or none of the
+        chunks carry a ``paper_id`` metadata key.
+        """
+        try:
+            coll = self.client.get_collection(name=collection_name)
+        except Exception as e:
+            logger.warning(
+                "list_paper_ids_collection_missing",
+                collection=collection_name,
+                error=str(e),
+            )
+            return []
+        try:
+            data = coll.get(include=["metadatas"])
+        except Exception as e:
+            logger.error(
+                "list_paper_ids_get_failed",
+                collection=collection_name,
+                error=str(e),
+            )
+            return []
+        counts: dict[str, dict[str, Any]] = {}
+        for meta in data.get("metadatas") or []:
+            if not meta:
+                continue
+            pid = meta.get("paper_id")
+            if not pid:
+                continue
+            entry = counts.setdefault(pid, {"title": meta.get("title", "") or "", "n": 0})
+            entry["n"] += 1
+            # Backfill title from any later chunk that has one.
+            if not entry["title"] and meta.get("title"):
+                entry["title"] = meta["title"]
+        return [(pid, info["title"], info["n"]) for pid, info in counts.items()]
+
     async def get_chunks_by_paper_ids(
         self,
         collection: str,
