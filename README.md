@@ -268,12 +268,26 @@ For **SmolAgents** or any MCP-compatible agent framework, add the MCP server URL
 
 ## CLI Commands
 
+All CLI commands except `serve` route structured logs to stderr, so
+stdout stays a clean stream you can pipe into `jq`, `tee`, etc.
+
 ```bash
 # Start the server (web UI + MCP)
 perspicacite -c config.yml serve [--host 0.0.0.0] [--port 8000] [--no-mcp] [--reload]
 
-# Create a KB from BibTeX
+# List all KBs (sorted by paper count; --json for machine-readable)
+perspicacite list-kb
+perspicacite list-kb --json | jq '.[] | {name, paper_count}'
+
+# Create an empty KB (add papers later via add-to-kb or the REST API)
+perspicacite create-kb my-kb [--description "..."]
+
+# Create a KB from BibTeX (downloads PDFs + indexes in one shot)
 perspicacite -c config.yml create-kb my-kb --from-bibtex papers.bib
+
+# Ask a question against a KB (full RAG via the same engine the web uses)
+perspicacite query "what methods does this paper use?" --kb my-kb --mode basic
+# Modes: basic | advanced | profound | contradiction
 
 # Screen candidate papers by relevance (BM25; no server needed)
 perspicacite -c config.yml screen-papers --input refs.bib --candidates cand.bib --output out.bib [--threshold 0.3] [--csv]
