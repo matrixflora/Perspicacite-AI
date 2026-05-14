@@ -108,6 +108,7 @@ async def retrieve_paper_content(
     springer_api_key: str | None = None,
     cookies_path: str | None = None,
     cookie_domains: list[str] | None = None,
+    pdf_cache_dir: str | None = None,
 ) -> PaperContent:
     """Retrieve paper content using the unified priority pipeline.
 
@@ -289,17 +290,38 @@ async def retrieve_paper_content(
 
         # ── STEP 3: PDF FULL TEXT ───────────────────────────────────────
         if pdf_parser is not None:
-            pdf_result = await _try_pdf_sources(
-                clean,
-                url,
-                client,
-                disc,
-                unpaywall_email=unpaywall_email,
-                wiley_tdm_token=wiley_tdm_token,
-                aaas_api_key=aaas_api_key,
-                rsc_api_key=rsc_api_key,
-                springer_api_key=springer_api_key,
-            )
+            # Cache hit: serve bytes from disk and skip every network
+            # downloader. Provenance label says "pdf_cache" so the
+            # caller can tell.
+            cached_bytes: bytes | None = None
+            if pdf_cache_dir:
+                from perspicacite.pipeline.download.pdf_cache import (
+                    get_cached_pdf,
+                )
+                cached_bytes = get_cached_pdf(clean, pdf_cache_dir)
+            if cached_bytes is not None:
+                pdf_result = (cached_bytes, "pdf_cache")
+            else:
+                pdf_result = await _try_pdf_sources(
+                    clean,
+                    url,
+                    client,
+                    disc,
+                    unpaywall_email=unpaywall_email,
+                    wiley_tdm_token=wiley_tdm_token,
+                    aaas_api_key=aaas_api_key,
+                    rsc_api_key=rsc_api_key,
+                    springer_api_key=springer_api_key,
+                )
+                if pdf_result and pdf_cache_dir:
+                    # Persist the winning bytes so the next ingest is free.
+                    from perspicacite.pipeline.download.pdf_cache import (
+                        store_pdf,
+                    )
+                    store_pdf(
+                        clean, pdf_result[0], pdf_cache_dir,
+                        source=pdf_result[1],
+                    )
             if pdf_result:
                 pdf_bytes, source_label = pdf_result
                 text = await _parse_pdf_bytes(pdf_bytes, pdf_parser)
