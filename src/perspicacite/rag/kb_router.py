@@ -143,20 +143,15 @@ async def _route_bm25(
     return [h for h in hits if h.score >= score_threshold][:top_k]
 
 
-_LLM_PROMPT = """You are routing a user's research question to the most relevant
-knowledge bases. Below are knowledge bases, each with a short description
-and a sample of paper titles. Score each KB from 0.0 (not relevant) to
-1.0 (clearly relevant) for the question, and give a one-sentence reason.
-
-Return JSON only, in this exact shape:
-{{"hits": [{{"kb_name": "...", "score": 0.0-1.0, "reason": "..."}}, ...]}}
-
-Question:
-{query}
-
-Knowledge bases:
-{kbs}
-"""
+_LLM_SYSTEM = (
+    "You are routing a user's research question to the most relevant "
+    "knowledge bases. Below are knowledge bases, each with a short "
+    "description and a sample of paper titles. Score each KB from 0.0 "
+    "(not relevant) to 1.0 (clearly relevant) for the question, and "
+    "give a one-sentence reason.\n\n"
+    "Return JSON only, in this exact shape:\n"
+    '{"hits": [{"kb_name": "...", "score": 0.0-1.0, "reason": "..."}, ...]}'
+)
 
 
 async def _route_llm(
@@ -169,15 +164,28 @@ async def _route_llm(
     model: str,
     provider: str,
 ) -> list[KBRouteHit]:
-    """LLM routing — one batched call scores every KB."""
-    kbs_block = "\n\n".join(
+    """LLM routing — one batched call scores every KB.
+
+    The KB context block is large (~description + 12 titles per KB)
+    and identical across every routing query until the user creates
+    or modifies a KB. We mark it as a cacheable prefix so Anthropic's
+    prompt cache amortises the cost across a session — only the user
+    question changes between hits.
+    """
+    from perspicacite.llm.client import build_cached_messages
+    kbs_block = "Knowledge bases:\n\n" + "\n\n".join(
         f"### {name}\n{ctx}"
         for name, ctx, _ in kb_contexts
     )
-    prompt = _LLM_PROMPT.format(query=query, kbs=kbs_block)
+    messages = build_cached_messages(
+        system=_LLM_SYSTEM,
+        cacheable_context=kbs_block,
+        user_message=f"Question:\n{query}",
+        provider=provider,
+    )
     try:
         text = await llm_client.complete(
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             model=model,
             provider=provider,
             max_tokens=1500,
