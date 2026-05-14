@@ -288,6 +288,28 @@ multimodal:
 # =============================================================================
 # External resources (Cycle C): V1 mining + V2 fetch-on-demand
 # =============================================================================
+# =============================================================================
+# Copyright filter (defense-in-depth on synthesis output)
+# =============================================================================
+# Detects verbatim copying of source-paper text in the LLM's answer and
+# applies the configured action. The system prompt already nudges the
+# LLM toward paraphrasing; this is the runtime check.
+#
+# action options:
+#   log     — warn only, answer unchanged (default, no cost)
+#   quote   — wrap detected spans in “…” and append citation
+#   strip   — replace spans with [content paraphrased]
+#   rewrite — one extra LLM call to paraphrase flagged spans
+copyright_filter:
+  enabled: true
+  action: "log"                  # log | quote | strip | rewrite
+  min_ngram: 8                   # min word-run length to flag (3..30)
+  rewrite_model: "claude-haiku-4-5"
+  rewrite_provider: "anthropic"
+
+# =============================================================================
+# External resources (Cycle C): V1 mining + V2 fetch-on-demand
+# =============================================================================
 external_resources:
   mine: true                              # V1 — Cycle A, always-on
   fetch_on_demand: true                   # V2 — gate for fetch helpers

@@ -39,6 +39,52 @@ from perspicacite.rag.utils import (
 logger = get_logger("perspicacite.rag.modes.basic")
 
 
+async def _apply_copyright_filter(
+    *,
+    answer: str,
+    paper_results: list[dict[str, Any]],
+    llm: Any,
+    config: Any,
+) -> str:
+    """Defense-in-depth copyright check on synthesis output.
+
+    Called from each RAG-mode synthesis path. Resolves the
+    ``copyright_filter`` section from the runtime Config (when wired
+    through ``self.config``), builds source dicts from the paper-result
+    list (using ``full_text`` as the comparison body), and runs the
+    configured action (log / quote / strip / rewrite).
+
+    No-op when sources are empty or the answer is empty.
+    """
+    if not answer or not paper_results:
+        return answer
+    try:
+        from perspicacite.rag.copyright_filter import CopyrightFilter
+        cf_cfg = getattr(config, "copyright_filter", None)
+        if cf_cfg is None or not getattr(cf_cfg, "enabled", True):
+            return answer
+        sources = [
+            {
+                "text": p.get("full_text") or "",
+                "title": p.get("title"),
+            }
+            for p in paper_results
+        ]
+        cf = CopyrightFilter(
+            enabled=cf_cfg.enabled,
+            action=getattr(cf_cfg, "action", "log"),
+            min_ngram=getattr(cf_cfg, "min_ngram", 8),
+            llm_client=llm,
+            rewrite_model=getattr(cf_cfg, "rewrite_model", "claude-haiku-4-5"),
+            rewrite_provider=getattr(cf_cfg, "rewrite_provider", "anthropic"),
+        )
+        return await cf.apply(answer, sources)
+    except Exception as exc:
+        # Filter is best-effort; never break the synthesis flow.
+        logger.warning("copyright_filter_failed", error=str(exc))
+        return answer
+
+
 class BasicRAGMode(BaseRAGMode):
     """
     Basic RAG Mode - Exact port from release package core/core.py
@@ -184,6 +230,16 @@ class BasicRAGMode(BaseRAGMode):
             request=request,
             num_papers=len(paper_results),
             preamble=scope.scope_note,
+        )
+
+        # Defense-in-depth copyright filter: detect any verbatim copying
+        # from the source chunks into the LLM's answer. Config-driven
+        # action (log / quote / strip / rewrite). Sources are the
+        # paper-result dicts whose ``full_text`` field carries the
+        # exact text the LLM had access to.
+        answer = await _apply_copyright_filter(
+            answer=answer, paper_results=paper_results, llm=llm,
+            config=self.config,
         )
 
         # Step 6: Append references section to answer using utility function
@@ -342,6 +398,27 @@ class BasicRAGMode(BaseRAGMode):
             )
             yield StreamEvent.content(answer)
             full_response = answer
+
+        # Defense-in-depth copyright filter on the full streamed
+        # response. For action="log" we just emit a warning log; for
+        # quote/strip/rewrite we emit a "revision" event after the
+        # answer with the corrected text — clients may render it or
+        # ignore. Does not retract the already-streamed content.
+        try:
+            revised = await _apply_copyright_filter(
+                answer=full_response, paper_results=paper_results, llm=llm,
+                config=self.config,
+            )
+            if revised != full_response:
+                yield StreamEvent(
+                    event="revision",
+                    data=json.dumps({
+                        "kind": "copyright_filter",
+                        "revised_content": revised,
+                    }),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("copyright_filter_stream_failed", error=str(exc))
 
         # Append references section after streaming completes
         if sources:
