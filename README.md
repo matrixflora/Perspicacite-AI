@@ -43,12 +43,13 @@
 - **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
 - **6 RAG modes** — From fast KB retrieval to multi-cycle agentic research, systematic literature surveys, and cross-paper contradiction detection
 - **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
-- **MCP server** — 20 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
+- **MCP server** — 21 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
 - **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
 - **Provenance tracking** — Per-answer trace (retrieved chunks, mode, model, latency) stored in SQLite and exportable as RO-Crate 1.1 zip bundles
 - **Institutional-access PDFs** — Ride your browser's logged-in session via `perspicacite import-browser-cookies`; paywalled journals your institution licenses become reachable server-side. `perspicacite check-cookies` reports per-domain freshness and the downloader warns when a paywall HTML response suggests an expired cookie
 - **Auto KB routing** — Send a chat with `kb_name: "auto"` and Perspicacité scores every KB's description + sampled titles against the query (BM25 free; LLM tier optional), then queries the top-N in parallel via the multi-KB path
-- **Search-to-KB pipeline** — One command (`perspicacite search-to-kb` / MCP `build_kb_from_search`) runs a SciLEx multi-database search, applies year/citation/abstract filters, and ingests the results into a new or existing KB. Lets agents (Claude Code, etc.) spin up a focused KB before doing real RAG over it
+- **Search-to-KB pipeline** — One command (`perspicacite search-to-kb` / MCP `build_kb_from_search`) runs a SciLEx multi-database search with optional LLM/BM25 **relevance screen**, **KB-aware query expansion** (mix in topic terms from the target KB's description + titles), and **multi-variant rephrasing** (`--rephrase N` has a cheap LLM generate N alternate phrasings, fans out across SciLEx, merges deduped results)
+- **Citation-graph KB expansion** (`perspicacite expand-kb` / MCP `expand_kb_via_citations`) — forward + backward snowball over OpenAlex. Grow an existing KB along its citation lineage with the same filter + screen pipeline as search-to-kb
 - **Long-term preservation** — Three complementary modes: (1) **PDF byte cache** keyed by DOI (`pdf_download.cache_pdfs: true`) so re-ingest is free and downstream tools have something to attach; (2) **Zotero attachment push** (`push_to_zotero(attach_pdf, attach_supplementary)`) uploads the cached PDF + capsule SI files as child attachments via Zotero's 4-step Web API protocol; (3) **`export-kb`** writes a portable BibTeX + cached-PDF folder a citation manager can ingest (drag the .bib into Zotero and PDFs attach via the BetterBibTeX `file` field)
 - **Zotero integration** — Push to cloud, or point at the desktop app's local API to reach Linked Files / non-cloud-synced PDFs
 - **Obsidian vault export** — Export any KB as an Obsidian-compatible Markdown vault
@@ -167,7 +168,7 @@ Structured content (PMC, arXiv) provides sections and references. PDF content pr
 
 ## MCP Server
 
-Perspicacité exposes an MCP server with 20 tools at `http://localhost:8000/mcp`, accessible via:
+Perspicacité exposes an MCP server with 21 tools at `http://localhost:8000/mcp`, accessible via:
 - **MCP protocol** — native tool discovery and invocation
 - **HTTP JSON-RPC** — `POST /mcp` with standard JSON-RPC 2.0 envelope
 
@@ -195,6 +196,7 @@ Perspicacité exposes an MCP server with 20 tools at `http://localhost:8000/mcp`
 | `route_kbs` | Pick the most-relevant KBs for a query (BM25 or LLM) — pass results to `kb_names` |
 | `build_kb_from_search` | Search SciLEx, filter (year/citations/abstract), fetch PDFs, ingest into a new or existing KB |
 | `export_kb` | Export a KB as BibTeX + cached-PDF folder for Zotero / ZotFile import |
+| `expand_kb_via_citations` | Grow a KB by following forward / backward citations from its existing papers (OpenAlex; optional LLM/BM25 relevance screen) |
 
 Full usage details and parameter documentation: [`docs/perspicacite_skills.md`](docs/perspicacite_skills.md)
 
@@ -484,6 +486,50 @@ await build_kb_from_search(
 # → KB is immediately queryable via search_knowledge_base / generate_report
 ```
 
+#### Smart-search options on top of `search-to-kb`
+
+```bash
+# Relevance screen between filter and ingest (BM25 free; LLM uses haiku):
+perspicacite search-to-kb -q "metabolomics LLM annotation" -k metabo_llm \
+    --max-results 30 --screen llm --screen-threshold 0.5
+
+# KB-aware: when the KB already exists, append its top topic terms
+# (from description + sampled titles) to bias SciLEx toward adjacent literature:
+perspicacite search-to-kb -q "imaging" -k diamond_sensors --kb-aware
+
+# Multi-variant rephrasing for coverage (one cheap LLM call generates N
+# alternate phrasings; fan out across SciLEx and merge dedup'd by DOI):
+perspicacite search-to-kb -q "metabolite annotation LLM" -k metabo_llm \
+    --rephrase 3 --max-results 10
+```
+
+All three options stack — `--rephrase 3 --kb-aware --screen llm` runs
+4 queries (original + 3 variants, each augmented with KB topic terms),
+unions deduped, and screens the result for topic fit.
+
+### Citation-graph expansion (`expand-kb`)
+
+Grow an existing KB by following one citation hop from each of its
+papers — no new query needed.
+
+```bash
+# Pull both forward (papers citing) and backward (papers cited),
+# 8 per seed paper per direction, year-filter, LLM-screen for topic fit:
+perspicacite expand-kb -k diamond_sensors \
+    --direction both --max-per-seed 8 --min-year 2020 \
+    --screen llm --screen-threshold 0.5
+
+# Just the intellectual lineage (no new follow-up work):
+perspicacite expand-kb -k diamond_sensors --direction backward --dry-run
+```
+
+Uses OpenAlex directly — no SciLEx dependency. Polite-pool UA via
+`pdf_download.unpaywall_email`. Hits already in the KB are skipped
+(no duplicate ingest). Same `--min-year` / `--min-citations` /
+`--require-abstract` filter stack as `search-to-kb`.
+
+Also available as MCP `expand_kb_via_citations`.
+
 ### Institutional-access PDFs via browser cookies
 
 For papers behind a publisher paywall that your institution licenses,
@@ -714,7 +760,7 @@ uv run mypy src/
 src/perspicacite/
   cli.py                        # CLI commands (serve, create-kb, screen-papers, pubmed-search, version)
   config/schema.py              # Pydantic configuration model
-  mcp/server.py                 # MCP server with 20 tools
+  mcp/server.py                 # MCP server with 21 tools
   pipeline/
     download/                   # Content retrieval pipeline
       discovery.py              # OpenAlex + Unpaywall discovery
