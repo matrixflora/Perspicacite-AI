@@ -720,6 +720,73 @@ def build_capsules_cmd(ctx, kb_name: str, force: bool) -> None:
     asyncio.run(_run())
 
 
+@cli.command("fetch-resources")
+@click.option("--paper", "paper_id", required=True, help="Paper ID (e.g. doi:10.1234/abc)")
+@click.option("--kb", "kb_name", required=True, help="KB containing the paper")
+@click.option("--include", "include", default=None,
+              help="Comma-separated kinds to fetch: github,zenodo,doi (default: all supported)")
+@click.option("--ingest/--no-ingest", default=True,
+              help="Route fetched text-like files into the KB as is_external chunks")
+@click.option("--force", is_flag=True, default=False,
+              help="(reserved) Re-fetch even if cached")
+@click.pass_context
+def fetch_resources_cmd(
+    ctx, paper_id: str, kb_name: str,
+    include: str | None, ingest: bool, force: bool,
+) -> None:
+    """Fetch external resources mined into the paper's capsule resources.json."""
+    import asyncio
+
+    from perspicacite.pipeline.capsule_builder import (
+        capsule_dir_for,
+        resolve_paper_from_metadata,
+    )
+    from perspicacite.pipeline.external.fetch_orchestrator import (
+        fetch_paper_resources,
+    )
+    from perspicacite.web.state import AppState
+
+    kinds: list[str] | None = (
+        [k.strip() for k in include.split(",") if k.strip()] if include else None
+    )
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        kb_meta = await state.session_store.get_kb_metadata(kb_name)
+        if kb_meta is None:
+            click.echo(f"Error: KB '{kb_name}' not found", err=True)
+            raise SystemExit(1)
+        rows = await state.vector_store.list_paper_metadata(kb_meta.collection_name)
+        row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+        if row is None:
+            click.echo(f"Error: paper '{paper_id}' not in KB '{kb_name}'", err=True)
+            raise SystemExit(1)
+        paper = resolve_paper_from_metadata(row)
+        cap_dir = capsule_dir_for(paper, root=state.config.capsule.root)
+        setattr(paper, "_kb_name", kb_name)
+
+        class _CLIRegistry:
+            async def publish(self, _job_id, payload):
+                kind = payload.get("kind", "")
+                ident = payload.get("identifier", "")
+                status = payload.get("status", "")
+                click.echo(f"  {kind} {ident}: {status}")
+            async def finish(self, _job_id, _payload):
+                pass
+            async def fail(self, _job_id, msg):
+                click.echo(f"  ERROR: {msg}", err=True)
+
+        registry = _CLIRegistry()
+        result = await fetch_paper_resources(
+            paper=paper, capsule_dir=cap_dir, kinds=kinds,
+            app_state=state, registry=registry, job_id="cli",
+            ingest=ingest, force=force,
+        )
+        click.echo(f"Summary: {result}")
+    asyncio.run(_run())
+
+
 @cli.command()
 def version() -> None:
     """Print version information."""
