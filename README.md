@@ -439,11 +439,14 @@ the binary, flags, prompt-delivery mode (stdin or arg), and JSON-output
 path. Add your own preset by setting `llm.providers.agent_cli.executable`
 + flags — no Python changes needed.
 
-**Caveat**: rate limits are shared with your interactive agent
-session. A heavy contextual-retrieval ingest may freeze you out for
-hours. Mitigate with `pdf_download.cache_pdfs: true` + the built-in
-prompt cache so re-ingest doesn't burn fresh requests. For
+**Caveats**: rate limits are shared with your interactive agent
+session; no prompt caching; no streaming; no per-call temperature.
+A heavy contextual-retrieval ingest may freeze you out for hours.
+Mitigate with `pdf_download.cache_pdfs: true` + per-stage tiering
+(Haiku/Ollama for hot loops, agent CLI only for synthesis). For
 production / unattended use, prefer direct API + prompt caching.
+Full caveats and per-CLI notes (live-verified flag schemas, latency
+measurements, recommended tiering): [`docs/agent-cli-caveats.md`](docs/agent-cli-caveats.md).
 
 #### MCP sampling (`use_mcp_sampling`)
 
