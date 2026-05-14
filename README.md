@@ -308,6 +308,71 @@ mcp:
 
 Academic database search APIs are configured under `scilex:` — enabled sources include Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, and DBLP by default.
 
+### Cheap / local-only mode (zero API cost)
+
+To run Perspicacité with no paid API calls — useful for dev, CI, or on
+an air-gapped machine — point both the LLM and the embedding model at
+local backends:
+
+```yaml
+llm:
+  default_provider: "ollama"
+  default_model: "llama3.1"          # or mistral, phi3
+  providers:
+    ollama:
+      base_url: "http://localhost:11434"
+      timeout: 120
+
+knowledge_base:
+  embedding_model: "all-MiniLM-L6-v2"  # local sentence-transformers (~80MB, 384-dim)
+```
+
+Then start Ollama (`brew install ollama && ollama serve && ollama pull llama3.1`)
+and launch Perspicacité as usual.
+
+**Caveats:**
+- Ollama's tool-use support is limited, so agentic mode is best avoided —
+  basic/advanced/contradiction modes work fine.
+- A given KB is bound to the embedding model that wrote it. Cheap-mode
+  only makes sense for **fresh KBs**; you can't query a KB built with
+  OpenAI embeddings using a local model (different vector spaces).
+- Local sentence-transformers will download once on first use (the
+  `~/.cache/torch/sentence_transformers/` directory).
+
+### Zotero secrets via environment variables
+
+Instead of putting `zotero.api_key` in `config.yml`, you can set:
+
+```bash
+export ZOTERO_API_KEY=...                       # or PERSPICACITE_ZOTERO_API_KEY
+export PERSPICACITE_ZOTERO_LIBRARY_ID=5691738   # optional override
+export PERSPICACITE_ZOTERO_BASE_URL="http://localhost:23119/api"   # use local Zotero
+```
+
+These environment overrides take precedence over `config.yml`.
+
+### Use the local Zotero desktop API
+
+If you have Linked Files / ZotFile-managed PDFs or simply don't want to
+hit Zotero's rate limits, point at the desktop app's local API:
+
+1. Zotero 7+ → Settings → Advanced → check **"Allow other applications on
+   this computer to communicate with Zotero"** (Zotero 6 → about:config →
+   `extensions.zotero.httpServer.enabled = true`).
+2. Restart Zotero.
+3. In `config.yml`:
+   ```yaml
+   zotero:
+     enabled: true
+     base_url: "http://localhost:23119/api"
+     library_id: "5691738"        # your group/user library ID
+     library_type: "group"        # or "user"
+     api_key: ""                  # optional on loopback
+   ```
+
+The local API is **read-only** (you cannot push items to it — use the
+cloud API for `push_to_zotero`).
+
 ---
 
 ## Knowledge Bases
