@@ -43,10 +43,11 @@
 - **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
 - **6 RAG modes** — From fast KB retrieval to multi-cycle agentic research, systematic literature surveys, and cross-paper contradiction detection
 - **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
-- **MCP server** — 17 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
+- **MCP server** — 18 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
 - **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
 - **Provenance tracking** — Per-answer trace (retrieved chunks, mode, model, latency) stored in SQLite and exportable as RO-Crate 1.1 zip bundles
 - **Institutional-access PDFs** — Ride your browser's logged-in session via `perspicacite import-browser-cookies`; paywalled journals your institution licenses become reachable server-side
+- **Auto KB routing** — Send a chat with `kb_name: "auto"` and Perspicacité scores every KB's description + sampled titles against the query (BM25 free; LLM tier optional), then queries the top-N in parallel via the multi-KB path
 - **Zotero integration** — Push to cloud, or point at the desktop app's local API to reach Linked Files / non-cloud-synced PDFs
 - **Obsidian vault export** — Export any KB as an Obsidian-compatible Markdown vault
 - **Async ingestion** — Long BibTeX / DOI import jobs run in the background with SSE progress streaming
@@ -164,7 +165,7 @@ Structured content (PMC, arXiv) provides sections and references. PDF content pr
 
 ## MCP Server
 
-Perspicacité exposes an MCP server with 17 tools at `http://localhost:8000/mcp`, accessible via:
+Perspicacité exposes an MCP server with 18 tools at `http://localhost:8000/mcp`, accessible via:
 - **MCP protocol** — native tool discovery and invocation
 - **HTTP JSON-RPC** — `POST /mcp` with standard JSON-RPC 2.0 envelope
 
@@ -189,6 +190,7 @@ Perspicacité exposes an MCP server with 17 tools at `http://localhost:8000/mcp`
 | `build_capsules_for_kb` | Build Capsules for every paper in a KB (idempotent) |
 | `fetch_paper_resources` | Fetch GitHub / Zenodo / Crossref / Unpaywall / PubMed external resources |
 | `fetch_supplementary` | Download Supplementary Information files (PMC OA S3 → Springer ESM → ACS) |
+| `route_kbs` | Pick the most-relevant KBs for a query (BM25 or LLM) — pass results to `kb_names` |
 
 Full usage details and parameter documentation: [`docs/perspicacite_skills.md`](docs/perspicacite_skills.md)
 
@@ -249,6 +251,40 @@ r = httpx.post("http://localhost:8000/mcp", json={
 | `POST` | `/api/survey/{session_id}/generate` | Generate survey report |
 
 Pass `"stream": false` to `/api/chat` to get a JSON response instead of server-sent events.
+
+### Auto KB routing — `kb_name: "auto"`
+
+When you don't want to pick a KB by hand, send `kb_name: "auto"` (or
+`kb_names: ["auto"]`). Perspicacité scores every KB's description +
+sampled paper titles against your query and queries the top-N most
+relevant in parallel.
+
+```bash
+curl -sN -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"query": "metabolomics annotation methods", "kb_name": "auto", "mode": "basic", "stream": true}'
+```
+
+Look for a `kb_route` SSE event near the start of the stream — it
+shows which KBs the router picked and their scores:
+
+```json
+{"type": "kb_route", "method": "bm25",
+ "hits": [
+   {"kb_name": "MetaboLinkAI_final_Unfiled", "score": 1.000, "sampled_titles": 12},
+   {"kb_name": "Library_AI-FORGE",          "score": 0.668, "sampled_titles": 12}]}
+```
+
+Tune in `config.yml`:
+```yaml
+rag_modes:
+  route_method: "bm25"   # bm25 = free + fast; llm = one cheap LLM call
+  route_top_k: 3
+  route_threshold: 0.1
+```
+
+For introspection without running synthesis, use the MCP `route_kbs`
+tool — same scoring, returns just the ranked hits.
 
 ---
 
@@ -559,7 +595,7 @@ uv run mypy src/
 src/perspicacite/
   cli.py                        # CLI commands (serve, create-kb, screen-papers, pubmed-search, version)
   config/schema.py              # Pydantic configuration model
-  mcp/server.py                 # MCP server with 17 tools
+  mcp/server.py                 # MCP server with 18 tools
   pipeline/
     download/                   # Content retrieval pipeline
       discovery.py              # OpenAlex + Unpaywall discovery
