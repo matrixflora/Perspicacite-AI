@@ -2045,6 +2045,63 @@ async def expand_kb_via_citations(
 
 
 # =============================================================================
+# Tool 22: delete_knowledge_base
+# =============================================================================
+
+
+@mcp.tool()
+async def delete_knowledge_base(
+    name: str,
+    keep_collection: bool = False,
+) -> str:
+    """Permanently delete a KB (metadata row + Chroma collection).
+
+    Cached PDFs in ``pdf_download.cache_dir`` are NOT removed — they
+    are per-DOI artefacts useful for future ingests. To purge them,
+    delete the matching ``<doi>.pdf`` / ``<doi>.meta.json`` files
+    by hand.
+
+    Args:
+        name: KB name.
+        keep_collection: When True, drop only the metadata row and
+            leave the underlying Chroma collection in place (orphans
+            the embeddings; useful when re-attaching).
+
+    Returns:
+        JSON ``{"deleted": bool, "collection_dropped": bool, "name": ...}``.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+    try:
+        kb = await state.session_store.get_kb_metadata(name)
+        if not kb:
+            return _json_error(f"KB '{name}' not found")
+        collection_dropped = False
+        collection_error: str | None = None
+        if not keep_collection and kb.collection_name:
+            try:
+                await state.vector_store.delete_collection(kb.collection_name)
+                collection_dropped = True
+            except Exception as exc:
+                collection_error = str(exc)
+        deleted = await state.session_store.delete_kb_metadata(name)
+        logger.info(
+            "mcp_delete_kb", name=name, deleted=deleted,
+            collection_dropped=collection_dropped,
+        )
+        return _json_ok({
+            "name": name,
+            "deleted": deleted,
+            "collection_dropped": collection_dropped,
+            "collection_error": collection_error,
+        })
+    except Exception as e:
+        logger.error("mcp_delete_kb_error", name=name, error=str(e))
+        return _json_error(f"delete_knowledge_base failed: {e}")
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -2071,6 +2128,7 @@ _TOOL_NAMES: list[str] = [
     "build_kb_from_search",
     "export_kb",
     "expand_kb_via_citations",
+    "delete_knowledge_base",
 ]
 
 
