@@ -442,6 +442,7 @@ async def expand_kb_via_citations(
             kept, query=effective_query,
             method=screen_method, threshold=screen_threshold,
             llm_client=app_state.llm_client,
+            app_state=app_state,
         )
         report.dropped_screened = len(kept) - len(survivors)
         kept = survivors

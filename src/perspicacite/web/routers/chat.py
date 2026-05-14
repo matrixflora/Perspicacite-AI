@@ -487,11 +487,14 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
         method = getattr(cfg_rag, "route_method", "bm25") if cfg_rag else "bm25"
         top_k = getattr(cfg_rag, "route_top_k", 3) if cfg_rag else 3
         threshold = getattr(cfg_rag, "route_threshold", 0.1) if cfg_rag else 0.1
+        from perspicacite.llm.client import resolve_stage_model
+        rp, rm = resolve_stage_model(getattr(app_state, "config", None), "routing")
         hits = await auto_route_kbs(
             query=request.query, kb_metas=all_kbs,
             vector_store=app_state.vector_store, method=method,
             top_k=top_k, score_threshold=threshold,
             llm_client=getattr(app_state, "llm_client", None),
+            llm_model=rm, llm_provider=rp,
         )
         if not hits:
             yield (

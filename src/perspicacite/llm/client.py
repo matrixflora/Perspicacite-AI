@@ -17,6 +17,39 @@ from perspicacite.logging import get_logger
 logger = get_logger("perspicacite.llm")
 
 
+def resolve_stage_model(
+    config: Any,
+    stage: str,
+) -> tuple[str, str]:
+    """Pick ``(provider, model)`` for an LLM call site by stage name.
+
+    Stages live in ``config.llm.models`` / ``config.llm.providers_per_stage``
+    keyed by the stage name (e.g. ``"routing"``, ``"screening"``,
+    ``"synthesis_basic"``). Falls back to the global defaults when the
+    stage isn't pinned. Returns the pair the caller should pass to
+    :meth:`AsyncLLMClient.complete`.
+
+    Why a helper and not a config method: kb_router / screen / rephrase
+    are imported by code paths that don't see the full config object,
+    they receive an already-constructed ``llm_client``. This function
+    lets the orchestrator MCP / CLI / REST layer resolve once and pass
+    the explicit pair down.
+    """
+    if config is None:
+        return "anthropic", "claude-haiku-4-5"
+    llm_cfg = getattr(config, "llm", None)
+    if llm_cfg is None:
+        return "anthropic", "claude-haiku-4-5"
+    default_provider = llm_cfg.default_provider or "anthropic"
+    default_model = llm_cfg.default_model or "claude-sonnet-4-5"
+    models = getattr(llm_cfg, "models", {}) or {}
+    providers = getattr(llm_cfg, "providers_per_stage", {}) or {}
+    return (
+        providers.get(stage, default_provider),
+        models.get(stage, default_model),
+    )
+
+
 def build_cached_messages(
     *,
     system: str | None = None,

@@ -149,6 +149,43 @@ class LLMConfig(BaseModel):
     # v1 core/core.py get_response: truncate mandatory + base system prompt to this length (chars)
     max_context_window: int = Field(default=10000, ge=2000, le=500000)
 
+    # Per-stage model overrides. When set, the corresponding call site
+    # uses this model/provider pair instead of (default_provider,
+    # default_model). When ``None`` the stage falls back to the default
+    # pair, preserving today's behaviour. This lets the user pay
+    # Sonnet/Opus prices only on synthesis modes that benefit from
+    # them, and use Haiku / a local Ollama for cheap roles.
+    #
+    # Recommended starting point (kept as a comment so we don't ship
+    # an opinionated default that surprises existing users):
+    #   default_provider: "anthropic"
+    #   default_model:    "claude-sonnet-4-5"      # heavy synthesis (profound, agentic)
+    #   models:
+    #     synthesis_basic:    "claude-haiku-4-5"   # basic / advanced RAG modes
+    #     routing:            "claude-haiku-4-5"   # kb_router LLM
+    #     screening:          "claude-haiku-4-5"   # screen_papers LLM
+    #     rephrase:           "claude-haiku-4-5"   # rephrase_query
+    #     contextual:         "claude-haiku-4-5"   # contextual retrieval per-chunk
+    models: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-stage model overrides. Keys: synthesis_basic, "
+            "synthesis_heavy, routing, screening, rephrase, contextual. "
+            "Value is the model name; uses default_provider unless the "
+            "name contains a provider prefix like 'anthropic/claude-...'. "
+            "Empty dict = every stage uses the global default pair."
+        ),
+    )
+    # Optional per-stage provider override (parallel to ``models``).
+    # Use when you want one stage on Ollama, another on Anthropic, etc.
+    providers_per_stage: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Per-stage provider override. Same keys as `models`. "
+            "Falls back to `default_provider` for unset stages."
+        ),
+    )
+
     providers: dict[str, LLMProviderConfig] = Field(
         default_factory=lambda: {
             "anthropic": LLMProviderConfig(
