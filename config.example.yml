@@ -273,3 +273,28 @@ multimodal:
     - "claude-"
     - "openai/gpt-4o"
     - "gpt-4o"
+
+# =============================================================================
+# External resources (Cycle C): V1 mining + V2 fetch-on-demand
+# =============================================================================
+external_resources:
+  mine: true                              # V1 — Cycle A, always-on
+  fetch_on_demand: true                   # V2 — gate for fetch helpers
+  cache_dir: ./data/cache
+  cache_ttl_days: 30
+  zenodo_max_bytes_per_file: 500000       # Skip Zenodo files larger than this
+  zenodo_max_bytes_per_record: 5000000    # Stop after cumulative bytes per record
+  text_file_extensions:                   # Allowlist for fetched text/code files
+    - .md
+    - .rst
+    - .txt
+    - .py
+    - .R
+    - .r
+    - .jl
+    - .ipynb
+    - .yml
+    - .yaml
+    - .toml
+    - .json
+    - .csv
