@@ -1639,6 +1639,64 @@ async def fetch_supplementary(
 
 
 # =============================================================================
+# Tool 18: route_kbs
+# =============================================================================
+
+
+@mcp.tool()
+async def route_kbs(
+    query: str,
+    candidate_kbs: list[str] | None = None,
+    method: str = "bm25",
+    top_k: int = 3,
+    score_threshold: float = 0.1,
+) -> dict:
+    """Pick the most-relevant KBs for a query without actually running it.
+
+    Useful for agents that want to decide where to look before
+    committing to retrieval — pass the returned ``hits`` list as
+    ``kb_names`` to ``generate_report`` / ``search_knowledge_base`` /
+    ``/api/chat``.
+
+    Args:
+        query: The research question.
+        candidate_kbs: Optional restricted list (KB names). ``None`` =
+            consider every KB in the session store.
+        method: ``"bm25"`` (default, no LLM call) or ``"llm"`` (one
+            cheap LLM call scores every KB; better on semantic
+            mismatches).
+        top_k: Max KBs to return.
+        score_threshold: Drop KBs whose normalized score is below this.
+
+    Returns:
+        ``{"hits": [{"kb_name", "score", "reason", "sampled_titles"}, …]}``
+    """
+    from perspicacite.rag.kb_router import auto_route_kbs
+
+    state = _require_state()
+    if isinstance(state, str):
+        return {"error": state}
+
+    all_kbs = await state.session_store.list_kbs()
+    if candidate_kbs:
+        wanted = set(candidate_kbs)
+        all_kbs = [k for k in all_kbs if k.name in wanted]
+    if not all_kbs:
+        return {"hits": [], "note": "no candidate KBs"}
+
+    hits = await auto_route_kbs(
+        query=query,
+        kb_metas=all_kbs,
+        vector_store=state.vector_store,
+        method=method,
+        top_k=top_k,
+        score_threshold=score_threshold,
+        llm_client=state.llm_client,
+    )
+    return {"hits": [h.to_dict() for h in hits]}
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -1661,6 +1719,7 @@ _TOOL_NAMES: list[str] = [
     "fetch_supplementary",
     "build_capsules_for_kb",
     "fetch_paper_resources",
+    "route_kbs",
 ]
 
 

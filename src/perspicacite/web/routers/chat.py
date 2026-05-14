@@ -470,7 +470,70 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
     effective_kb_name = request.kb_name or "default"
     effective_kb_names: Optional[List[str]] = None
 
-    if request.kb_names and len(request.kb_names) > 1 and app_state.session_store:
+    # `kb_name="auto"` (or `kb_names=["auto"]`) routes the query: pick the
+    # top-N most-relevant KBs by description + sampled paper titles, then
+    # query them in parallel via the multi-KB path. BM25 by default
+    # (no LLM cost); set rag_modes.route_method='llm' to use the LLM
+    # router instead (one cheap call).
+    is_auto = (
+        (request.kb_name or "").strip().lower() == "auto"
+        or (request.kb_names and len(request.kb_names) == 1
+            and (request.kb_names[0] or "").strip().lower() == "auto")
+    )
+    if is_auto and app_state.session_store:
+        from perspicacite.rag.kb_router import auto_route_kbs
+        all_kbs = await app_state.session_store.list_kbs()
+        cfg_rag = getattr(getattr(app_state, "config", None), "rag_modes", None)
+        method = getattr(cfg_rag, "route_method", "bm25") if cfg_rag else "bm25"
+        top_k = getattr(cfg_rag, "route_top_k", 3) if cfg_rag else 3
+        threshold = getattr(cfg_rag, "route_threshold", 0.1) if cfg_rag else 0.1
+        hits = await auto_route_kbs(
+            query=request.query, kb_metas=all_kbs,
+            vector_store=app_state.vector_store, method=method,
+            top_k=top_k, score_threshold=threshold,
+            llm_client=getattr(app_state, "llm_client", None),
+        )
+        if not hits:
+            yield (
+                "data: " + json.dumps({
+                    "type": "error",
+                    "message": (
+                        "auto-routing found no relevant KBs. Try a more "
+                        "specific query, or specify kb_name / kb_names "
+                        "directly."
+                    ),
+                }) + "\n\n"
+            )
+            return
+        # Surface the routing decision to the client so the user sees
+        # which KBs were picked + why (BM25 has no reason field).
+        yield (
+            "data: " + json.dumps({
+                "type": "kb_route",
+                "method": method,
+                "hits": [h.to_dict() for h in hits],
+            }) + "\n\n"
+        )
+        # If only one KB matched, route as single-KB; else multi-KB
+        picked = [h.kb_name for h in hits]
+        if len(picked) == 1:
+            effective_kb_name = picked[0]
+        else:
+            # Run the same embedding-compat guard the manual multi-KB
+            # path uses.
+            from perspicacite.retrieval.multi_kb import check_embedding_compat
+            metas = [await app_state.session_store.get_kb_metadata(n) for n in picked]
+            compat_msg = check_embedding_compat(metas)
+            if compat_msg:
+                yield (
+                    "data: " + json.dumps({
+                        "type": "error", "message": compat_msg,
+                    }) + "\n\n"
+                )
+                return
+            effective_kb_names = picked
+
+    elif request.kb_names and len(request.kb_names) > 1 and app_state.session_store:
         from perspicacite.retrieval.multi_kb import check_embedding_compat
 
         metas = [await app_state.session_store.get_kb_metadata(n) for n in request.kb_names]
