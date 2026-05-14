@@ -296,18 +296,21 @@ def _extract_supplementary_from_xml(xml_bytes: bytes, pmcid: str) -> list[dict] 
                                 or sub.attrib.get("mime-subtype")
                                 or ""
                             )
-                # PMC mirrors SI files at /articles/instance/<numeric_id>/bin/<href>
-                # on the new pmc.ncbi.nlm.nih.gov domain (the older
-                # www.ncbi.nlm.nih.gov/pmc/articles/<pmcid>/bin/... pattern
-                # 301-redirects, but NCBI's bot detection often returns an
-                # HTML interstitial instead of the file — the caller
-                # checks content-type to detect that).
+                # SI file URL composition. Prefer the PMC OA S3 bucket
+                # (no bot-gating, public read) because if we got the JATS
+                # XML from S3 the SI is there too. Fall back to the gated
+                # pmc.ncbi.nlm.nih.gov web URL for papers not in OA bulk.
                 # External href (http://...) passes through unchanged.
+                alt_urls: list[str] = []
                 if href.startswith("http://") or href.startswith("https://"):
                     url = href
                 else:
+                    # Primary: S3 OA bucket (version 1, matches what
+                    # _s3_xml_url uses for the JATS fetch).
+                    url = f"{_S3_BASE}/{pmcid}.1/{href}"
+                    # Fallback: gated web URL on pmc.ncbi.nlm.nih.gov.
                     numeric_id = pmcid[3:] if pmcid.upper().startswith("PMC") else pmcid
-                    url = (
+                    alt_urls.append(
                         f"https://pmc.ncbi.nlm.nih.gov/articles/instance/{numeric_id}/bin/{href}"
                     )
                 out.append({
@@ -316,6 +319,7 @@ def _extract_supplementary_from_xml(xml_bytes: bytes, pmcid: str) -> list[dict] 
                     "caption": caption or None,
                     "href": href or None,
                     "url": url,
+                    "alt_urls": alt_urls or None,
                     "mime_type": mime or None,
                 })
             else:
