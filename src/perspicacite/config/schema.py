@@ -64,6 +64,31 @@ class KnowledgeBaseConfig(BaseModel):
         default=True,
         description="Use language-aware chunking for source-code files",
     )
+    # Anthropic "contextual retrieval": per chunk, the LLM generates a
+    # 50-100 token summary that situates the chunk in its document. The
+    # summary is prepended to chunk.text before embedding only (not
+    # stored, not shown to synthesis prompts). Per Anthropic's benchmark
+    # this lifts retrieval recall by 30-40% on technical/scientific
+    # content — at the cost of ~1 LLM call per chunk during ingest.
+    # Off by default. Enable per-KB by setting this flag at ingest time.
+    contextual_retrieval: bool = Field(
+        default=False,
+        description="Use LLM-generated context prefix per chunk (Anthropic-style).",
+    )
+    contextual_retrieval_model: str = Field(
+        default="claude-haiku-4-5",
+        description="Cheap fast model for contextual-retrieval prefix generation.",
+    )
+    contextual_retrieval_provider: str = Field(
+        default="anthropic",
+        description="Provider for the contextual-retrieval model.",
+    )
+    contextual_retrieval_max_chars: int = Field(
+        default=400,
+        ge=0,
+        le=2000,
+        description="Max chars of LLM-generated context prepended per chunk.",
+    )
 
 
 class LLMProviderConfig(BaseModel):

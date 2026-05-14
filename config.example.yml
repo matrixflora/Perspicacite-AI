@@ -59,6 +59,17 @@ knowledge_base:
   use_two_pass: true
   markdown_heading_aware: true   # heading-aware markdown chunking for local-doc ingest
   code_language_aware: true      # language-aware code chunking for local-doc ingest
+  # Anthropic-style contextual retrieval. When enabled, an LLM
+  # generates a 50-100 token contextual summary for each chunk that's
+  # prepended to its embedding text only (chunk.text unchanged).
+  # Improves retrieval recall by 30-40% on technical content per
+  # Anthropic's benchmark, at the cost of ~1 LLM call per chunk during
+  # ingest. Cached on disk (data/contextual_cache/) by (paper_id,
+  # chunk_index, doc_sha) so re-ingesting the same paper is free.
+  contextual_retrieval: false
+  contextual_retrieval_model: "claude-haiku-4-5"
+  contextual_retrieval_provider: "anthropic"
+  contextual_retrieval_max_chars: 400
 
 # =============================================================================
 # Database Configuration

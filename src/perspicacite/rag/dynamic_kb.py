@@ -203,10 +203,48 @@ Abstract:
                     ),
                 ))
 
+        # Anthropic-style contextual retrieval: when enabled via config,
+        # generate a short LLM context per chunk and pass it through to
+        # the vector store's add_documents (which prepends it to the
+        # embedding text only — chunk.text is unchanged). Off by default
+        # because it costs one LLM call per chunk during ingest.
+        per_chunk_context: list[str] | None = None
+        kb_cfg = getattr(self.config, "_kb_config", None) or getattr(self.config, "kb_config", None)
+        if kb_cfg is None:
+            # Some construction paths set the full KB config on .config
+            kb_cfg = self.config
+        use_contextual = bool(getattr(kb_cfg, "contextual_retrieval", False))
+        llm_client = getattr(self, "llm_client", None)
+        if use_contextual and llm_client is not None and (paper.full_text or paper.abstract):
+            try:
+                from perspicacite.retrieval.contextual import generate_chunk_contexts_bulk
+                per_chunk_context = await generate_chunk_contexts_bulk(
+                    paper_id=paper.id,
+                    chunks=chunks,
+                    document_text=paper.full_text or paper.abstract or "",
+                    llm_client=llm_client,
+                    model=getattr(kb_cfg, "contextual_retrieval_model", "claude-haiku-4-5"),
+                    provider=getattr(kb_cfg, "contextual_retrieval_provider", "anthropic"),
+                    max_chars=getattr(kb_cfg, "contextual_retrieval_max_chars", 400),
+                )
+                logger.info(
+                    "contextual_retrieval_applied",
+                    paper_id=paper.id,
+                    contexts=sum(1 for c in per_chunk_context if c),
+                    chunks=len(chunks),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "contextual_retrieval_failed_falling_back",
+                    paper_id=paper.id,
+                    error=str(exc),
+                )
+
         # Add to vector store (embeddings generated internally)
         await self.vector_store.add_documents(
             collection=self.collection_name,
             chunks=chunks,
+            per_chunk_context=per_chunk_context,
         )
 
         return len(chunks)

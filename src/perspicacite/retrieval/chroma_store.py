@@ -115,6 +115,8 @@ class ChromaVectorStore:
         self,
         collection: str,
         chunks: list[DocumentChunk],
+        *,
+        per_chunk_context: list[str] | None = None,
     ) -> int:
         """
         Add documents to a collection.
@@ -122,6 +124,15 @@ class ChromaVectorStore:
         Args:
             collection: Collection name
             chunks: Document chunks to add
+            per_chunk_context: Optional list of LLM-generated context
+                strings (one per chunk, same order). When supplied, each
+                string is prepended to the corresponding chunk's
+                embedding text only (chunk.text is not modified). This is
+                the integration point for Anthropic-style contextual
+                retrieval — the caller generates contexts via
+                ``retrieval.contextual.generate_chunk_contexts_bulk``
+                and passes the result here. ``None`` or empty entries
+                are treated as no-extra-context.
 
         Returns:
             Number of chunks added
@@ -137,16 +148,27 @@ class ChromaVectorStore:
             coll = self.client.get_collection(name=collection)
 
         # Generate embeddings for chunks that don't have them.
-        # We prefix the chunk text with title + section/heading_path so the
-        # embedding picks up structural context. Stored `documents` and
-        # downstream `chunk.text` are unchanged so display/synthesis aren't
-        # affected — only the embedding sees the prefix.
+        # We prefix the chunk text with title + section/heading_path
+        # (always, free) plus an optional LLM-generated context
+        # (Anthropic-style contextual retrieval, when caller supplies
+        # ``per_chunk_context``). Stored ``documents`` and downstream
+        # ``chunk.text`` are unchanged so display/synthesis aren't
+        # affected — only the embedding sees the prefixes.
         texts_to_embed = []
         indices_to_embed = []
 
+        def _ctx_for(i: int) -> str | None:
+            if not per_chunk_context:
+                return None
+            if i >= len(per_chunk_context):
+                return None
+            return per_chunk_context[i] or None
+
         for i, chunk in enumerate(chunks):
             if chunk.embedding is None:
-                texts_to_embed.append(_compose_embedding_text(chunk))
+                texts_to_embed.append(
+                    _compose_embedding_text(chunk, extra_context=_ctx_for(i))
+                )
                 indices_to_embed.append(i)
 
         if texts_to_embed:
@@ -436,25 +458,28 @@ class ChromaVectorStore:
             raise
 
 
-def _compose_embedding_text(chunk: DocumentChunk) -> str:
+def _compose_embedding_text(
+    chunk: DocumentChunk, *, extra_context: str | None = None,
+) -> str:
     """Build the text that goes into the embedding model for a chunk.
 
-    Prefixes the chunk body with light structural context derived from
-    metadata that's already available — the paper title, the resolved
-    section (or markdown heading_path), and any explicit ``source_section``
-    annotation. This is the cheap form of contextual retrieval: no extra
-    LLM calls, just attaching context that's already on the chunk.
+    Two stacked prefixes, both embedding-only (stored chunk.text and
+    Chroma's `documents` field are unchanged):
 
-    Stored chunk.text and Chroma's `documents` field are unchanged. Only
-    the embedding sees the prefix, so display / synthesis prompts are
-    unaffected.
+    1. **Structural** — paper title, section, heading_path. Free, no
+       LLM calls.
+    2. **LLM-generated context** — Anthropic-style contextual retrieval,
+       passed via ``extra_context``. Caller is responsible for
+       generating it (see ``retrieval.contextual.generate_chunk_context``).
 
-    Format:
+    Layout:
+        [<extra_context (LLM-generated)>]
+
         [<title>] · [<section> | <heading_path>] · [<source_section>]
         <chunk.text>
 
-    Empty/missing fields are skipped. Total prefix is capped to avoid
-    drowning short chunks in metadata.
+    Empty/missing fields are skipped. Each prefix is capped so it
+    can't drown short chunks in metadata.
     """
     md = chunk.metadata
     parts: list[str] = []
@@ -468,13 +493,25 @@ def _compose_embedding_text(chunk: DocumentChunk) -> str:
         parts.append(section.strip())
     if md.source_section and md.source_section != section:
         parts.append(str(md.source_section).strip())
-    if not parts:
+    structural = " · ".join(parts) if parts else ""
+    if len(structural) > 280:
+        structural = structural[:277] + "..."
+
+    extra = (extra_context or "").strip()
+    # Cap LLM prefix separately at 500 chars (slightly above the
+    # configured contextual_retrieval_max_chars default of 400).
+    if len(extra) > 500:
+        extra = extra[:497] + "..."
+
+    if not extra and not structural:
         return chunk.text
-    prefix = " · ".join(parts)
-    # Cap prefix at 280 chars so we don't dilute short chunks.
-    if len(prefix) > 280:
-        prefix = prefix[:277] + "..."
-    return f"{prefix}\n\n{chunk.text}"
+    blocks: list[str] = []
+    if extra:
+        blocks.append(extra)
+    if structural:
+        blocks.append(structural)
+    blocks.append(chunk.text)
+    return "\n\n".join(blocks)
 
 
 def _chunk_to_metadata(metadata: ChunkMetadata) -> dict[str, Any]:
