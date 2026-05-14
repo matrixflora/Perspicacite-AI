@@ -146,6 +146,38 @@ class KnowledgeBaseConfig(BaseModel):
         ),
     )
 
+    # ---- multimodal visual extraction (Wave 4.1) -------------------
+    # Render each PDF page and ask a vision-capable LLM to extract
+    # figures / tables / formulas. Off by default — opt-in safety.
+    # See docs/superpowers/specs/2026-05-14-multimodal-pdf-extraction-design.md.
+    visual_extraction_enabled: bool = Field(
+        default=False,
+        description=(
+            "When True, run MultimodalPDFExtractor on each ingested PDF "
+            "to produce figure / table / formula chunks. Default off."
+        ),
+    )
+    visual_extraction_model: str = Field(
+        default="claude-sonnet-4-5",
+        description="Vision-capable model used for extraction.",
+    )
+    visual_extraction_provider: str = Field(
+        default="anthropic",
+        description=(
+            "Provider for the extraction model. Must support image "
+            "content blocks (anthropic, openai, gemini, ...)."
+        ),
+    )
+    visual_extraction_dpi: int = Field(
+        default=150,
+        ge=72,
+        le=300,
+        description=(
+            "Page render DPI. Higher = clearer image, more tokens. "
+            "150 is a good default for typical scientific PDFs."
+        ),
+    )
+
 
 class CopyrightFilterConfig(BaseModel):
     """Runtime check on synthesis output to catch verbatim copies of
