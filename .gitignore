@@ -109,6 +109,7 @@ packages_to_use/
 !docs/time-bounded-queries-*.md
 !docs/export-formats-*.md
 !docs/versioned-kbs-*.md
+!docs/orcid-disambiguation-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
