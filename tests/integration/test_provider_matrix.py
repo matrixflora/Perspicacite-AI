@@ -142,17 +142,9 @@ def _skip_if_unavailable(provider: str) -> None:
                 f"~/.codex/auth.json not found ({codex_auth}) — "
                 "run `codex login` to authenticate"
             )
-        # Codex CLI requires a TTY for stdin in exec mode; non-interactive
-        # use is fragile.  Skip in CI / subprocess context unless the user
-        # has explicitly tested it.
-        # We detect the non-TTY situation upfront to give a clean skip.
-        import sys
-        if not sys.stdin.isatty():
-            pytest.skip(
-                "stdin is not a TTY — codex exec requires an interactive terminal. "
-                "Run this test directly in a shell: "
-                "pytest tests/integration/test_provider_matrix.py::test_liveness_agent_cli_codex -m live -v"
-            )
+        # Note: `codex exec` works fine via subprocess pipe stdin — verified
+        # live with `echo ... | codex exec --skip-git-repo-check --sandbox
+        # read-only --ephemeral --output-last-message FILE`. No TTY needed.
 
 
 # ---------------------------------------------------------------------------
@@ -181,13 +173,22 @@ def _make_config_for(provider: str, model: str, **kwargs: Any) -> LLMConfig:
             timeout=180,
             max_retries=1,
         ),
+        # Codex preset — mirrors config.codex.example.yml. Verified live
+        # in commit 7f1e7d7 (~16 s round-trip on this machine).
         "agent_cli": LLMProviderConfig(
             executable="codex",
-            timeout=180,
+            timeout=300,
             max_retries=1,
-            prompt_via="arg",
-            prompt_flag=None,      # positional
+            prompt_via="stdin",
+            extra_args=[
+                "exec",
+                "--skip-git-repo-check",
+                "--sandbox", "read-only",
+                "--ephemeral",
+            ],
+            model_flag="--model",
             output_format="text",
+            output_file_flag="--output-last-message",
         ),
     }
 
@@ -341,13 +342,13 @@ def test_liveness_agent_cli_codex():
     _skip_if_unavailable("agent_cli")
     import asyncio
 
-    config = _make_config_for("agent_cli", "gpt-5")
+    config = _make_config_for("agent_cli", "gpt-5.5")
     client = AsyncLLMClient(config)
     result = asyncio.get_event_loop().run_until_complete(
         client.complete(
             messages=LIVENESS_MESSAGES,
             provider="agent_cli",
-            model="gpt-5",
+            model="gpt-5.5",
             max_tokens=10,
             temperature=0.0,
         )

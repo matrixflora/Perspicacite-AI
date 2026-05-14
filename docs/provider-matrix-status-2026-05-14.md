@@ -24,7 +24,7 @@ dispatch (config-resolver, no network).
 | `gemini` | SKIPPED | `gemini-1.5-flash` | `GOOGLE_API_KEY` not in environment |
 | `ollama` | SKIPPED | first available model | Ollama not reachable at localhost:11434 |
 | `claude_cli` | **PASS** | `haiku` | `claude` binary found; `~/.claude/config.json` present; real call returned non-empty string |
-| `agent_cli` (codex) | SKIPPED | `gpt-5` | `codex` binary found and `~/.codex/auth.json` present, but stdin is not a TTY — `codex exec` requires an interactive terminal. Run standalone in a shell to test. |
+| `agent_cli` (codex) | **PASS** | `gpt-5.5` | `codex` binary found, `~/.codex/auth.json` present; full preset flags from `config.codex.example.yml` (`exec --skip-git-repo-check --sandbox read-only --ephemeral --output-last-message`); ~8 s round-trip |
 
 ## Stage-routing results
 
@@ -53,13 +53,13 @@ Additional routing tests:
 | Metric | Value |
 |---|---|
 | Total collected | 15 |
-| Passed | 9 |
-| Skipped | 6 |
+| Passed | 10 |
+| Skipped | 5 |
 | Failed | 0 |
-| Wall time | ~5.7 s |
+| Wall time | 13.4 s |
 
-Liveness PASS: 1 (`claude_cli`)
-Liveness SKIP: 6 (5 missing API keys, 1 non-TTY stdin)
+Liveness PASS: 2 (`claude_cli`, `agent_cli`/codex)
+Liveness SKIP: 5 (4 missing API keys, 1 Ollama not running)
 Stage-routing PASS: 8 of 8 (all stages + fallback + dispatch-capture)
 
 ## Notes
@@ -67,15 +67,11 @@ Stage-routing PASS: 8 of 8 (all stages + fallback + dispatch-capture)
 - The `DeprecationWarning: There is no current event loop` on `test_liveness_claude_cli`
   is benign — the event loop is created implicitly on Python 3.13. A future cleanup
   could switch to `asyncio.run()` instead of `get_event_loop().run_until_complete()`.
-- `agent_cli` (codex) liveness can only be run interactively because `codex exec`
-  requires a TTY. To test it:
-
-  ```bash
-  source .venv/bin/activate
-  pytest tests/integration/test_provider_matrix.py::test_liveness_agent_cli_codex -m live -v
-  ```
-
-  (Run from a regular terminal session, not a subprocess.)
+- `agent_cli` (codex) works fine via subprocess pipe stdin — no TTY required.
+  Verified live with the full preset from `config.codex.example.yml`:
+  `exec --skip-git-repo-check --sandbox read-only --ephemeral
+  --output-last-message <tempfile>`. Earlier draft of this test included an
+  incorrect `sys.stdin.isatty()` skip; removed.
 
 - To test the four API-key-gated providers, export the relevant key(s) and re-run:
 
