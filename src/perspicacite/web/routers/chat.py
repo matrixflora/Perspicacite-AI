@@ -306,11 +306,44 @@ async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] =
     from perspicacite.provenance.context import set_collector
     set_collector(collector)
 
-    # Accumulate papers from intermediate `papers_found` events so the
-    # final `answer` event can carry a `sources` field — the orchestrator
-    # emits papers as a separate event but the chat-route contract has
-    # sources attached to the answer (matching basic/advanced/profound).
+    # Accumulate `papers_found` events to populate `answer.sources`.
+    # The orchestrator emits `papers_found` AFTER `answer` (so the
+    # browser UI can append citations without overwriting the answer
+    # innerHTML), but the chat-route contract puts sources on the
+    # answer event. We buffer the answer event until papers_found
+    # arrives or the stream ends, then merge.
     accumulated_papers: list[dict[str, Any]] = []
+    pending_answer_event: dict[str, Any] | None = None
+
+    def _emit_answer(content: str, sess_id: str | None) -> str:
+        sources = [
+            {
+                "title": p.get("title"),
+                "authors": (
+                    ", ".join(p["authors"]) if isinstance(p.get("authors"), list)
+                    else p.get("authors")
+                ),
+                "year": p.get("year"),
+                "doi": (
+                    p["doi"].replace("https://doi.org/", "")
+                    if isinstance(p.get("doi"), str)
+                    else p.get("doi")
+                ),
+                "url": p.get("url"),
+                "relevance_score": p.get("relevance_score"),
+                "kb_name": p.get("kb_name"),
+            }
+            for p in accumulated_papers
+        ]
+        safe = {
+            "type": "answer",
+            "session_id": sess_id,
+            "conversation_id": conversation_id,
+            "message_id": assistant_message_id,
+            "content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+            "sources": sources,
+        }
+        return f"data: {json.dumps(safe, separators=(',', ':'))}\n\n"
 
     async for event in app_state.orchestrator.chat(
         query=request.query,
@@ -321,7 +354,6 @@ async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] =
     ):
         if event.get("type") == "papers_found":
             for p in event.get("papers") or []:
-                # Dedup by DOI when present, else id, else title.
                 key = (p.get("doi") or p.get("id") or p.get("title") or "").strip()
                 if not key:
                     continue
@@ -331,44 +363,31 @@ async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] =
                 ):
                     continue
                 accumulated_papers.append(p)
+            # Flush any pending answer event now that we have papers.
+            if pending_answer_event is not None:
+                pending = pending_answer_event
+                pending_answer_event = None
+                yield _emit_answer(pending["content"], pending["session_id"])
+            # Forward the papers_found event for UI rendering.
+            yield f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
+            continue
 
-        # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
-        # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
         if event.get("type") == "answer":
-            content = event.get("content") or ""
-            # Build SourceReference-shaped entries from accumulated papers so
-            # the answer.sources contract matches basic/advanced/profound.
-            sources = [
-                {
-                    "title": p.get("title"),
-                    "authors": (
-                        ", ".join(p["authors"]) if isinstance(p.get("authors"), list)
-                        else p.get("authors")
-                    ),
-                    "year": p.get("year"),
-                    "doi": (
-                        p["doi"].replace("https://doi.org/", "")
-                        if isinstance(p.get("doi"), str)
-                        else p.get("doi")
-                    ),
-                    "url": p.get("url"),
-                    "relevance_score": p.get("relevance_score"),
-                    "kb_name": p.get("kb_name"),
-                }
-                for p in accumulated_papers
-            ]
-            safe = {
-                "type": "answer",
+            # Buffer until papers_found arrives (or stream ends).
+            pending_answer_event = {
+                "content": event.get("content") or "",
                 "session_id": event.get("session_id"),
-                "conversation_id": conversation_id,
-                "message_id": assistant_message_id,
-                "content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-                "sources": sources,
             }
-            data = json.dumps(safe, separators=(",", ":"))
-        else:
-            data = json.dumps(event, separators=(",", ":"))
-        yield f"data: {data}\n\n"
+            continue
+
+        yield f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
+
+    # If no papers_found came after the answer, flush the buffered answer
+    # event so the client still gets a response (with empty sources).
+    if pending_answer_event is not None:
+        yield _emit_answer(
+            pending_answer_event["content"], pending_answer_event["session_id"]
+        )
 
     # End of stream
     yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
