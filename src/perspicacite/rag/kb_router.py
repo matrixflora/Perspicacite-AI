@@ -129,7 +129,21 @@ async def _route_bm25(
     if max_s > 0:
         normalized = [s / max_s for s in scores]
     else:
-        normalized = [0.0] * len(scores)
+        # BM25Okapi corner case: with very few KBs (N=2) and a term that
+        # appears in exactly one doc, the IDF collapses to log(1) = 0 so
+        # *every* score is 0 and routing silently returns nothing. Fall
+        # back to a unique-token-overlap heuristic so small-N corpora
+        # still route correctly.
+        q_unique = set(q_tokens)
+        overlaps = [
+            len(q_unique.intersection(doc_toks))
+            for doc_toks in corpus_tokens
+        ]
+        max_o = max(overlaps) if overlaps else 0
+        if max_o > 0:
+            normalized = [o / max_o for o in overlaps]
+        else:
+            normalized = [0.0] * len(scores)
     hits = [
         KBRouteHit(
             kb_name=name,
