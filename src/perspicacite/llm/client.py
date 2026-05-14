@@ -18,6 +18,31 @@ from perspicacite.logging import get_logger
 logger = get_logger("perspicacite.llm")
 
 
+def _maybe_rate_limit(exc: Exception, provider: str) -> Exception:
+    """If ``exc`` is a LiteLLM rate-limit exception (or its message
+    matches our rate-limit patterns), return a fresh
+    :class:`RateLimitError`. Otherwise return ``exc`` unchanged."""
+    # Class-name match: covers litellm.exceptions.RateLimitError and
+    # subclasses without importing litellm here (it's a lazy import).
+    cls_name = type(exc).__name__
+    msg = str(exc)
+    if cls_name == "RateLimitError" or cls_name.endswith(".RateLimitError"):
+        from perspicacite.llm.errors import RateLimitError, suggested_action
+        return RateLimitError(
+            f"{provider}: rate limit. {suggested_action(provider)}",
+            provider=provider,
+        )
+    from perspicacite.llm.errors import detect_rate_limit, RateLimitError, suggested_action
+    hit = detect_rate_limit(msg)
+    if hit is not None:
+        return RateLimitError(
+            f"{provider}: rate limit. {suggested_action(provider)}",
+            provider=provider,
+            retry_after_seconds=hit.retry_after_seconds,
+        )
+    return exc
+
+
 def resolve_stage_model(
     config: Any,
     stage: str,
@@ -551,7 +576,7 @@ class AsyncLLMClient:
                 error=str(e),
                 error_type=type(e).__name__,
             )
-            raise
+            raise _maybe_rate_limit(e, provider) from e
 
     async def stream(
         self,
@@ -684,7 +709,7 @@ class AsyncLLMClient:
                 model=model,
                 error=str(e),
             )
-            raise
+            raise _maybe_rate_limit(e, provider) from e
 
     async def complete_with_fallback(
         self,
