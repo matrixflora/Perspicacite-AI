@@ -208,6 +208,14 @@ class LLMConfig(BaseModel):
                 timeout=120,
                 max_retries=3,
             ),
+            # Claude Code CLI subprocess provider — spawns `claude -p`
+            # for each call. Uses the user's Pro/Max subscription;
+            # base_url is unused. timeout caps the wait on each call.
+            "claude_cli": LLMProviderConfig(
+                base_url="",
+                timeout=180,
+                max_retries=1,  # subprocess retries are pointless
+            ),
         }
     )
 

@@ -69,6 +69,22 @@ PROVIDER_REGISTRY: dict[str, dict[str, Any]] = {
         "max_tokens": 4096,
         "requires_base_url": True,
     },
+    "claude_cli": {
+        "models": [
+            "sonnet",
+            "haiku",
+            "opus",
+        ],
+        "env_key": None,  # uses the user's Claude Code subscription
+        "supports_streaming": False,
+        "supports_tools": False,
+        "max_tokens": 8192,
+        "notes": (
+            "Subprocess wrapper around 'claude -p'. Shares rate limits "
+            "with the user's interactive Claude Code session — use "
+            "sparingly. No prompt caching, no temperature control."
+        ),
+    },
 }
 
 
