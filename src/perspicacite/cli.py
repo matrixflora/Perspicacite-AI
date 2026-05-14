@@ -1112,6 +1112,13 @@ def import_browser_cookies_cmd(
               help="Emit the full IngestReport as JSON.")
 @click.option("--description", default=None,
               help="KB description (used only when creating).")
+@click.option("--screen", "screen_method",
+              type=click.Choice(["bm25", "llm"]), default=None,
+              help='Relevance-screen candidates before ingest. '
+                   '"bm25" is free; "llm" calls the configured cheap model.')
+@click.option("--screen-threshold", type=float, default=0.5,
+              show_default=True,
+              help="Drop screened candidates below this score (0.0–1.0).")
 @click.pass_context
 def search_to_kb_cmd(
     ctx: click.Context,
@@ -1127,6 +1134,8 @@ def search_to_kb_cmd(
     dry_run: bool,
     as_json: bool,
     description: str | None,
+    screen_method: str | None,
+    screen_threshold: float,
 ) -> None:
     """Build or enrich a KB from a SciLEx multi-database search.
 
@@ -1167,6 +1176,8 @@ def search_to_kb_cmd(
             create_if_missing=True,
             description=description,
             dry_run=dry_run,
+            screen_method=screen_method,
+            screen_threshold=screen_threshold,
         )
         if as_json:
             import json as _json
@@ -1182,6 +1193,11 @@ def search_to_kb_cmd(
         if report.filter_reasons:
             reasons = ", ".join(f"{k}={v}" for k, v in report.filter_reasons.items())
             click.echo(f"  • filter reasons: {reasons}")
+        if report.screen_scores:
+            click.echo(
+                f"  • screened ({screen_method}, threshold={screen_threshold}): "
+                f"kept {report.after_screen}, dropped {report.screened_out}"
+            )
         if dry_run:
             click.echo(f"  • dry-run; would ingest {len(report.selected_dois)} DOIs:")
             for doi in report.selected_dois:

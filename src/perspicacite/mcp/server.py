@@ -1822,6 +1822,8 @@ async def build_kb_from_search(
     create_if_missing: bool = True,
     description: str | None = None,
     dry_run: bool = False,
+    screen_method: str | None = None,
+    screen_threshold: float = 0.5,
 ) -> str:
     """Build or enrich a KB from a SciLEx multi-database search.
 
@@ -1884,6 +1886,8 @@ async def build_kb_from_search(
             create_if_missing=create_if_missing,
             description=description,
             dry_run=dry_run,
+            screen_method=screen_method,
+            screen_threshold=screen_threshold,
         )
         logger.info(
             "mcp_build_kb_from_search",
