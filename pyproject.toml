@@ -30,7 +30,7 @@ dependencies = [
     "numpy>=1.26.0",
     "pandas>=2.2.0",
     "click>=8.1.0",
-    "fastmcp>=0.4.0",
+    "fastmcp>=3.0.0",   # 3.x: @mcp.tool() with parens + http_app() ASGI mount
     "biopython>=1.80",
     "nltk>=3.8",
     "langchain-text-splitters>=0.3.0",
@@ -47,20 +47,21 @@ dev = [
     "mypy>=1.12.0",
     "pre-commit>=3.8.0",
 ]
-# SciLEx (Science Literature Exploration) — multi-database search
-# aggregation across Semantic Scholar / OpenAlex / PubMed / arXiv / HAL /
-# DBLP / IEEE / Springer. MIT-licensed, lives on GitHub (no PyPI release).
+# SciLEx (Science Literature Exploration) — multi-database systematic-
+# review toolkit from the Wimmics group at Inria. Crawlers + aggregators
+# for Semantic Scholar / OpenAlex / PubMed / arXiv / HAL / DBLP / IEEE /
+# Springer. MIT-licensed, currently github-only (no PyPI release).
 # Without this extra, the `search_literature` MCP tool returns an
 # explicit error pointing the user here.
 #
 # Install with:
 #   uv pip install -e ".[scilex]"
 #
-# Heads-up: SciLEx pins specific versions of beautifulsoup4 /
-# bibtexparser / lxml etc., so installing it may bump those for the
-# whole environment. Run inside the project's venv to avoid surprises.
+# The Wimmics package has ~19 minimum deps and supports Python 3.10+,
+# so installation is much lighter than the older datalogism/SciLEx
+# fork (73 deps, Python 3.13+).
 scilex = [
-    "scilex @ git+https://github.com/datalogism/SciLEx.git",
+    "scilex @ git+https://github.com/Wimmics/SciLEx.git",
 ]
 
 [project.scripts]
@@ -69,6 +70,13 @@ perspicacite = "perspicacite.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# Required so the [scilex] extras-group can pull from a git+ URL.
+# Hatch refuses direct references by default to keep PyPI uploads
+# reproducible; we never publish Perspicacité as a wheel today so
+# the protection isn't needed.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/perspicacite"]

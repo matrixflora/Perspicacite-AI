@@ -153,7 +153,7 @@ def _require_state() -> MCPState | str:
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def search_literature(
     query: str,
     max_results: int = 20,
@@ -237,7 +237,7 @@ async def search_literature(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def get_paper_content(
     doi: str,
     include_sections: bool = True,
@@ -320,7 +320,7 @@ async def get_paper_content(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def get_paper_references(
     doi: str,
 ) -> str:
@@ -400,7 +400,7 @@ async def get_paper_references(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def list_knowledge_bases() -> str:
     """
     List all available knowledge bases.
@@ -436,7 +436,7 @@ async def list_knowledge_bases() -> str:
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def search_knowledge_base(
     query: str,
     kb_name: str = "default",
@@ -566,7 +566,7 @@ async def search_knowledge_base(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def create_knowledge_base(
     name: str,
     description: str = "",
@@ -636,7 +636,7 @@ async def create_knowledge_base(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def add_papers_to_kb(
     kb_name: str,
     papers: list[dict],
@@ -791,7 +791,7 @@ async def add_papers_to_kb(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def generate_report(
     query: str,
     kb_name: str = "default",
@@ -944,7 +944,7 @@ async def generate_report(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def screen_papers(
     candidates: list[str] | list[dict],
     query: str,
@@ -1050,7 +1050,7 @@ async def screen_papers(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def add_dois_to_kb(
     kb_name: str,
     dois: list[str],
@@ -1204,7 +1204,7 @@ async def add_dois_to_kb(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def push_to_zotero(dois: list[str] | str) -> str:
     """Push one or more DOIs to the configured Zotero library.
 
@@ -1287,7 +1287,7 @@ async def push_to_zotero(dois: list[str] | str) -> str:
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def build_kbs_from_zotero(
     top_level_collection_keys: list[str] | None = None,
     include_unfiled: bool = True,
@@ -1379,7 +1379,7 @@ async def build_kbs_from_zotero(
     return reg.result or {"per_kb": []}
 
 
-@mcp.tool
+@mcp.tool()
 async def ingest_local_documents(
     kb_name: str,
     paths: list[str],
@@ -1425,7 +1425,7 @@ async def ingest_local_documents(
     )
 
 
-@mcp.tool
+@mcp.tool()
 async def build_capsule(
     paper_id: str,
     kb_name: str,
@@ -1458,7 +1458,7 @@ async def build_capsule(
     )
 
 
-@mcp.tool
+@mcp.tool()
 async def build_capsules_for_kb(
     kb_name: str,
     force: bool = False,
@@ -1497,7 +1497,7 @@ async def build_capsules_for_kb(
     return {"total": len(rows), **counts, "per_paper": per_paper}
 
 
-@mcp.tool
+@mcp.tool()
 async def fetch_paper_resources(
     kb_name: str,
     paper_id: str,
@@ -1562,7 +1562,7 @@ async def fetch_paper_resources(
 # =============================================================================
 
 
-@mcp.tool
+@mcp.tool()
 async def fetch_supplementary(
     kb_name: str,
     paper_id: str,
