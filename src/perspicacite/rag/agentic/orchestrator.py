@@ -1896,6 +1896,11 @@ Synthesis Guidelines:
 5. Highlight areas of agreement and disagreement between sources
 6. Identify the most reliable or relevant sources for the query
 
+COPYRIGHT & ATTRIBUTION:
+- Paraphrase rather than reproducing source text verbatim. Papers may be from copyrighted publications.
+- Quotations must be short (≤ 15 words), in quotation marks, and cited.
+- Do not reproduce abstracts, full paragraphs, tables, or extended passages from any source.
+
 Provide a synthesized summary that combines the key insights from all sources."""
 
         return await self.llm.complete(prompt, temperature=0.15)

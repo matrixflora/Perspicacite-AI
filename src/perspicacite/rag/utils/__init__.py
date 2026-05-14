@@ -163,6 +163,13 @@ def get_system_prompt() -> str:
 
 If the provided documents do not contain enough information to answer confidently, say what is missing instead of guessing.
 
+COPYRIGHT & ATTRIBUTION:
+- Paraphrase and synthesize rather than reproducing source text verbatim. The documents above may be from copyrighted publications.
+- If you need to quote, keep quotations short (≤ 15 words), wrap them in quotation marks, and immediately cite the source.
+- Do NOT reproduce abstracts, full paragraphs, or extended passages from any source. Re-express the ideas in your own words.
+- Tables, figure captions, and large blocks of data should be summarized in your own words, not transcribed.
+- Always cite the source paper(s) you draw from (e.g., [Author, Year]).
+
 FORMAT REQUIREMENTS:
 1. Start with a brief overview/introduction (2-3 sentences)
 2. Use ## for main section headings (e.g., ## Overview, ## Key Points)
