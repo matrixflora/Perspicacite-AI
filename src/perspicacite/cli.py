@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -1087,6 +1088,232 @@ def import_browser_cookies_cmd(
         click.echo("  cookie_domains:")
         for h in suggested:
             click.echo(f"    - \"{h}\"")
+
+
+@cli.command("search-to-kb")
+@click.option("--query", "-q", required=True, help="Search query (free text).")
+@click.option("--kb", "-k", "kb_name", required=True, help="Target KB name (created if missing).")
+@click.option("--max-results", "-n", type=int, default=20, show_default=True,
+              help="Max SciLEx hits to consider before filtering.")
+@click.option("--database", "-d", "databases", multiple=True,
+              help="SciLEx APIs to query. Repeatable. "
+                   "Options: semantic_scholar, openalex, pubmed, arxiv, ieee, springer, dblp.")
+@click.option("--min-year", type=int, default=None, help="Drop hits before this year.")
+@click.option("--max-year", type=int, default=None, help="Drop hits after this year.")
+@click.option("--min-citations", type=int, default=None,
+              help="Drop hits below this citation count.")
+@click.option("--require-abstract/--no-require-abstract", default=False,
+              help="Drop hits without an abstract.")
+@click.option("--article-type", default=None,
+              help='Filter by type, e.g. "review".')
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Show which DOIs would be added without fetching PDFs.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Emit the full IngestReport as JSON.")
+@click.option("--description", default=None,
+              help="KB description (used only when creating).")
+@click.pass_context
+def search_to_kb_cmd(
+    ctx: click.Context,
+    query: str,
+    kb_name: str,
+    max_results: int,
+    databases: tuple[str, ...],
+    min_year: int | None,
+    max_year: int | None,
+    min_citations: int | None,
+    require_abstract: bool,
+    article_type: str | None,
+    dry_run: bool,
+    as_json: bool,
+    description: str | None,
+) -> None:
+    """Build or enrich a KB from a SciLEx multi-database search.
+
+    One-shot: search → filter → fetch PDFs → chunk → embed → index.
+    Creates the KB when missing.
+
+    Examples:
+        perspicacite search-to-kb -q "nv-diamond magnetometry" \\
+            -k diamond_sensors --min-year 2020 --max-results 30
+
+        perspicacite search-to-kb -q "metabolomics LLM annotation" \\
+            -k metabolomics_llm --dry-run
+    """
+    from perspicacite.web.state import AppState
+    from perspicacite.pipeline.search_to_kb import (
+        SearchFilter,
+        search_filter_and_ingest,
+    )
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        flt = SearchFilter(
+            min_year=min_year,
+            max_year=max_year,
+            min_citations=min_citations,
+            require_doi=True,
+            require_abstract=require_abstract,
+        )
+        report = await search_filter_and_ingest(
+            app_state=state,
+            query=query,
+            kb_name=kb_name,
+            max_results=max_results,
+            databases=list(databases) or None,
+            flt=flt,
+            article_type=article_type,
+            create_if_missing=True,
+            description=description,
+            dry_run=dry_run,
+        )
+        if as_json:
+            import json as _json
+            click.echo(_json.dumps(report.to_dict(), indent=2, default=str))
+            return
+        click.echo(f"🔎 search-to-kb: '{query}' → KB '{kb_name}'")
+        if report.kb_created:
+            click.echo(f"  • KB created")
+        click.echo(
+            f"  • searched={report.searched} candidates={report.candidates} "
+            f"filtered_out={report.filtered_out}"
+        )
+        if report.filter_reasons:
+            reasons = ", ".join(f"{k}={v}" for k, v in report.filter_reasons.items())
+            click.echo(f"  • filter reasons: {reasons}")
+        if dry_run:
+            click.echo(f"  • dry-run; would ingest {len(report.selected_dois)} DOIs:")
+            for doi in report.selected_dois:
+                click.echo(f"      {doi}")
+            return
+        click.echo(
+            f"  • added: {report.added_papers} papers, {report.added_chunks} chunks "
+            f"(skipped {report.skipped_duplicates} duplicates)"
+        )
+        st = report.pdf_download
+        if st:
+            click.echo(
+                f"  • PDF download: attempted={st.get('attempted', 0)} "
+                f"success={st.get('success', 0)} failed={st.get('failed', 0)}"
+            )
+        if report.failed:
+            click.echo(f"  • {len(report.failed)} failures:")
+            for f in report.failed[:5]:
+                click.echo(f"      {f.get('doi')}: {f.get('reason')}")
+            if len(report.failed) > 5:
+                click.echo(f"      … and {len(report.failed) - 5} more")
+
+    asyncio.run(_run())
+
+
+@cli.command("check-cookies")
+@click.option(
+    "--cookies-path",
+    type=click.Path(),
+    default=None,
+    help="Override config.pdf_download.cookies_path",
+)
+@click.option(
+    "--domain", "extra_domains",
+    multiple=True,
+    help="Additional domain substrings to report on. Stacks with config.",
+)
+@click.option(
+    "--json", "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit JSON instead of a formatted report.",
+)
+@click.pass_context
+def check_cookies_cmd(
+    ctx: click.Context,
+    cookies_path: str | None,
+    extra_domains: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    """Inspect cookies.txt freshness for institutional PDF access.
+
+    Reports per-domain status (ok / expiring_soon / all_expired /
+    no_cookies) so you know when to re-run
+    ``perspicacite import-browser-cookies``. Reads the cookies path
+    and domain allowlist from config by default.
+    """
+    from http.cookiejar import MozillaCookieJar
+    from pathlib import Path
+    from perspicacite.pipeline.download.cookies import (
+        check_cookie_freshness_for_domains,
+    )
+
+    config = ctx.obj["config"]
+    pdf_cfg = getattr(config, "pdf_download", None)
+    path = cookies_path or (getattr(pdf_cfg, "cookies_path", None) if pdf_cfg else None)
+    if not path:
+        click.echo(
+            "No pdf_download.cookies_path configured. Pass --cookies-path or "
+            "set it in config.yml.",
+            err=True,
+        )
+        sys.exit(2)
+    p = Path(path).expanduser()
+    if not p.exists():
+        click.echo(f"Cookie file not found: {p}", err=True)
+        sys.exit(1)
+
+    cfg_domains = list(getattr(pdf_cfg, "cookie_domains", []) or [])
+    domains = cfg_domains + list(extra_domains)
+    if not domains:
+        click.echo(
+            "No cookie_domains configured and none passed via --domain. "
+            "Add some to config.yml or pass --domain wiley.com --domain nature.com.",
+            err=True,
+        )
+        sys.exit(2)
+
+    jar = MozillaCookieJar(str(p))
+    jar.load(ignore_discard=True, ignore_expires=True)
+    report = check_cookie_freshness_for_domains(jar, domains)
+
+    if as_json:
+        import json as _json
+        click.echo(_json.dumps(
+            {"cookies_path": str(p), "report": [w.to_dict() for w in report]},
+            indent=2,
+        ))
+        return
+
+    click.echo(f"🍪 Cookie freshness for {p}")
+    if not report:
+        click.echo("  (no domains to check)")
+        return
+    status_glyph = {
+        "ok": "✓",
+        "expiring_soon": "⚠",
+        "all_expired": "✗",
+        "no_cookies": "✗",
+    }
+    needs_refresh = [w for w in report if w.status != "ok"]
+    name_w = max(6, max(len(w.domain) for w in report))
+    click.echo(f"  {'DOMAIN':<{name_w}}  STATUS         HOSTS  EXPIRES")
+    for w in report:
+        gl = status_glyph.get(w.status, "?")
+        expires = (
+            datetime.fromtimestamp(w.soonest_expiry).strftime("%Y-%m-%d")
+            if w.soonest_expiry
+            else "—"
+        )
+        click.echo(
+            f"  {w.domain:<{name_w}}  {gl} {w.status:<13}  "
+            f"{w.matched_hosts:>5}  {expires}"
+        )
+    if needs_refresh:
+        click.echo("")
+        click.echo("Refresh stale cookies with:")
+        click.echo(
+            "  perspicacite import-browser-cookies --browser brave "
+            + " ".join(f"--domain {w.domain}" for w in needs_refresh)
+        )
+        sys.exit(1)
 
 
 @cli.command()

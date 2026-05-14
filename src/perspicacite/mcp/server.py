@@ -16,6 +16,7 @@ Tools exposed:
 - add_dois_to_kb: Bulk-add papers to a KB from a list of DOIs
 - push_to_zotero: Push DOIs to the configured Zotero library
 - build_kbs_from_zotero: Build one KB per Zotero top-level collection
+- build_kb_from_search: Search SciLEx, filter, fetch PDFs, ingest into a KB
 """
 
 from __future__ import annotations
@@ -1697,6 +1698,103 @@ async def route_kbs(
 
 
 # =============================================================================
+# Tool 19: build_kb_from_search
+# =============================================================================
+
+
+@mcp.tool()
+async def build_kb_from_search(
+    query: str,
+    kb_name: str,
+    max_results: int = 20,
+    databases: list[str] | None = None,
+    min_year: int | None = None,
+    max_year: int | None = None,
+    min_citations: int | None = None,
+    require_abstract: bool = False,
+    article_type: str | None = None,
+    create_if_missing: bool = True,
+    description: str | None = None,
+    dry_run: bool = False,
+) -> str:
+    """Build or enrich a KB from a SciLEx multi-database search.
+
+    Runs ``query`` against Semantic Scholar / OpenAlex / PubMed / arXiv
+    (configurable), applies year / citation / abstract filters, then
+    fetches PDFs and ingests them into ``kb_name``. Creates the KB
+    when it doesn't exist (unless ``create_if_missing=False``).
+
+    Use this when an agent wants to spin up a focused KB for a topic
+    before doing real RAG over it — one tool call gets you from
+    "query string" to "queryable KB" without manual DOI shuffling.
+
+    Args:
+        query: Free-text research question (used verbatim by SciLEx).
+        kb_name: Target KB; created if missing and ``create_if_missing``.
+        max_results: Max hits to pull from SciLEx (1–100).
+        databases: SciLEx APIs to query (default: semantic_scholar,
+            openalex, pubmed). Other options: arxiv, ieee, springer, dblp.
+        min_year / max_year: Drop hits outside this range.
+        min_citations: Drop hits below this citation count (uses
+            citation_count when SciLEx provides it; treats missing as 0).
+        require_abstract: Drop hits without an abstract.
+        article_type: Optional "review" / "article" / "conference".
+        create_if_missing: When False, error if KB doesn't already exist.
+        description: KB description (used only when creating).
+        dry_run: Return the filtered DOI list without fetching PDFs.
+
+    Returns:
+        JSON :class:`IngestReport` — search counts, filter reasons,
+        added papers/chunks, PDF stats, list of selected DOIs.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    if max_results < 1 or max_results > 100:
+        return _json_error("max_results must be 1..100")
+
+    try:
+        from perspicacite.pipeline.search_to_kb import (
+            SearchFilter,
+            search_filter_and_ingest,
+        )
+
+        flt = SearchFilter(
+            min_year=min_year,
+            max_year=max_year,
+            min_citations=min_citations,
+            require_doi=True,
+            require_abstract=require_abstract,
+        )
+        report = await search_filter_and_ingest(
+            app_state=state,
+            query=query,
+            kb_name=kb_name,
+            max_results=max_results,
+            databases=databases,
+            flt=flt,
+            article_type=article_type,
+            create_if_missing=create_if_missing,
+            description=description,
+            dry_run=dry_run,
+        )
+        logger.info(
+            "mcp_build_kb_from_search",
+            query=query, kb=kb_name,
+            searched=report.searched, candidates=report.candidates,
+            added=report.added_papers,
+        )
+        return _json_ok(report.to_dict())
+    except Exception as e:
+        logger.error(
+            "mcp_build_kb_from_search_error",
+            query=query, kb=kb_name, error=str(e),
+        )
+        return _json_error(f"build_kb_from_search failed: {e}")
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -1720,6 +1818,7 @@ _TOOL_NAMES: list[str] = [
     "build_capsules_for_kb",
     "fetch_paper_resources",
     "route_kbs",
+    "build_kb_from_search",
 ]
 
 
