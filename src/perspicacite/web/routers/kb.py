@@ -1317,7 +1317,10 @@ async def fetch_paper_resources_async(name: str, paper_id: str, body: dict | Non
     if kb_meta is None:
         raise HTTPException(status_code=404, detail=f"KB '{name}' not found")
     rows = await app_state.vector_store.list_paper_metadata(kb_meta.collection_name)
-    row = next((r for r in rows if r.get("paper_id") == paper_id), None)
+    # Accept paper_id in either bare-DOI form (matches KB storage) or
+    # `doi:<doi>` form (matches the CLI --paper convention).
+    norm_id = paper_id[4:] if paper_id.startswith("doi:") else paper_id
+    row = next((r for r in rows if r.get("paper_id") == norm_id), None)
     if row is None:
         raise HTTPException(
             status_code=404, detail=f"paper '{paper_id}' not in KB '{name}'",

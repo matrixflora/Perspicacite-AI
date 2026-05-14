@@ -11,7 +11,7 @@ import base64
 import json
 import logging
 import uuid
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -306,6 +306,12 @@ async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] =
     from perspicacite.provenance.context import set_collector
     set_collector(collector)
 
+    # Accumulate papers from intermediate `papers_found` events so the
+    # final `answer` event can carry a `sources` field — the orchestrator
+    # emits papers as a separate event but the chat-route contract has
+    # sources attached to the answer (matching basic/advanced/profound).
+    accumulated_papers: list[dict[str, Any]] = []
+
     async for event in app_state.orchestrator.chat(
         query=request.query,
         session_id=request.session_id,
@@ -313,16 +319,51 @@ async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] =
         stream=True,
         max_papers_to_download=request.max_papers_to_download,
     ):
+        if event.get("type") == "papers_found":
+            for p in event.get("papers") or []:
+                # Dedup by DOI when present, else id, else title.
+                key = (p.get("doi") or p.get("id") or p.get("title") or "").strip()
+                if not key:
+                    continue
+                if any(
+                    (q.get("doi") or q.get("id") or q.get("title") or "").strip() == key
+                    for q in accumulated_papers
+                ):
+                    continue
+                accumulated_papers.append(p)
+
         # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
         # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
         if event.get("type") == "answer":
             content = event.get("content") or ""
+            # Build SourceReference-shaped entries from accumulated papers so
+            # the answer.sources contract matches basic/advanced/profound.
+            sources = [
+                {
+                    "title": p.get("title"),
+                    "authors": (
+                        ", ".join(p["authors"]) if isinstance(p.get("authors"), list)
+                        else p.get("authors")
+                    ),
+                    "year": p.get("year"),
+                    "doi": (
+                        p["doi"].replace("https://doi.org/", "")
+                        if isinstance(p.get("doi"), str)
+                        else p.get("doi")
+                    ),
+                    "url": p.get("url"),
+                    "relevance_score": p.get("relevance_score"),
+                    "kb_name": p.get("kb_name"),
+                }
+                for p in accumulated_papers
+            ]
             safe = {
                 "type": "answer",
                 "session_id": event.get("session_id"),
                 "conversation_id": conversation_id,
                 "message_id": assistant_message_id,
                 "content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+                "sources": sources,
             }
             data = json.dumps(safe, separators=(",", ":"))
         else:
