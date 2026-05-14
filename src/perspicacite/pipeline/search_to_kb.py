@@ -228,6 +228,8 @@ async def ingest_dois_into_kb(
             "rsc_api_key": pdf_config.rsc_api_key,
             "springer_api_key": pdf_config.springer_api_key,
         }
+        if pdf_config.cache_pdfs:
+            pdf_kwargs["pdf_cache_dir"] = pdf_config.cache_dir
         cookies_path = pdf_config.cookies_path
 
     papers_to_add: list[Paper] = []

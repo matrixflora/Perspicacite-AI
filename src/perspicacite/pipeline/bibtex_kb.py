@@ -140,6 +140,7 @@ async def enrich_papers_with_pdf(
     aaas_api_key: str | None = None,
     rsc_api_key: str | None = None,
     springer_api_key: str | None = None,
+    pdf_cache_dir: str | None = None,
 ) -> dict[str, int]:
     """Download content and set paper.full_text where possible."""
     stats = {"attempted": 0, "success": 0, "failed": 0, "skipped_no_doi": 0, "local_pdf": 0}
@@ -172,6 +173,7 @@ async def enrich_papers_with_pdf(
                 aaas_api_key=aaas_api_key,
                 rsc_api_key=rsc_api_key,
                 springer_api_key=springer_api_key,
+                pdf_cache_dir=pdf_cache_dir,
             )
             if result.success and result.full_text:
                 paper.full_text = result.full_text
@@ -263,6 +265,7 @@ async def create_kb_from_bibtex(
             aaas_api_key=pdf_cfg.aaas_api_key,
             rsc_api_key=pdf_cfg.rsc_api_key,
             springer_api_key=pdf_cfg.springer_api_key,
+            pdf_cache_dir=(pdf_cfg.cache_dir if pdf_cfg.cache_pdfs else None),
         )
 
     dkb_config = KnowledgeBaseConfig(
@@ -371,6 +374,7 @@ async def add_bibtex_to_existing_kb(
             aaas_api_key=pdf_cfg.aaas_api_key,
             rsc_api_key=pdf_cfg.rsc_api_key,
             springer_api_key=pdf_cfg.springer_api_key,
+            pdf_cache_dir=(pdf_cfg.cache_dir if pdf_cfg.cache_pdfs else None),
         )
 
     # Connect to existing KB collection

@@ -495,6 +495,28 @@ class PDFDownloadConfig(BaseModel):
         ),
     )
 
+    # PDF byte cache. When enabled, every successfully-downloaded PDF
+    # is written to ``cache_dir`` keyed by DOI, and subsequent fetches
+    # for the same DOI serve from disk instead of re-hitting the
+    # publisher. Reduces network load on re-ingest, makes ingestion
+    # idempotent + offline-replayable, and gives downstream tools
+    # (Zotero attachment upload, export-kb) something to attach.
+    cache_pdfs: bool = Field(
+        default=True,
+        description=(
+            "Cache successfully-downloaded PDF bytes to disk. When True, "
+            "re-ingesting the same DOI serves the cached file instead of "
+            "re-fetching from the publisher."
+        ),
+    )
+    cache_dir: str = Field(
+        default="data/papers",
+        description=(
+            "Directory where cached PDFs live. Relative to the working "
+            "directory unless absolute. Created on first write."
+        ),
+    )
+
 
 class LoggingConfig(BaseModel):
     """Logging configuration."""
