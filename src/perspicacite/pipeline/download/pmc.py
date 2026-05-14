@@ -228,6 +228,97 @@ def _extract_sections_from_xml(xml_bytes: bytes) -> dict[str, str] | None:
     return sections if sections else None
 
 
+def _extract_supplementary_from_xml(xml_bytes: bytes, pmcid: str) -> list[dict] | None:
+    """Extract supplementary-material entries from a PMC JATS XML.
+
+    JATS marks SI files with ``<supplementary-material>`` (or
+    ``<inline-supplementary-material>``) elements that carry an ``xlink:href``
+    pointing to the file. PMC mirrors these at
+    ``https://www.ncbi.nlm.nih.gov/pmc/articles/<pmcid>/bin/<href>``.
+
+    Returns a list of dicts with keys:
+        - id: the JATS ``id`` attribute when present
+        - label: e.g. "Supplementary Figure 1"
+        - caption: textual caption / description
+        - href: relative filename inside the PMC bin/ folder
+        - url: absolute fetchable URL (PMC bin/ mirror)
+        - mime_type: from JATS ``mimetype``/``mime-subtype`` when present
+
+    Returns None when the XML has no supplementary blocks (vast majority
+    of papers).
+    """
+    try:
+        root = ElementTree.fromstring(xml_bytes)
+    except ElementTree.ParseError:
+        return None
+
+    ns_x = "{http://www.w3.org/1999/xlink}"
+    out: list[dict] = []
+
+    def _tag(el: ElementTree.Element) -> str:
+        return el.tag.split("}")[-1] if "}" in el.tag else el.tag
+
+    def _walk(el: ElementTree.Element) -> None:
+        for child in el:
+            if _tag(child) in ("supplementary-material", "inline-supplementary-material"):
+                href = (
+                    child.attrib.get(f"{ns_x}href")
+                    or child.attrib.get("href")
+                    or ""
+                ).strip()
+                if not href:
+                    # Some SI entries reference an external link via <ext-link>.
+                    for sub in child:
+                        if _tag(sub) == "ext-link":
+                            href = (
+                                sub.attrib.get(f"{ns_x}href")
+                                or sub.attrib.get("href")
+                                or ""
+                            ).strip()
+                            if href:
+                                break
+                # Label and caption — concatenate all text from <label>
+                # and <caption> when present.
+                label = ""
+                caption = ""
+                for sub in child:
+                    stag = _tag(sub)
+                    if stag == "label":
+                        label = "".join(sub.itertext()).strip()
+                    elif stag == "caption":
+                        caption = " ".join(
+                            "".join(p.itertext()).strip()
+                            for p in sub
+                        ).strip() or "".join(sub.itertext()).strip()
+                mime = (
+                    child.attrib.get("mimetype")
+                    or child.attrib.get("mime-subtype")
+                    or ""
+                )
+                # PMC mirrors SI files at /pmc/articles/<pmcid>/bin/<href>
+                # when href is a relative filename. External href (http://...)
+                # passes through unchanged.
+                if href.startswith("http://") or href.startswith("https://"):
+                    url = href
+                else:
+                    url = (
+                        f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/bin/{href}"
+                    )
+                out.append({
+                    "id": child.attrib.get("id"),
+                    "label": label or None,
+                    "caption": caption or None,
+                    "href": href or None,
+                    "url": url,
+                    "mime_type": mime or None,
+                })
+            else:
+                _walk(child)
+
+    _walk(root)
+    return out or None
+
+
 def _extract_references_from_xml(xml_bytes: bytes) -> list[dict] | None:
     """Extract references from JATS XML <ref-list>.
 
@@ -357,6 +448,47 @@ async def _resolve_pmcid(
         return None
 
     return str(pmcid).strip()
+
+
+async def get_supplementary_from_pmc(
+    doi: str,
+    http_client: httpx.AsyncClient | None = None,
+) -> list[dict] | None:
+    """List Supplementary Information files attached to a PMC OA paper.
+
+    Returns a list of {"id", "label", "caption", "href", "url", "mime_type"}
+    dicts pointing at the PMC bin/ mirror, or ``None`` when the paper isn't
+    on PMC OA or has no SI blocks in its JATS XML.
+
+    The list is metadata only — fetching the actual file bytes is left to
+    the caller (typical pattern: per-file httpx.get keyed off ``url``).
+
+    Most high-impact papers have most of their data in SI; this is the
+    most reliable source for that data (publisher SI URLs vary
+    per-publisher; PMC normalizes them at a predictable path).
+    """
+    clean = doi.replace("https://doi.org/", "").replace("http://doi.org/", "").strip()
+    if not clean:
+        return None
+    client = http_client or httpx.AsyncClient(timeout=45.0, follow_redirects=True)
+    should_close = http_client is None
+    try:
+        pmcid = await _resolve_pmcid(clean, client)
+        if not pmcid:
+            return None
+        r_xml = await client.get(_s3_xml_url(pmcid), headers={"Accept": "application/xml"})
+        if r_xml.status_code != 200 or not r_xml.content:
+            return None
+        items = _extract_supplementary_from_xml(r_xml.content, pmcid)
+        if items:
+            logger.info("pmc_supplementary_found", doi=clean, pmcid=pmcid, count=len(items))
+        return items
+    except Exception as e:
+        logger.info("pmc_supplementary_failed", doi=clean, error=str(e))
+        return None
+    finally:
+        if should_close:
+            await client.aclose()
 
 
 async def get_fulltext_from_pmc(

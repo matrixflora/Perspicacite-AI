@@ -326,6 +326,12 @@ async def build_capsule(
     n_figs = write_figures(cap, figures=figures)
     n_blocks = write_blocks(cap, text=text, figures=figures, resources=resources)
 
+    # 4b. Supplementary Information manifest — list SI files from PMC JATS
+    # XML when the paper is on PMC OA. Stored as supplementary/index.json
+    # so downstream tooling can fetch on demand. We don't pull the bytes
+    # here (some SI is large + opaque binary); fetch helper is a TODO.
+    n_si = await _write_supplementary_manifest(cap, paper=paper)
+
     # 5. Metadata
     write_metadata(cap, paper=paper, producer_version=producer_version)
 
@@ -343,8 +349,37 @@ async def build_capsule(
         "figures": n_figs,
         "blocks": n_blocks,
         "resources": n_res,
+        "supplementary": n_si,
         "chunks": n_chunks,
     }
+
+
+async def _write_supplementary_manifest(cap: Path, *, paper: Paper) -> int:
+    """Write ``<cap>/supplementary/index.json`` from PMC JATS XML when
+    available. Returns the number of SI entries (0 when not on PMC OA or
+    when the paper has no SI in its JATS XML).
+
+    Records metadata only — the binary SI files (often large XLSX/ZIP/PDF)
+    are left as URLs in the manifest. A dedicated `fetch_supplementary`
+    helper can pull them on demand without bloating every capsule build.
+    """
+    doi = (paper.doi or "").strip()
+    if not doi:
+        return 0
+    try:
+        from perspicacite.pipeline.download.pmc import get_supplementary_from_pmc
+        items = await get_supplementary_from_pmc(doi)
+    except Exception:
+        return 0
+    if not items:
+        return 0
+    si_dir = cap / "supplementary"
+    si_dir.mkdir(parents=True, exist_ok=True)
+    (si_dir / "index.json").write_text(
+        json.dumps({"items": items, "source": "pmc_jats"}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return len(items)
 
 
 async def _ingest_chunks(
