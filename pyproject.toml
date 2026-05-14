@@ -101,6 +101,7 @@ markers = [
     "unit: Unit tests (no external services)",
     "integration: Integration tests (may need services)",
     "live: Tests requiring API keys (deselect with -m 'not live')",
+    "smoke: MCP tool inventory smoke tests (fast, no real I/O)",
 ]
 
 [tool.ruff]
