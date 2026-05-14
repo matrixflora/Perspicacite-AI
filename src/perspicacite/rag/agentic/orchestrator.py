@@ -26,6 +26,64 @@ logger = logging.getLogger(__name__)
 # Cap per-paper extraction LLM calls during final answer (map-reduce style).
 MAP_REDUCE_MAX_PAPERS = 8
 
+
+def _strip_html_if_needed(text: str) -> str:
+    """If text is raw HTML (starts with <!DOCTYPE/<html/<head), strip tags.
+
+    Some upstream content paths can leak the raw publisher landing page into
+    ``paper.full_text`` (e.g. a Nature.com HTML page passed through when no
+    PDF could be downloaded). Surfacing that into events bloats the SSE
+    payload with markup, breaks downstream chunking, and leaks site
+    navigation cruft into the UI. Defensive cleanup at the emit boundary.
+    """
+    if not text or not isinstance(text, str):
+        return text
+    stripped = text.lstrip()[:200].lower()
+    if not (
+        stripped.startswith("<!doctype")
+        or stripped.startswith("<html")
+        or stripped.startswith("<head")
+        or stripped.startswith("<?xml")
+    ):
+        return text
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(text, "lxml" if _has_lxml() else "html.parser")
+        for tag in soup(["script", "style", "noscript", "nav", "header", "footer"]):
+            tag.decompose()
+        cleaned = soup.get_text(separator=" ", strip=True)
+        # Collapse runs of whitespace
+        import re as _re
+        return _re.sub(r"\s+", " ", cleaned).strip()
+    except Exception:
+        return text
+
+
+def _has_lxml() -> bool:
+    try:
+        import lxml  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _clean_papers_for_event(papers: list[dict]) -> list[dict]:
+    """Sanitize papers list before emitting in a `papers_found` event."""
+    if not papers:
+        return papers
+    out = []
+    for p in papers:
+        if not isinstance(p, dict):
+            out.append(p)
+            continue
+        ft = p.get("full_text")
+        if isinstance(ft, str):
+            cleaned = _strip_html_if_needed(ft)
+            if cleaned != ft:
+                p = {**p, "full_text": cleaned}
+        out.append(p)
+    return out
+
 # Maximum number of replan iterations before forcing answer generation.
 MAX_REPLANS = 3
 
@@ -694,7 +752,7 @@ class AgenticOrchestrator:
                 # "Add to KB" curation block. The answer handler replaces
                 # assistantDiv.innerHTML, so a papers_found emitted before
                 # the answer would be wiped.
-                yield {"type": "papers_found", "papers": papers}
+                yield {"type": "papers_found", "papers": _clean_papers_for_event(papers)}
                 return
             else:
                 yield {
@@ -971,7 +1029,7 @@ class AgenticOrchestrator:
             p for p in papers if p.get("relevance_score", 0) >= 3 and p.get("source") != "kb_search"
         ]
         if relevant_papers:
-            yield {"type": "papers_found", "papers": relevant_papers}
+            yield {"type": "papers_found", "papers": _clean_papers_for_event(relevant_papers)}
 
     async def _maybe_upgrade_single_kb_to_composite_parallel(
         self, plan: Plan, query: str, kb_name: str
