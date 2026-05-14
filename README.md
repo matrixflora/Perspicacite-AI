@@ -43,12 +43,13 @@
 - **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
 - **6 RAG modes** — From fast KB retrieval to multi-cycle agentic research, systematic literature surveys, and cross-paper contradiction detection
 - **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
-- **MCP server** — 19 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
+- **MCP server** — 20 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
 - **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
 - **Provenance tracking** — Per-answer trace (retrieved chunks, mode, model, latency) stored in SQLite and exportable as RO-Crate 1.1 zip bundles
 - **Institutional-access PDFs** — Ride your browser's logged-in session via `perspicacite import-browser-cookies`; paywalled journals your institution licenses become reachable server-side. `perspicacite check-cookies` reports per-domain freshness and the downloader warns when a paywall HTML response suggests an expired cookie
 - **Auto KB routing** — Send a chat with `kb_name: "auto"` and Perspicacité scores every KB's description + sampled titles against the query (BM25 free; LLM tier optional), then queries the top-N in parallel via the multi-KB path
 - **Search-to-KB pipeline** — One command (`perspicacite search-to-kb` / MCP `build_kb_from_search`) runs a SciLEx multi-database search, applies year/citation/abstract filters, and ingests the results into a new or existing KB. Lets agents (Claude Code, etc.) spin up a focused KB before doing real RAG over it
+- **Long-term preservation** — Three complementary modes: (1) **PDF byte cache** keyed by DOI (`pdf_download.cache_pdfs: true`) so re-ingest is free and downstream tools have something to attach; (2) **Zotero attachment push** (`push_to_zotero(attach_pdf, attach_supplementary)`) uploads the cached PDF + capsule SI files as child attachments via Zotero's 4-step Web API protocol; (3) **`export-kb`** writes a portable BibTeX + cached-PDF folder a citation manager can ingest (drag the .bib into Zotero and PDFs attach via the BetterBibTeX `file` field)
 - **Zotero integration** — Push to cloud, or point at the desktop app's local API to reach Linked Files / non-cloud-synced PDFs
 - **Obsidian vault export** — Export any KB as an Obsidian-compatible Markdown vault
 - **Async ingestion** — Long BibTeX / DOI import jobs run in the background with SSE progress streaming
@@ -166,7 +167,7 @@ Structured content (PMC, arXiv) provides sections and references. PDF content pr
 
 ## MCP Server
 
-Perspicacité exposes an MCP server with 19 tools at `http://localhost:8000/mcp`, accessible via:
+Perspicacité exposes an MCP server with 20 tools at `http://localhost:8000/mcp`, accessible via:
 - **MCP protocol** — native tool discovery and invocation
 - **HTTP JSON-RPC** — `POST /mcp` with standard JSON-RPC 2.0 envelope
 
@@ -193,6 +194,7 @@ Perspicacité exposes an MCP server with 19 tools at `http://localhost:8000/mcp`
 | `fetch_supplementary` | Download Supplementary Information files (PMC OA S3 → Springer ESM → ACS) |
 | `route_kbs` | Pick the most-relevant KBs for a query (BM25 or LLM) — pass results to `kb_names` |
 | `build_kb_from_search` | Search SciLEx, filter (year/citations/abstract), fetch PDFs, ingest into a new or existing KB |
+| `export_kb` | Export a KB as BibTeX + cached-PDF folder for Zotero / ZotFile import |
 
 Full usage details and parameter documentation: [`docs/perspicacite_skills.md`](docs/perspicacite_skills.md)
 
@@ -595,6 +597,63 @@ hit Zotero's rate limits, point at the desktop app's local API:
 The local API is **read-only** (you cannot push items to it — use the
 cloud API for `push_to_zotero`).
 
+### Long-term preservation (PDF cache + Zotero push + BibTeX export)
+
+Three complementary preservation paths, pick any combination:
+
+**1. PDF byte cache (decoupled, default on).** Every successfully-fetched
+PDF lands in `pdf_download.cache_dir` (default `data/papers/`) with a
+sidecar `<doi>.meta.json` recording source, fetched_at, size, and sha256.
+Re-ingesting the same DOI serves bytes from disk (typical 100–200×
+speedup) and gives the other two modes something to attach. Disable with
+`pdf_download.cache_pdfs: false` if you want strictly ephemeral fetches.
+
+**2. Zotero push with attachments (integrated, cloud only).**
+
+```python
+# MCP: push DOIs + attach the cached PDF + capsule SI files
+await push_to_zotero(
+    dois=["10.1002/jcc.21366", "10.1038/s41586-023-06924-6"],
+    attach_pdf=True,
+    attach_supplementary=True,  # uploads data/capsules/<doi>/supplementary/files/*
+)
+# → {"created": [{"doi": "...", "key": "ABCD1234",
+#                "attached_pdf": true, "attached_supplementary": ["table1.xlsx"]}]}
+```
+
+Uses Zotero's documented 4-step Web API file-upload protocol (register
+shell → request creds → multipart POST to storage → finalize). Cloud-only
+— the local desktop API and group writes both require
+`api.zotero.org`. Without a cached PDF, the tool triggers a full fetch
+first (which populates the cache as a side effect).
+
+**3. BibTeX + folder export (citation-manager bridge, fully offline).**
+
+```bash
+# Write <kb>.bib + papers/<doi>.pdf next to it
+perspicacite export-kb -k diamond_sensors -o ~/exports/diamond --with-pdfs
+
+# With capsule SI files too:
+perspicacite export-kb -k diamond_sensors -o ~/exports/diamond \
+    --with-pdfs --with-supplementary
+```
+
+Output:
+
+```
+~/exports/diamond/
+    diamond_sensors.bib         # one @article per paper, with file = {…}
+    manifest.json               # export report (counts, missing DOIs)
+    papers/<doi>.pdf            # cached PDF copies
+    supplementary/<paper_id>/   # SI files from capsules (when present)
+```
+
+Drag the `.bib` into Zotero (**File → Import**) — Zotero reads the
+BetterBibTeX `file` field and attaches PDFs automatically. Or keep the
+folder under git for a portable, citation-manager-agnostic snapshot.
+
+Same surface available over MCP as the `export_kb` tool.
+
 ---
 
 ## Knowledge Bases
@@ -655,7 +714,7 @@ uv run mypy src/
 src/perspicacite/
   cli.py                        # CLI commands (serve, create-kb, screen-papers, pubmed-search, version)
   config/schema.py              # Pydantic configuration model
-  mcp/server.py                 # MCP server with 19 tools
+  mcp/server.py                 # MCP server with 20 tools
   pipeline/
     download/                   # Content retrieval pipeline
       discovery.py              # OpenAlex + Unpaywall discovery
