@@ -251,7 +251,8 @@ async def create_kb_from_bibtex(
 
     pdf_cfg = config.pdf_download
     pdf_parser = PDFParser()
-    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as http_client:
+    from perspicacite.pipeline.download.cookies import build_authenticated_client
+    async with build_authenticated_client(cookies_path=pdf_cfg.cookies_path) as http_client:
         pdf_stats = await enrich_papers_with_pdf(
             papers,
             http_client=http_client,
@@ -358,7 +359,8 @@ async def add_bibtex_to_existing_kb(
     # Download PDFs
     pdf_cfg = config.pdf_download
     pdf_parser = PDFParser()
-    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as http_client:
+    from perspicacite.pipeline.download.cookies import build_authenticated_client
+    async with build_authenticated_client(cookies_path=pdf_cfg.cookies_path) as http_client:
         pdf_stats = await enrich_papers_with_pdf(
             papers,
             http_client=http_client,

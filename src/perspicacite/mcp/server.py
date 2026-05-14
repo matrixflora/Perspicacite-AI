@@ -1091,6 +1091,7 @@ async def add_dois_to_kb(
 
         pdf_config = state.config.pdf_download
         pdf_kwargs: dict[str, Any] = {}
+        cookies_path: str | None = None
         if pdf_config:
             pdf_kwargs = {
                 "unpaywall_email": pdf_config.unpaywall_email,
@@ -1100,13 +1101,18 @@ async def add_dois_to_kb(
                 "rsc_api_key": pdf_config.rsc_api_key,
                 "springer_api_key": pdf_config.springer_api_key,
             }
+            cookies_path = pdf_config.cookies_path
 
         papers_to_add: list[Paper] = []
         skipped: list[dict] = []
         failed: list[dict] = []
         dl: dict[str, int] = {"attempted": 0, "success": 0, "failed": 0}
 
-        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+        from perspicacite.pipeline.download.cookies import (
+            build_authenticated_client,
+        )
+
+        async with build_authenticated_client(cookies_path=cookies_path) as client:
             for raw_doi in dois:
                 doi = (raw_doi or "").strip().replace("https://doi.org/", "")
                 if not doi:

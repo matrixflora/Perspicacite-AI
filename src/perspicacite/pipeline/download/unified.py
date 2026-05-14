@@ -106,6 +106,8 @@ async def retrieve_paper_content(
     aaas_api_key: str | None = None,
     rsc_api_key: str | None = None,
     springer_api_key: str | None = None,
+    cookies_path: str | None = None,
+    cookie_domains: list[str] | None = None,
 ) -> PaperContent:
     """Retrieve paper content using the unified priority pipeline.
 
@@ -139,8 +141,21 @@ async def retrieve_paper_content(
 
     biorxiv_abstract_fallback: PaperContent | None = None
 
-    client = http_client or httpx.AsyncClient(timeout=60.0, follow_redirects=True)
-    should_close = http_client is None
+    if http_client is not None:
+        client = http_client
+        should_close = False
+    else:
+        # When we own the client we can attach the cookie jar. Caller-supplied
+        # clients are responsible for their own cookies (see
+        # build_authenticated_client below).
+        client_kwargs: dict[str, Any] = {"timeout": 60.0, "follow_redirects": True}
+        if cookies_path:
+            from perspicacite.pipeline.download.cookies import build_cookie_jar
+            jar = build_cookie_jar(cookies_path)
+            if jar is not None:
+                client_kwargs["cookies"] = jar
+        client = httpx.AsyncClient(**client_kwargs)
+        should_close = True
 
     try:
         # ── STEP 1: DISCOVERY ──────────────────────────────────────────
