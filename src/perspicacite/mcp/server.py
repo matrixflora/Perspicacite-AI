@@ -444,6 +444,8 @@ async def search_knowledge_base(
     kb_name: str = "default",
     top_k: int = 5,
     kb_names: list[str] | None = None,
+    year_min: int | None = None,
+    year_max: int | None = None,
 ) -> str:
     """
     Search within a specific knowledge base (or multiple KBs) using semantic similarity.
@@ -456,6 +458,8 @@ async def search_knowledge_base(
             embedding model. When provided and len > 1, supersedes kb_name and returns
             chunks tagged with their source KB. When exactly 1 entry, treated as
             single KB via kb_name.
+        year_min: Restrict to papers published in or after this year (inclusive).
+        year_max: Restrict to papers published in or before this year (inclusive).
 
     Returns:
         JSON with matching chunks including paper_id, chunk_text, relevance_score,
@@ -468,6 +472,12 @@ async def search_knowledge_base(
     try:
         # Multi-KB path
         if kb_names and len(kb_names) > 1:
+            if year_min is not None or year_max is not None:
+                logger.warning(
+                    "search_kb_multi_year_filter_ignored",
+                    year_min=year_min, year_max=year_max,
+                    note="multi-KB filter passthrough is a Wave 4.2 followup",
+                )
             from perspicacite.retrieval.multi_kb import MultiKBRetriever, check_embedding_compat
 
             metas = [await state.session_store.get_kb_metadata(n) for n in kb_names]
@@ -534,7 +544,13 @@ async def search_knowledge_base(
         dkb.collection_name = collection_name
         dkb._initialized = True
 
-        results = await dkb.search(query, top_k=top_k)
+        # Build year-bounded filters (Wave 4.2).
+        from perspicacite.models.search import SearchFilters
+        filters = None
+        if year_min is not None or year_max is not None:
+            filters = SearchFilters(year_min=year_min, year_max=year_max)
+
+        results = await dkb.search(query, top_k=top_k, filters=filters)
 
         chunks = []
         for r in results:
