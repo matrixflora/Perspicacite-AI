@@ -264,6 +264,30 @@ class LLMProviderConfig(BaseModel):
     )
 
 
+class BudgetConfig(BaseModel):
+    """Per-process LLM spend caps (Wave 2.4).
+
+    Default off — set ``enabled: true`` to activate. When enabled,
+    any breach raises ``BudgetExceededError`` (under ``action='abort'``)
+    or logs a warning (under ``action='warn'``).
+    """
+
+    enabled: bool = Field(default=False, description="Master on/off switch.")
+    max_input_tokens: int | None = Field(
+        default=None, description="Total input tokens across all calls. None = no cap.",
+    )
+    max_output_tokens: int | None = Field(
+        default=None, description="Total output tokens. None = no cap.",
+    )
+    max_usd: float | None = Field(
+        default=None, description="Estimated dollar spend. None = no cap.",
+    )
+    action: Literal["abort", "warn"] = Field(
+        default="abort",
+        description="'abort' raises BudgetExceededError; 'warn' logs and continues.",
+    )
+
+
 class LLMConfig(BaseModel):
     """LLM configuration."""
 
@@ -322,6 +346,18 @@ class LLMConfig(BaseModel):
             "Try MCP sampling/createMessage first; fall back to "
             "default_provider on capability error. Only effective "
             "inside MCP tools that wrap their body with use_mcp_context."
+        ),
+    )
+    budget: BudgetConfig = Field(
+        default_factory=BudgetConfig,
+        description="Per-process token / dollar caps. See BudgetConfig.",
+    )
+    pricing_overrides: dict[str, dict[str, list[float] | tuple[float, float]]] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-(provider, model) pricing overrides in $/M tokens "
+            "as [input, output]. Falls through to the default PRICING_TABLE "
+            "in perspicacite.llm.budget."
         ),
     )
 
