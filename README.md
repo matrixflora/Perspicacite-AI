@@ -55,7 +55,7 @@
 - **Obsidian vault export** — Export any KB as an Obsidian-compatible Markdown vault
 - **Async ingestion** — Long BibTeX / DOI import jobs run in the background with SSE progress streaming
 - **Local-first** — Data stays on your machine; only API calls go to LLM providers
-- **Flexible LLM routing** — Five paths: direct API (Anthropic / OpenAI / DeepSeek / Gemini), Ollama (local, free), `claude_cli` (subprocess wrapper around `claude -p` using your Pro/Max subscription), MCP `sampling/createMessage` (uses the connected client's credentials), and Anthropic prompt caching (~90% discount on repeated prefixes — already enabled on the two hottest call sites). Per-stage tiering: Haiku for routing/screening, Sonnet for synthesis
+- **Flexible LLM routing** — Five paths: direct API (Anthropic / OpenAI / DeepSeek / Gemini, with Anthropic prompt caching — ~90% discount on repeated prefixes — already enabled on the two hottest call sites), Ollama (local, free), `agent_cli` (subprocess wrapper that routes through Claude Code / Codex / OpenClaw / Hermes / any one-shot CLI via YAML presets), MCP `sampling/createMessage` (uses the connected client's credentials), and per-stage tiering (Haiku for routing/screening, Sonnet for synthesis)
 
 ---
 
@@ -388,7 +388,7 @@ calls. Mix and match per stage; preserve the multi-provider design.
 |------|------|----------|---------|
 | **Direct API** (Anthropic, OpenAI, DeepSeek, Gemini, Minimax) | Per-token API key | Default. Streaming, full control, prompt caching. | Per-token billing. |
 | **Ollama** (`config.ollama.example.yml`) | Nothing | Privacy-first, offline, dev/CI. | Quality < Sonnet-4.5. Tool-use limited (agentic mode best avoided). |
-| **`claude_cli`** (subprocess wrapper) | Your Claude subscription | Use Pro/Max for Perspicacité without an API key. | Shares rate limits with your interactive Claude Code; no streaming/temperature; brittle. |
+| **`claude_cli` / `agent_cli`** (subprocess wrapper) | Your agent subscription | Route through any one-shot agent CLI — Claude Code, OpenAI Codex, OpenClaw, Hermes, opencode, OpenHands. Use your existing subscription without an API key. | Shares rate limits with your interactive session; no streaming/temperature; brittle. |
 | **MCP sampling** (`use_mcp_sampling: true`) | Client's credentials | Cleanest path *if* your MCP client implements `sampling/createMessage`. | Claude Code CLI does not yet (anthropics/claude-code#1785); Claude Desktop has partial support. |
 | **Anthropic prompt caching** | Anthropic API but 90 % cheaper on cached prefix | Per-chunk contextual retrieval, repeated `kb_name="auto"` routing. | Already enabled — no config needed. |
 
@@ -417,27 +417,33 @@ Empty `models` (today's default) sends every stage to
 `(default_provider, default_model)` — no behaviour change for
 existing configs.
 
-#### Claude Code subscription routing (`claude_cli`)
+#### Agent-CLI subscription routing (`claude_cli` / `agent_cli`)
 
-Use your Claude Pro/Max subscription instead of an API key:
+Route every internal LLM call through a one-shot agent CLI on your
+machine — Claude Code, OpenAI Codex, OpenClaw, Hermes Agent, opencode,
+or any future tool that takes a prompt and prints a completion. Your
+subscription pays; no API key sits in Perspicacité's config.
 
-```yaml
-llm:
-  default_provider: "claude_cli"
-  default_model:    "claude-sonnet-4-5"       # mapped to `sonnet` alias
+Drop-in presets (copy → edit → run):
 
-  models:
-    routing:   "haiku"
-    screening: "haiku"
-    rephrase:  "haiku"
-```
+| File | CLI | Notes |
+|------|-----|-------|
+| [`config.claude_code.example.yml`](config.claude_code.example.yml) | `claude` (Claude Code) | Verified path. Pro/Max subscription. Haiku for cheap stages, Sonnet for synthesis. |
+| [`config.codex.example.yml`](config.codex.example.yml) | `codex` (OpenAI Codex CLI) | Best-effort — verify flags against your Codex version. |
+| [`config.openclaw.example.yml`](config.openclaw.example.yml) | `openclaw` ([openclaw/openclaw](https://github.com/openclaw/openclaw)) | Multi-channel agent; model picked from `~/.openclaw/openclaw.json`. |
+| [`config.hermes.example.yml`](config.hermes.example.yml) | `hermes` ([Nous Research](https://hermes-agent.nousresearch.com/)) | Best-effort one-shot mode; alternative is Ollama (`hermes-3:70b`). |
 
-Each LLM call spawns `claude -p --model haiku/sonnet/opus`
-under the hood and parses the JSON result. **Caveat**: rate limits
-are shared with your interactive Claude Code session, so a heavy
-contextual-retrieval ingest may freeze you out for hours. Combine
-with the PDF cache (`pdf_download.cache_pdfs: true`) and the
-built-in prompt cache so re-ingest doesn't burn fresh requests.
+Under the hood, all four route through one
+[`AgentCLIClient`](src/perspicacite/llm/agent_cli.py); the YAML supplies
+the binary, flags, prompt-delivery mode (stdin or arg), and JSON-output
+path. Add your own preset by setting `llm.providers.agent_cli.executable`
++ flags — no Python changes needed.
+
+**Caveat**: rate limits are shared with your interactive agent
+session. A heavy contextual-retrieval ingest may freeze you out for
+hours. Mitigate with `pdf_download.cache_pdfs: true` + the built-in
+prompt cache so re-ingest doesn't burn fresh requests. For
+production / unattended use, prefer direct API + prompt caching.
 
 #### MCP sampling (`use_mcp_sampling`)
 

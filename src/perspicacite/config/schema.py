@@ -134,11 +134,80 @@ class CopyrightFilterConfig(BaseModel):
 
 
 class LLMProviderConfig(BaseModel):
-    """Configuration for an LLM provider."""
+    """Configuration for an LLM provider.
 
-    base_url: str
+    Most fields apply to LiteLLM-backed providers (anthropic, openai,
+    deepseek, ...). The ``executable``/``prompt_via``/... block is
+    used only by the subprocess agent-CLI providers (``agent_cli``
+    and its preset ``claude_cli``); other providers ignore them.
+    """
+
+    base_url: str = ""
     timeout: int = Field(default=60, ge=1)
     max_retries: int = Field(default=3, ge=0)
+
+    # ----- agent_cli subprocess fields (see llm/agent_cli.py) -----
+    # Path or name of the binary to spawn. ``None`` means "not an
+    # agent CLI provider" — LiteLLM handles this entry instead.
+    executable: str | None = Field(
+        default=None,
+        description=(
+            "Agent-CLI binary (e.g. 'claude', 'codex', 'openclaw'). "
+            "When set, this provider routes through the subprocess "
+            "agent_cli client instead of LiteLLM."
+        ),
+    )
+    prompt_via: str = Field(
+        default="stdin",
+        description="How to deliver the prompt to the CLI: 'stdin' or 'arg'.",
+    )
+    prompt_flag: str | None = Field(
+        default=None,
+        description=(
+            "When prompt_via='arg', the flag to put before the prompt "
+            "(e.g. '--message'). ``None`` = pass as positional arg."
+        ),
+    )
+    system_flag: str | None = Field(
+        default=None,
+        description="CLI flag for the system prompt, e.g. '--append-system-prompt'.",
+    )
+    model_flag: str | None = Field(
+        default=None,
+        description="CLI flag for the model name, e.g. '--model'.",
+    )
+    extra_args: list[str] = Field(
+        default_factory=list,
+        description="Always-appended args (e.g. ['-p', '--output-format', 'json']).",
+    )
+    output_format: str = Field(
+        default="text",
+        description="'text' to return stdout verbatim, 'json' to parse JSON.",
+    )
+    result_json_path: str | None = Field(
+        default=None,
+        description=(
+            "Dotted JSON path for the assistant text "
+            "(e.g. 'result' or 'message.content[0].text'). Only used "
+            "when output_format='json'."
+        ),
+    )
+    cwd: str | None = Field(
+        default=None,
+        description="Working directory for the subprocess. ``None`` = inherit.",
+    )
+    env_extra: dict[str, str] = Field(
+        default_factory=dict,
+        description="Extra env vars for the subprocess.",
+    )
+    model_aliases: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Map user-facing model names to CLI aliases. Substring "
+            "match — so 'claude-sonnet': 'sonnet' collapses any "
+            "claude-sonnet-* to 'sonnet'."
+        ),
+    )
 
 
 class LLMConfig(BaseModel):
@@ -225,12 +294,25 @@ class LLMConfig(BaseModel):
                 max_retries=3,
             ),
             # Claude Code CLI subprocess provider — spawns `claude -p`
-            # for each call. Uses the user's Pro/Max subscription;
-            # base_url is unused. timeout caps the wait on each call.
+            # for each call. Uses the user's Pro/Max subscription.
+            # The agent-CLI flag block is left empty because
+            # ClaudeCLIClient bakes Claude Code's defaults in.
             "claude_cli": LLMProviderConfig(
                 base_url="",
                 timeout=180,
                 max_retries=1,  # subprocess retries are pointless
+                executable="claude",  # marks this as an agent_cli provider
+            ),
+            # Generic agent-CLI provider — fully config-driven.
+            # Populate executable + flags in user config to point at
+            # any single-shot completion CLI (Codex, OpenClaw, Hermes,
+            # opencode, OpenHands, ...). Empty by default so callers
+            # without a config get a clear error instead of trying to
+            # exec a missing binary.
+            "agent_cli": LLMProviderConfig(
+                base_url="",
+                timeout=180,
+                max_retries=1,
             ),
         }
     )

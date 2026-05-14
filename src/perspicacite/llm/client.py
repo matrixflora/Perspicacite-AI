@@ -158,20 +158,88 @@ class AsyncLLMClient:
     def __init__(self, config: LLMConfig):
         self.config = config
         self._litellm = None
-        self._claude_cli: Any = None
+        # Cache one AgentCLIClient instance per provider key (claude_cli,
+        # agent_cli, plus any user-defined alias).
+        self._agent_clis: dict[str, Any] = {}
 
-    def _get_claude_cli_client(self) -> Any:
-        """Lazy-init the Claude Code CLI subprocess provider."""
-        if self._claude_cli is None:
+    def _get_agent_cli_client(self, provider: str) -> Any:
+        """Lazy-init an :class:`AgentCLIClient` for the given provider key.
+
+        ``claude_cli`` is a preset — the legacy
+        :func:`ClaudeCLIClient` factory supplies Claude Code's flag
+        defaults so the user doesn't have to spell them out in YAML.
+
+        Any other provider key (notably ``agent_cli``, but users can
+        define their own) reads every flag from
+        :class:`LLMProviderConfig` — see ``llm/agent_cli.py`` for the
+        config shape.
+        """
+        cached = self._agent_clis.get(provider)
+        if cached is not None:
+            return cached
+
+        cli_cfg = self.config.providers.get(provider)
+        if cli_cfg is None:
+            raise ValueError(
+                f"Provider '{provider}' is not configured. Add it under "
+                "llm.providers in your config.yml."
+            )
+
+        if provider == "claude_cli":
+            # Backwards compat: ClaudeCLIClient still works as a
+            # factory that produces a pre-configured AgentCLIClient.
             from perspicacite.llm.claude_cli import ClaudeCLIClient
-            cli_cfg = self.config.providers.get("claude_cli")
             kw: dict[str, Any] = {}
-            if cli_cfg is not None:
-                # Reuse the existing timeout field; base_url is unused.
-                if getattr(cli_cfg, "timeout", None):
-                    kw["timeout"] = float(cli_cfg.timeout)
-            self._claude_cli = ClaudeCLIClient(**kw)
-        return self._claude_cli
+            if getattr(cli_cfg, "timeout", None):
+                kw["timeout"] = float(cli_cfg.timeout)
+            if getattr(cli_cfg, "executable", None):
+                kw["executable"] = cli_cfg.executable
+            if getattr(cli_cfg, "cwd", None):
+                kw["cwd"] = cli_cfg.cwd
+            if getattr(cli_cfg, "env_extra", None):
+                kw["env_extra"] = dict(cli_cfg.env_extra)
+            client = ClaudeCLIClient(**kw)
+        else:
+            from perspicacite.llm.agent_cli import AgentCLIClient
+            if not getattr(cli_cfg, "executable", None):
+                raise ValueError(
+                    f"Provider '{provider}' uses the agent_cli path but "
+                    "has no `executable` set. Configure "
+                    f"llm.providers.{provider}.executable in your YAML, "
+                    "or copy one of the config.{claude_code,codex,openclaw,"
+                    "hermes}.example.yml presets."
+                )
+            client = AgentCLIClient(
+                executable=cli_cfg.executable,
+                provider_label=provider,
+                prompt_via=cli_cfg.prompt_via,
+                prompt_flag=cli_cfg.prompt_flag,
+                system_flag=cli_cfg.system_flag,
+                model_flag=cli_cfg.model_flag,
+                extra_args=list(cli_cfg.extra_args),
+                output_format=cli_cfg.output_format,
+                result_json_path=cli_cfg.result_json_path,
+                timeout=float(cli_cfg.timeout),
+                cwd=cli_cfg.cwd,
+                env_extra=dict(cli_cfg.env_extra),
+                model_aliases=dict(cli_cfg.model_aliases),
+            )
+        self._agent_clis[provider] = client
+        return client
+
+    def _is_agent_cli_provider(self, provider: str) -> bool:
+        """Return True when ``provider`` should route through agent_cli.
+
+        Two cases:
+        - The provider key is in our agent-CLI allowlist
+          (``claude_cli``, ``agent_cli``).
+        - A user-defined provider sets ``executable`` — opt-in for
+          custom presets without modifying core code.
+        """
+        if provider in ("claude_cli", "agent_cli"):
+            return True
+        cfg = self.config.providers.get(provider)
+        return bool(cfg and getattr(cfg, "executable", None))
 
     def _get_litellm(self) -> Any:
         """Lazy import litellm."""
@@ -254,11 +322,12 @@ class AsyncLLMClient:
                 )
                 return sampled
 
-        # Claude Code CLI takes a completely different path — subprocess
-        # to `claude -p`, no LiteLLM, uses the user's subscription.
-        # Branch here so we don't need to pretend LiteLLM understands it.
-        if provider == "claude_cli":
-            cli = self._get_claude_cli_client()
+        # Agent CLIs (Claude Code, Codex, OpenClaw, Hermes, ...) take a
+        # completely different path — subprocess to a binary, no
+        # LiteLLM, uses the user's subscription / local install.
+        # Branch here so we don't need to pretend LiteLLM understands them.
+        if self._is_agent_cli_provider(provider):
+            cli = self._get_agent_cli_client(provider)
             return await cli.complete(
                 messages=messages, model=model, provider=provider,
                 temperature=temperature, max_tokens=max_tokens,

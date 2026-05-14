@@ -1,0 +1,64 @@
+# Perspicacité — Claude Code subscription preset
+#
+# Routes every internal LLM call through your local `claude` CLI as
+# a subprocess. The user's Claude Pro/Max subscription pays for the
+# inference; no ANTHROPIC_API_KEY needed in this config.
+#
+# **Prerequisites:**
+# 1. Install Claude Code: https://claude.com/claude-code
+# 2. Sign in (one-time):  `claude login`
+# 3. Verify the CLI works:  `echo "say hi" | claude -p --model haiku`
+# 4. Use this file as your config:
+#       perspicacite -c config.claude_code.example.yml serve
+#
+# **Caveat — shared rate limits.** Perspicacité shares your
+# interactive Claude Code rate window. A heavy ingest can freeze
+# you out of `claude` for hours. Mitigations:
+# - Use `haiku` for cheap roles (already configured below).
+# - Pair with the `pdf_download.cache_pdfs: true` setting so re-ingest
+#   reuses on-disk PDFs.
+# - For unattended/concurrent use, prefer the direct Anthropic API
+#   with prompt caching (config.example.yml + ANTHROPIC_API_KEY).
+#
+# **What you gain:**
+# - $0 marginal per-call cost (within your subscription limits).
+# - No API keys in config files.
+#
+# **What you lose vs direct Anthropic API:**
+# - Anthropic prompt caching (CLI doesn't expose `cache_control`).
+# - Per-call temperature / max_tokens (CLI ignores these).
+# - Streaming output (CLI buffers the full response).
+
+llm:
+  default_provider: "claude_cli"
+  default_model:    "sonnet"            # synthesis quality default
+  use_mcp_sampling: false               # Claude Code doesn't implement sampling yet
+
+  # Per-stage model tiering — Haiku for the cheap roles, Sonnet only
+  # where it matters. Adjust if your subscription tier disallows opus
+  # or you'd rather stay on sonnet for everything.
+  providers_per_stage:
+    routing:          "claude_cli"
+    screening:        "claude_cli"
+    rephrase:         "claude_cli"
+    contextual:       "claude_cli"
+    synthesis_basic:  "claude_cli"
+    synthesis_heavy:  "claude_cli"
+  models:
+    routing:          "haiku"
+    screening:        "haiku"
+    rephrase:         "haiku"
+    contextual:       "haiku"
+    synthesis_basic:  "sonnet"
+    synthesis_heavy:  "sonnet"          # set to "opus" if your plan includes it
+
+  providers:
+    claude_cli:
+      # Claude Code's flag set is baked into the ClaudeCLIClient
+      # factory — you only need `executable` + `timeout` here. Override
+      # `executable` if `claude` isn't on PATH for the perspicacité
+      # process (e.g. point at /usr/local/bin/claude).
+      base_url: ""
+      executable: "claude"
+      timeout: 180
+      max_retries: 1                    # subprocess retries waste rate-limit
