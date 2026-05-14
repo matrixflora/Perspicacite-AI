@@ -238,30 +238,49 @@ class ProfoundRAGMode(BaseRAGMode):
                 }
 
             if recommendation == "explain_limitations":
-                if question_type == "unanswerable":
-                    explanation = (
-                        "The question appears to be unanswerable with available information. Reason: "
-                        f"{evaluation.get('reasoning', 'Insufficient evidence')}"
+                # Don't trust the LLM's "unanswerable" verdict when no
+                # documents have been retrieved yet — the evaluator only
+                # sees the question text + step success flags, not the
+                # actual KB content. Without evidence, "unanswerable" is
+                # just the LLM being cautious about an ambiguous question
+                # (e.g., "What sensitivity is achieved?" without naming
+                # the device). Force a plan rewrite instead so the next
+                # cycle gets a chance to actually retrieve from the KB.
+                total_docs = sum(
+                    len(getattr(s, "documents", []) or []) for s in completed_steps
+                )
+                if total_docs == 0:
+                    logger.info(
+                        "profound_plan_review_override_explain_limitations",
+                        reason="no_documents_retrieved_yet",
+                        question_type=question_type,
                     )
-                elif question_type == "false_premise":
-                    explanation = (
-                        "The question appears to be based on false premises. Reason: "
-                        f"{evaluation.get('reasoning', 'Misconception detected')}"
-                    )
+                    # Fall through to plan-modification path below.
                 else:
-                    explanation = (
-                        "The question can only be partially answered. Reason: "
-                        f"{evaluation.get('reasoning', 'Limited information available')}"
-                    )
-                return {
-                    "reasoning": explanation,
-                    "plan": [],
-                    "queries": [],
-                    "strategy_change": f"Research ending due to {question_type} question",
-                    "should_complete": True,
-                    "question_type": question_type,
-                    "completion_explanation": explanation,
-                }
+                    if question_type == "unanswerable":
+                        explanation = (
+                            "The question appears to be unanswerable with available information. Reason: "
+                            f"{evaluation.get('reasoning', 'Insufficient evidence')}"
+                        )
+                    elif question_type == "false_premise":
+                        explanation = (
+                            "The question appears to be based on false premises. Reason: "
+                            f"{evaluation.get('reasoning', 'Misconception detected')}"
+                        )
+                    else:
+                        explanation = (
+                            "The question can only be partially answered. Reason: "
+                            f"{evaluation.get('reasoning', 'Limited information available')}"
+                        )
+                    return {
+                        "reasoning": explanation,
+                        "plan": [],
+                        "queries": [],
+                        "strategy_change": f"Research ending due to {question_type} question",
+                        "should_complete": True,
+                        "question_type": question_type,
+                        "completion_explanation": explanation,
+                    }
 
             adjust_response = await llm.complete(
                 messages=[
