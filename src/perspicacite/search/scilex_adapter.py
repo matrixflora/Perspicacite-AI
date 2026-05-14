@@ -345,7 +345,13 @@ class SciLExAdapter:
                 masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "****"
                 logger.info(f"API key configured for {scilex_api_name}", key_mask=masked_key, key_length=len(api_key))
             else:
-                config[scilex_api_name] = {}
+                # SciLEx ≥ 0.1 reads config[api]["api_key"] unconditionally
+                # (it's wrapped in dict.get(...) on the inside but the outer
+                # code does ``api_config[api]["api_key"]`` directly for some
+                # collectors). Pass an empty string so it doesn't KeyError.
+                # APIs that genuinely don't need a key (OpenAlex, Arxiv,
+                # PubMed) still work with this.
+                config[scilex_api_name] = {"api_key": ""}
                 logger.debug(f"No API key found for {scilex_api_name}", checked_vars=[env_key_prefixed, env_key_direct])
         return config
 
