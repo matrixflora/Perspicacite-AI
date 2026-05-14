@@ -273,6 +273,88 @@ class FallbackEmbeddingProvider:
             return await self.fallback.embed(texts)
 
 
+class CachedEmbeddingProvider:
+    """Wraps an :class:`EmbeddingProvider`, consulting an on-disk cache
+    before forwarding uncached texts to the inner provider.
+
+    Per-text keying: two overlapping batches share entries. Empty /
+    whitespace inputs pass through to the zero-vector contract without
+    touching the cache. See
+    docs/superpowers/specs/2026-05-14-embedding-cache-design.md.
+    """
+
+    def __init__(self, *, inner: Any, cache: Any) -> None:
+        self.inner = inner
+        self.cache = cache
+
+    @property
+    def model_name(self) -> str:
+        return self.inner.model_name
+
+    @property
+    def dimension(self) -> int:
+        return self.inner.dimension
+
+    async def embed(
+        self,
+        texts: list[str],
+        cache: bool = True,
+    ) -> list[list[float]]:
+        if not texts:
+            return []
+
+        # Build per-text keys, but only for non-empty texts (matches
+        # the inner providers' empty-input contract).
+        from perspicacite.llm.embedding_cache import build_embedding_cache_key
+
+        zero = [0.0] * self.inner.dimension
+        keys: list[str | None] = []
+        for t in texts:
+            if not t or not t.strip():
+                keys.append(None)
+            else:
+                keys.append(
+                    build_embedding_cache_key(model=self.inner.model_name, text=t)
+                )
+
+        # Cache-bypass: straight to inner, no read, no write.
+        if not cache:
+            # Inner provider already handles empties → zero vec.
+            return await self.inner.embed(texts)
+
+        # Batch read.
+        non_null_keys = [k for k in keys if k is not None]
+        hits = await self.cache.get_many(non_null_keys) if non_null_keys else {}
+
+        # Build the result list, collecting misses to send to inner.
+        out: list[list[float] | None] = [None] * len(texts)
+        miss_indices: list[int] = []
+        miss_texts: list[str] = []
+        for i, (t, k) in enumerate(zip(texts, keys)):
+            if k is None:
+                out[i] = zero  # empty/whitespace stays zero-vector
+            elif k in hits:
+                out[i] = hits[k]
+            else:
+                miss_indices.append(i)
+                miss_texts.append(t)
+
+        if miss_texts:
+            new_vecs = await self.inner.embed(miss_texts)
+            # Write to cache + slot into out in original order.
+            put_items: list[tuple[str, str, list[float]]] = []
+            for idx, vec in zip(miss_indices, new_vecs):
+                out[idx] = vec
+                k = keys[idx]
+                if k is not None:
+                    put_items.append((k, self.inner.model_name, vec))
+            if put_items:
+                await self.cache.put_many(put_items)
+
+        # Final result — every slot is filled.
+        return [v if v is not None else zero for v in out]
+
+
 def create_embedding_provider(
     model: str,
     use_local_fallback: bool = True,
