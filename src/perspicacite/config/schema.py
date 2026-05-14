@@ -185,6 +185,22 @@ class LLMConfig(BaseModel):
             "Falls back to `default_provider` for unset stages."
         ),
     )
+    # MCP sampling: when True, LLM calls made inside MCP tool bodies
+    # first try the connected client's sampling/createMessage protocol
+    # (uses the client's subscription / credentials, not ours), then
+    # fall back to the configured provider on failure. Off by default
+    # because not every MCP client implements sampling — Claude Code
+    # currently does not (anthropics/claude-code#1785), but Claude
+    # Desktop has partial support. Turn on once you've tested with
+    # your client.
+    use_mcp_sampling: bool = Field(
+        default=False,
+        description=(
+            "Try MCP sampling/createMessage first; fall back to "
+            "default_provider on capability error. Only effective "
+            "inside MCP tools that wrap their body with use_mcp_context."
+        ),
+    )
 
     providers: dict[str, LLMProviderConfig] = Field(
         default_factory=lambda: {
