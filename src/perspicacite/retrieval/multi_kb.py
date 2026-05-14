@@ -110,10 +110,93 @@ class MultiKBRetriever:
         query: str,
         top_k: int | None = None,
         min_score: float | None = None,
+        *,
+        max_papers_cap: int | None = None,
         **_: Any,
     ) -> list[dict[str, Any]]:
-        # v1: just delegate. (Two-pass paper-level expansion across KBs is a future refinement.)
-        return await self.search(query, top_k=top_k, min_score=min_score)
+        """Multi-KB two-pass retrieval: chunk hits → identify top papers
+        (across all KBs), then pull every chunk of those papers.
+
+        Returns paper-level dicts matching the single-KB DynamicKnowledgeBase
+        contract: ``paper_id, paper_score, title, authors, year, doi,
+        kb_name, chunks, full_text``. This unblocks the multi-KB code path
+        in BasicRAGMode (which previously returned "Unknown title, score 0.00"
+        because the v1 delegate handed back chunk-shaped dicts).
+        """
+        top_k = top_k or self.default_top_k
+        min_score = self.default_min_score if min_score is None else min_score
+        hard_cap = min(max_papers_cap or top_k, 5)
+
+        # ── Pass 1: fan chunk-level vector search across collections ─────
+        chunk_hits = await self.search(query, top_k=top_k, min_score=min_score)
+        if not chunk_hits:
+            return []
+
+        # ── Group by paper_id, keep best score per paper + winning kb_name ─
+        paper_scores: dict[str, float] = {}
+        paper_meta: dict[str, Any] = {}
+        paper_kb: dict[str, str] = {}  # paper_id → kb_display name
+        paper_collection: dict[str, str] = {}  # paper_id → chroma collection
+        # Map kb display name → collection name for the pass-2 fetch.
+        kb_to_collection: dict[str, str] = {}
+        for meta in self.kb_metas:
+            kb_to_collection[getattr(meta, "name", "")] = getattr(meta, "collection_name", "")
+
+        for hit in chunk_hits:
+            pid = hit.get("paper_id")
+            score = float(hit.get("score") or 0.0)
+            kb_disp = hit.get("kb_name") or ""
+            if not pid:
+                continue
+            if pid not in paper_scores or score > paper_scores[pid]:
+                paper_scores[pid] = score
+                paper_meta[pid] = hit.get("metadata")
+                paper_kb[pid] = kb_disp
+                paper_collection[pid] = kb_to_collection.get(kb_disp, "")
+
+        if not paper_scores:
+            return []
+
+        # Take the top ``hard_cap`` papers across all KBs.
+        candidate_order = sorted(
+            paper_scores.keys(), key=lambda p: -paper_scores[p]
+        )[:hard_cap]
+
+        # ── Pass 2: fetch all chunks for each top paper from its own collection ─
+        results: list[dict[str, Any]] = []
+        for pid in candidate_order:
+            coll = paper_collection.get(pid)
+            if not coll:
+                continue
+            try:
+                paper_chunks = await self.vector_store.get_chunks_by_paper_ids(coll, [pid])
+            except Exception as e:
+                logger.warning("multi_kb_pass2_failed", paper_id=pid, error=str(e))
+                paper_chunks = []
+            # Dedup overlap (chunks of one paper share overlap-window text).
+            from perspicacite.rag.utils import deduplicate_chunk_overlaps
+            deduped = deduplicate_chunk_overlaps(paper_chunks, overlap_words=50)
+
+            meta = paper_meta.get(pid)
+            full_text = " ".join(d.get("text", "") for d in deduped)
+            results.append({
+                "paper_id": pid,
+                "paper_score": paper_scores[pid],
+                "title": getattr(meta, "title", None) if meta else None,
+                "authors": getattr(meta, "authors", None) if meta else None,
+                "year": getattr(meta, "year", None) if meta else None,
+                "doi": getattr(meta, "doi", None) if meta else None,
+                "kb_name": paper_kb.get(pid),
+                "chunks": deduped,
+                "full_text": full_text,
+            })
+
+        logger.info(
+            "multi_kb_search_two_pass",
+            kbs=[getattr(m, "name", "?") for m in self.kb_metas],
+            papers=len(results),
+        )
+        return results
 
 
 async def query_chunks_across_collections(
