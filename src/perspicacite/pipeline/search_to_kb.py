@@ -446,18 +446,44 @@ async def ingest_dois_into_kb(
     app_state: Any,
     kb_name: str,
     dois: list[str],
+    *,
+    resume: bool = True,
+    retry_failed: bool = False,
 ) -> dict[str, Any]:
     """Add each DOI's full-text paper to ``kb_name``.
 
     Mirrors the body of the ``add_dois_to_kb`` MCP tool — both call
     sites build a per-DOI :class:`Paper`, hand it to
     :class:`DynamicKnowledgeBase`, and update KB metadata counts.
+
+    Wave 3.3: this function is crash-resilient via
+    :class:`~perspicacite.pipeline.checkpoint.CheckpointStore`. On
+    re-run with the same ``kb_name`` and DOIs, already-processed
+    entries are skipped. Pass ``resume=False`` to ignore the checkpoint
+    and start fresh; pass ``retry_failed=True`` to retry entries that
+    previously failed.
     """
+    from pathlib import Path as _Path
+
     from perspicacite.models.kb import chroma_collection_name_for_kb
     from perspicacite.models.papers import Author, Paper, PaperSource
+    from perspicacite.pipeline.checkpoint import CheckpointStore
     from perspicacite.pipeline.download import retrieve_paper_content
     from perspicacite.pipeline.download.cookies import build_authenticated_client
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+
+    # ---- checkpoint setup (Wave 3.3) -----------------------------------
+    ck_dir = _Path(getattr(app_state.config.kb, "checkpoint_dir", "data/checkpoints"))
+    ckpt = CheckpointStore(
+        path=ck_dir / f"{kb_name}__ingest_dois.json",
+        kb_name=kb_name,
+        operation="ingest_dois",
+    )
+    if not resume:
+        ckpt.delete()
+    ck_state = ckpt.load_or_create(planned_ids=list(dois))
+    dois_to_process = list(ck_state.remaining_ids(retry_failed=retry_failed))
+    # --------------------------------------------------------------------
 
     kb_meta = await app_state.session_store.get_kb_metadata(kb_name)
     if not kb_meta:
@@ -486,12 +512,14 @@ async def ingest_dois_into_kb(
     dl: dict[str, int] = {"attempted": 0, "success": 0, "failed": 0}
 
     async with build_authenticated_client(cookies_path=cookies_path) as client:
-        for raw_doi in dois:
+        for raw_doi in dois_to_process:
             doi = (raw_doi or "").strip().replace("https://doi.org/", "")
             if not doi:
                 continue
             if await app_state.vector_store.paper_exists(collection_name, doi):
                 skipped.append({"doi": doi})
+                ck_state.record(doi, "skipped")
+                ckpt.save(ck_state)
                 continue
             dl["attempted"] += 1
             try:
@@ -504,10 +532,14 @@ async def ingest_dois_into_kb(
             except Exception as e:
                 failed.append({"doi": doi, "reason": str(e)})
                 dl["failed"] += 1
+                ck_state.record(doi, "failed", reason=str(e))
+                ckpt.save(ck_state)
                 continue
             if not result or not result.success:
                 failed.append({"doi": doi, "reason": "no content"})
                 dl["failed"] += 1
+                ck_state.record(doi, "failed", reason="no content")
+                ckpt.save(ck_state)
                 continue
             md = result.metadata or {}
             paper = Paper(
@@ -526,6 +558,9 @@ async def ingest_dois_into_kb(
             else:
                 dl["failed"] += 1
             papers_to_add.append(paper)
+            # Mark as added immediately on successful retrieval (Wave 3.3).
+            ck_state.record(doi, "added")
+            ckpt.save(ck_state)
 
     added_chunks = 0
     if papers_to_add:
@@ -539,6 +574,10 @@ async def ingest_dois_into_kb(
         kb_meta.paper_count = (kb_meta.paper_count or 0) + len(papers_to_add)
         kb_meta.chunk_count = (kb_meta.chunk_count or 0) + added_chunks
         await app_state.session_store.save_kb_metadata(kb_meta)
+
+    # Clean up checkpoint on clean completion (Wave 3.3).
+    if ck_state.is_complete():
+        ckpt.delete()
 
     return {
         "added_papers": len(papers_to_add),
