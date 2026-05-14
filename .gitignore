@@ -101,6 +101,7 @@ packages_to_use/
 !docs/llm-cache-*.md
 !docs/embedding-cache-*.md
 !docs/budget-caps-*.md
+!docs/rate-limit-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
