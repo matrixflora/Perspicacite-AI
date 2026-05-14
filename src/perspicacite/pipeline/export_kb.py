@@ -49,6 +49,10 @@ class ExportReport:
     supplementary_copied: int = 0
     skipped_no_doi: int = 0
     bib_path: str | None = None
+    csl_json_entries: int = 0
+    ris_entries: int = 0
+    csl_json_path: str | None = None
+    ris_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -269,6 +273,7 @@ async def export_kb(
     with_pdfs: bool = True,
     with_supplementary: bool = False,
     overwrite: bool = False,
+    formats: list[str] | None = None,
 ) -> ExportReport:
     """Render ``kb_name`` to a directory of BibTeX + (optional) PDFs.
 
@@ -286,6 +291,14 @@ async def export_kb(
     Returns:
         :class:`ExportReport` summarising what landed where.
     """
+    _VALID = {"bibtex", "csl_json", "ris"}
+    if formats is not None and not formats:
+        raise ValueError("formats must be a non-empty list")
+    formats = formats or ["bibtex"]
+    for f in formats:
+        if f not in _VALID:
+            raise ValueError(f"unknown format: {f!r}; expected one of {sorted(_VALID)}")
+
     from perspicacite.models.kb import chroma_collection_name_for_kb
 
     kb_meta = await app_state.session_store.get_kb_metadata(kb_name)
@@ -297,11 +310,15 @@ async def export_kb(
 
     out = Path(out_dir).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
-    bib_path = out / f"{kb_name}.bib"
-    if bib_path.exists() and not overwrite:
-        raise FileExistsError(
-            f"{bib_path} exists. Pass overwrite=True or remove the file."
-        )
+
+    if "bibtex" in formats:
+        bib_path = out / f"{kb_name}.bib"
+        if bib_path.exists() and not overwrite:
+            raise FileExistsError(
+                f"{bib_path} exists. Pass overwrite=True or remove the file."
+            )
+    else:
+        bib_path = None
 
     pdf_cfg = app_state.config.pdf_download
     cache_dir = pdf_cfg.cache_dir if (pdf_cfg and pdf_cfg.cache_pdfs) else None
@@ -309,7 +326,7 @@ async def export_kb(
     papers_meta = await app_state.vector_store.list_paper_metadata(collection_name)
     report = ExportReport(
         kb_name=kb_name, out_dir=str(out), papers=len(papers_meta),
-        bib_path=str(bib_path),
+        bib_path=str(bib_path) if bib_path else None,
     )
 
     papers_subdir = out / "papers"
@@ -356,10 +373,31 @@ async def export_kb(
 
         if not doi:
             report.skipped_no_doi += 1
-        bib_entries.append(render_bibtex_entry(paper, file_path=attached_path))
+        if "bibtex" in formats:
+            bib_entries.append(render_bibtex_entry(paper, file_path=attached_path))
 
-    bib_path.write_text("\n\n".join(bib_entries) + "\n")
-    report.bibtex_entries = len(bib_entries)
+    if "bibtex" in formats and bib_path is not None:
+        bib_path.write_text("\n\n".join(bib_entries) + "\n")
+        report.bibtex_entries = len(bib_entries)
+
+    if "csl_json" in formats:
+        csl_path = out / f"{kb_name}.csl.json"
+        if csl_path.exists() and not overwrite:
+            raise FileExistsError(f"{csl_path} exists. Pass overwrite=True.")
+        csl_items = [render_csl_json_entry(p) for p in papers_meta]
+        csl_path.write_text(json.dumps(csl_items, indent=2))
+        report.csl_json_entries = len(csl_items)
+        report.csl_json_path = str(csl_path)
+
+    if "ris" in formats:
+        ris_path = out / f"{kb_name}.ris"
+        if ris_path.exists() and not overwrite:
+            raise FileExistsError(f"{ris_path} exists. Pass overwrite=True.")
+        ris_records = [render_ris_entry(p) for p in papers_meta]
+        ris_path.write_text("\n\n".join(ris_records) + "\n")
+        report.ris_entries = len(ris_records)
+        report.ris_path = str(ris_path)
+
     (out / "manifest.json").write_text(json.dumps(report.to_dict(), indent=2))
     logger.info(
         "export_kb_done", kb=kb_name, out=str(out),
