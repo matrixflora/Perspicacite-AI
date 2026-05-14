@@ -44,8 +44,13 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
     if verbose:
         cfg.logging.level = "DEBUG"
 
-    # Setup logging
-    setup_logging(cfg.logging)
+    # Setup logging. `serve` is the long-running daemon and conventionally
+    # logs to stdout (redirectable via `> logs/serve.out`). Every other
+    # CLI subcommand routes structured logs to stderr so the user's
+    # actual output (list-kb table, --json blob, query answer, etc.)
+    # stays clean on stdout.
+    log_stream = sys.stdout if ctx.invoked_subcommand == "serve" else sys.stderr
+    setup_logging(cfg.logging, stream=log_stream)
     logger.info("perspicacite_started", version=__version__)
 
     # Store config in context
@@ -172,12 +177,53 @@ def create_kb(
     config = ctx.obj["config"]
 
     if not from_bibtex:
+        # Empty-KB creation: register the metadata + provision the Chroma
+        # collection. Papers can be added later via `add-to-kb` or via
+        # POST /api/kb/{name}/dois/async.
+        from perspicacite.web.state import AppState
+        from perspicacite.models.kb import KnowledgeBase, chroma_collection_name_for_kb
+
+        async def _create_empty() -> dict[str, Any]:
+            state = AppState()
+            await state.initialize()
+            existing = await state.session_store.get_kb_metadata(name)
+            if existing is not None:
+                raise FileExistsError(f"KB '{name}' already exists")
+            kb = KnowledgeBase(
+                name=name,
+                description=description,
+                collection_name=chroma_collection_name_for_kb(name),
+                embedding_model=config.knowledge_base.embedding_model,
+            )
+            await state.vector_store.create_collection(kb.collection_name)
+            await state.session_store.save_kb_metadata(kb)
+            return {
+                "name": kb.name,
+                "collection_name": kb.collection_name,
+                "embedding_model": kb.embedding_model,
+            }
+
+        try:
+            result = asyncio.run(_create_empty())
+        except FileExistsError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        except ValueError as e:
+            # pydantic name-pattern violation, etc.
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        click.echo("\n✅ Empty knowledge base created")
+        click.echo(f"   Name: {result['name']}")
+        click.echo(f"   Chroma collection: {result['collection_name']}")
+        click.echo(f"   Embedding model: {result['embedding_model']}")
         click.echo(
-            "Creating an empty KB from the CLI is not implemented yet.\n"
-            "Use: perspicacite create-kb NAME --from-bibtex path/to/file.bib",
-            err=True,
+            "\nAdd papers with:\n"
+            f"   perspicacite add-to-kb {result['name']} --from-bibtex refs.bib\n"
+            f"   curl -X POST http://localhost:8000/api/kb/{result['name']}/dois/async \\\n"
+            "        -H 'Content-Type: application/json' -d '{\"dois\":[\"10.…\"]}'"
         )
-        sys.exit(1)
+        return
 
     session_db = session_db or Path("data/perspicacite.db")
     chroma_dir = chroma_dir or config.database.chroma_path
@@ -348,9 +394,9 @@ def list_kb(ctx: click.Context, as_json: bool) -> None:
 @click.option(
     "--mode",
     "-m",
-    type=click.Choice(["quick", "standard", "advanced", "deep", "citation"]),
-    default="standard",
-    help="RAG mode",
+    type=click.Choice(["basic", "advanced", "profound", "contradiction"]),
+    default="basic",
+    help="RAG mode. agentic + literature_survey aren't supported by the CLI ask path.",
 )
 @click.option(
     "--provider",
@@ -518,9 +564,85 @@ async def _run_query(
     provider: str,
     model: str | None,
 ) -> None:
-    """Run query (placeholder)."""
+    """Run a RAG query and print the answer + sources to stdout."""
+    from perspicacite.web.state import AppState
+    from perspicacite.models.rag import RAGMode, RAGRequest
+
+    state = AppState()
+    await state.initialize()
+
+    # Verify the KB exists so we fail fast with a clear message instead
+    # of letting the RAG engine spit a chroma error.
+    if await state.session_store.get_kb_metadata(kb) is None:
+        click.echo(f"\nError: KB '{kb}' not found. List with: perspicacite list-kb", err=True)
+        sys.exit(1)
+
+    mode_map = {
+        "basic": RAGMode.BASIC,
+        "advanced": RAGMode.ADVANCED,
+        "profound": RAGMode.PROFOUND,
+        "contradiction": RAGMode.CONTRADICTION,
+    }
+    rag_mode = mode_map.get(mode, RAGMode.BASIC)
+
+    # Effective model/provider: explicit flag → config default → dataclass default.
+    eff_provider = provider or config.llm.default_provider
+    eff_model = model or config.llm.default_model
+
+    request = RAGRequest(
+        query=query,
+        kb_name=kb,
+        mode=rag_mode,
+        stream=False,
+        provider=eff_provider,
+        model=eff_model,
+    )
+
+    # Use the same RAGEngine the web/MCP layers use.
+    full_answer_parts: list[str] = []
+    sources: list[dict[str, Any]] = []
+    try:
+        async for event in state.rag_engine.query_stream(request):
+            etype = getattr(event, "event", None)
+            data = getattr(event, "data", None)
+            if etype == "content" and data:
+                # data is a JSON envelope { "delta": "..." }
+                try:
+                    import json as _json
+                    delta = _json.loads(data).get("delta", "")
+                except Exception:
+                    delta = str(data)
+                if delta:
+                    full_answer_parts.append(delta)
+            elif etype == "source" and data:
+                try:
+                    import json as _json
+                    s = _json.loads(data)
+                    sources.append(s)
+                except Exception:
+                    pass
+            elif etype == "error" and data:
+                click.echo(f"\n❌ Error from RAG engine: {data}", err=True)
+                sys.exit(1)
+    except Exception as exc:
+        click.echo(f"\n❌ Query failed: {exc}", err=True)
+        sys.exit(1)
+
+    answer = "".join(full_answer_parts).strip()
     click.echo("\n📝 Answer:")
-    click.echo("  (RAG not implemented yet)")
+    if not answer:
+        click.echo("  (no answer — KB might be empty for this query)")
+    else:
+        click.echo(answer)
+    if sources:
+        click.echo("\n📎 Sources:")
+        for i, s in enumerate(sources, 1):
+            title = s.get("title") or s.get("doi") or "(untitled)"
+            year = s.get("year")
+            doi = s.get("doi")
+            tag = f" ({year})" if year else ""
+            doi_tag = f"  doi:{doi}" if doi else ""
+            click.echo(f"  [{i}] {title}{tag}{doi_tag}")
 
 
 @cli.command(name="screen-papers")
