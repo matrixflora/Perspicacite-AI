@@ -265,6 +265,7 @@ async def screen_candidates(
     method: str,
     threshold: float,
     llm_client: Any = None,
+    app_state: Any = None,
 ) -> tuple[list[Any], list[dict[str, Any]]]:
     """Score candidates by relevance to ``query`` and drop those below threshold.
 
@@ -289,7 +290,17 @@ async def screen_candidates(
             method = "bm25"
     if method == "llm":
         from perspicacite.search.screening import screen_papers_llm as _llm
-        results = await _llm(items, query=query, llm=llm_client, threshold=threshold)
+        from perspicacite.llm.client import resolve_stage_model
+        if app_state is not None:
+            screen_provider, screen_model = resolve_stage_model(
+                app_state.config, "screening",
+            )
+        else:
+            screen_provider, screen_model = (None, None)
+        results = await _llm(
+            items, query=query, llm=llm_client, threshold=threshold,
+            model=screen_model, provider=screen_provider,
+        )
     else:
         from perspicacite.search.screening import screen_papers as _bm25
         results = _bm25(items, reference=query, method="bm25", threshold=threshold)
@@ -555,8 +566,8 @@ async def search_filter_and_ingest(
     kb_aware: bool = False,
     kb_aware_terms: int = 8,
     rephrase: int = 0,
-    rephrase_model: str = "claude-haiku-4-5",
-    rephrase_provider: str = "anthropic",
+    rephrase_model: str | None = None,
+    rephrase_provider: str | None = None,
 ) -> IngestReport:
     """End-to-end: SciLEx search → filter → optionally create KB → ingest.
 
@@ -592,12 +603,18 @@ async def search_filter_and_ingest(
     # "metabolite identification" vs "mass spec annotation").
     queries_to_run = [effective_query]
     if rephrase > 0:
+        from perspicacite.llm.client import resolve_stage_model
+        eff_provider, eff_model = (
+            (rephrase_provider, rephrase_model)
+            if rephrase_provider and rephrase_model
+            else resolve_stage_model(app_state.config, "rephrase")
+        )
         variants = await rephrase_query(
             query=effective_query,
             num_variants=rephrase,
             llm_client=app_state.llm_client,
-            model=rephrase_model,
-            provider=rephrase_provider,
+            model=eff_model,
+            provider=eff_provider,
         )
         if variants:
             queries_to_run.extend(variants)
@@ -645,6 +662,7 @@ async def search_filter_and_ingest(
         survivors, score_table = await screen_candidates(
             kept, query=query, method=screen_method,
             threshold=screen_threshold, llm_client=app_state.llm_client,
+            app_state=app_state,
         )
         report.screened_out = len(kept) - len(survivors)
         report.after_screen = len(survivors)

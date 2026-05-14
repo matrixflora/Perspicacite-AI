@@ -175,6 +175,8 @@ async def screen_papers_llm(
     llm: Any,
     threshold: float = 0.5,
     batch_size: int = 20,
+    model: str | None = None,
+    provider: str | None = None,
 ) -> list[ScreenResult]:
     """Screen candidate papers against a query using LLM 0-1 relevance scoring.
 
@@ -212,7 +214,12 @@ async def screen_papers_llm(
         ]
 
         try:
-            raw = await llm.complete(messages=messages)
+            kw: dict[str, Any] = {"messages": messages, "stage": "screening"}
+            if model is not None:
+                kw["model"] = model
+            if provider is not None:
+                kw["provider"] = provider
+            raw = await llm.complete(**kw)
             text: str = raw if isinstance(raw, str) else getattr(raw, "content", str(raw))
             match = re.search(r"\[.*\]", text, re.S)
             if match is None:

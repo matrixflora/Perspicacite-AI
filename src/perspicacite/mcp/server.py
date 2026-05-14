@@ -1791,6 +1791,8 @@ async def route_kbs(
     if not all_kbs:
         return {"hits": [], "note": "no candidate KBs"}
 
+    from perspicacite.llm.client import resolve_stage_model
+    route_provider, route_model = resolve_stage_model(state.config, "routing")
     hits = await auto_route_kbs(
         query=query,
         kb_metas=all_kbs,
@@ -1799,6 +1801,8 @@ async def route_kbs(
         top_k=top_k,
         score_threshold=score_threshold,
         llm_client=state.llm_client,
+        llm_model=route_model,
+        llm_provider=route_provider,
     )
     return {"hits": [h.to_dict() for h in hits]}
 
