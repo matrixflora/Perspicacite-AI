@@ -355,28 +355,31 @@ async def build_capsule(
 
 
 async def _write_supplementary_manifest(cap: Path, *, paper: Paper) -> int:
-    """Write ``<cap>/supplementary/index.json`` from PMC JATS XML when
-    available. Returns the number of SI entries (0 when not on PMC OA or
-    when the paper has no SI in its JATS XML).
+    """Write ``<cap>/supplementary/index.json`` from the unified SI discovery
+    (PMC JATS → Springer/Nature ESM → ACS supporting-info, in that order).
 
-    Records metadata only — the binary SI files (often large XLSX/ZIP/PDF)
-    are left as URLs in the manifest. A dedicated `fetch_supplementary`
-    helper can pull them on demand without bloating every capsule build.
+    Returns the number of SI entries across all sources. Records metadata
+    only — bytes are pulled by ``fetch_supplementary`` on demand to keep
+    every capsule build cheap.
     """
     doi = (paper.doi or "").strip()
     if not doi:
         return 0
     try:
-        from perspicacite.pipeline.download.pmc import get_supplementary_from_pmc
-        items = await get_supplementary_from_pmc(doi)
+        from perspicacite.pipeline.download.supplementary import discover_supplementary
+        result = await discover_supplementary(doi)
     except Exception:
         return 0
+    items = result.get("items") or []
     if not items:
         return 0
     si_dir = cap / "supplementary"
     si_dir.mkdir(parents=True, exist_ok=True)
     (si_dir / "index.json").write_text(
-        json.dumps({"items": items, "source": "pmc_jats"}, indent=2, ensure_ascii=False),
+        json.dumps(
+            {"items": items, "sources_tried": result.get("sources_tried", [])},
+            indent=2, ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     return len(items)

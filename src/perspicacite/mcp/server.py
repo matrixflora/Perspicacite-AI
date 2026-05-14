@@ -1558,6 +1558,87 @@ async def fetch_paper_resources(
 
 
 # =============================================================================
+# Tool 17: fetch_supplementary
+# =============================================================================
+
+
+@mcp.tool
+async def fetch_supplementary(
+    kb_name: str,
+    paper_id: str,
+    max_bytes_per_file: int = 50_000_000,
+    max_bytes_per_record: int = 200_000_000,
+    text_only: bool = False,
+    force: bool = False,
+) -> dict:
+    """Download the Supplementary Information files listed in a paper's capsule.
+
+    Reads ``<capsule>/supplementary/index.json`` (built during capsule
+    creation via discover_supplementary — PMC JATS → Springer ESM → ACS),
+    fetches each file, writes them to
+    ``<capsule>/supplementary/files/<filename>``, and records a summary
+    at ``<capsule>/supplementary/fetched.json``.
+
+    Args:
+        kb_name: Knowledge base containing the paper.
+        paper_id: Paper DOI (with or without ``doi:`` prefix).
+        max_bytes_per_file: Skip individual files larger than this.
+            Default 50 MB. Raise this if you need to pull big SI archives.
+        max_bytes_per_record: Stop the loop once cumulative bytes for
+            this paper's SI exceed this. Default 200 MB.
+        text_only: When True, skip mime types we can't easily chunk
+            (zip, tar, mp4, octet-stream). PDFs/XLSX/CSV/TXT are kept.
+        force: Re-download even if fetched.json already exists.
+
+    Returns:
+        {"fetched": [...], "skipped": [...], "bytes": int} or {"error": ...}.
+    """
+    from pathlib import Path
+    from perspicacite.pipeline.capsule_builder import (
+        capsule_dir_for,
+        resolve_paper_from_metadata,
+    )
+    from perspicacite.pipeline.download.supplementary import (
+        download_supplementary_to_capsule,
+    )
+    import json as _json
+
+    kb = await mcp_state.session_store.get_kb_metadata(kb_name)
+    if kb is None:
+        return {"error": f"KB '{kb_name}' not found"}
+    rows = await mcp_state.vector_store.list_paper_metadata(kb.collection_name)
+    norm_id = _normalize_paper_id(paper_id)
+    row = next((r for r in rows if r.get("paper_id") == norm_id), None)
+    if row is None:
+        return {"error": f"paper '{paper_id}' not found in KB '{kb_name}'"}
+    paper = resolve_paper_from_metadata(row)
+    cap = capsule_dir_for(paper, root=mcp_state.config.capsule.root)
+    index_path = cap / "supplementary" / "index.json"
+    if not index_path.exists():
+        return {
+            "error": "no supplementary/index.json — build the capsule first "
+                     "(build_capsule or build_capsules_for_kb)",
+            "capsule_dir": str(cap),
+        }
+    fetched_path = cap / "supplementary" / "fetched.json"
+    if fetched_path.exists() and not force:
+        return {
+            "skipped": "already_fetched",
+            "summary": _json.loads(fetched_path.read_text(encoding="utf-8")),
+            "capsule_dir": str(cap),
+        }
+    manifest = _json.loads(index_path.read_text(encoding="utf-8"))
+    result = await download_supplementary_to_capsule(
+        cap,
+        manifest.get("items") or [],
+        max_bytes_per_file=max_bytes_per_file,
+        max_bytes_per_record=max_bytes_per_record,
+        text_only=text_only,
+    )
+    return {"capsule_dir": str(cap), **result}
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -1577,6 +1658,7 @@ _TOOL_NAMES: list[str] = [
     "build_kbs_from_zotero",
     "ingest_local_documents",
     "build_capsule",
+    "fetch_supplementary",
     "build_capsules_for_kb",
     "fetch_paper_resources",
 ]
