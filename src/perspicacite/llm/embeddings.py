@@ -1,6 +1,7 @@
 """Embedding providers for vector search."""
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
@@ -358,27 +359,51 @@ class CachedEmbeddingProvider:
 def create_embedding_provider(
     model: str,
     use_local_fallback: bool = True,
+    *,
+    cache_enabled: bool = False,
+    cache_path: "Path | str | None" = None,
+    cache_ttl_days: int = 0,
 ) -> EmbeddingProvider:
     """
     Factory function to create an embedding provider.
 
     Args:
         model: Model name (e.g., 'text-embedding-3-small' or 'all-MiniLM-L6-v2')
-        use_local_fallback: Whether to set up local fallback
+        use_local_fallback: Whether to set up local fallback for API providers.
+        cache_enabled: When True, wrap the returned provider in a
+            :class:`CachedEmbeddingProvider`. The cache key is
+            ``sha256(model || \\x00 || text)``, so switching models
+            transparently invalidates the cache.
+        cache_path: SQLite file backing the cache. Required when
+            ``cache_enabled`` is True.
+        cache_ttl_days: Days until a cached vector expires. 0 (default) =
+            keep forever. Embeddings are deterministic per (model, text),
+            so this is safe.
 
     Returns:
-        EmbeddingProvider instance
+        EmbeddingProvider instance (possibly wrapped in caching).
     """
-    # Detect if it's a sentence-transformers model
+    # Inner-provider selection (unchanged logic)
     if model.startswith("all-") or "/" not in model and "embedding" not in model:
-        # Local model
-        return SentenceTransformerEmbeddingProvider(model=model)
+        inner: EmbeddingProvider = SentenceTransformerEmbeddingProvider(model=model)
+    else:
+        primary = LiteLLMEmbeddingProvider(model=model)
+        if use_local_fallback:
+            fallback = SentenceTransformerEmbeddingProvider()
+            inner = FallbackEmbeddingProvider(primary, fallback)
+        else:
+            inner = primary
 
-    # API-based model
-    primary = LiteLLMEmbeddingProvider(model=model)
+    if not cache_enabled:
+        return inner
 
-    if use_local_fallback:
-        fallback = SentenceTransformerEmbeddingProvider()
-        return FallbackEmbeddingProvider(primary, fallback)
+    if cache_path is None:
+        raise ValueError(
+            "create_embedding_provider(cache_enabled=True) requires cache_path"
+        )
 
-    return primary
+    # Import lazily to avoid importing numpy unless the cache is used.
+    from perspicacite.llm.embedding_cache import EmbeddingCache
+
+    cache = EmbeddingCache(path=cache_path, ttl_days=cache_ttl_days)
+    return CachedEmbeddingProvider(inner=inner, cache=cache)
