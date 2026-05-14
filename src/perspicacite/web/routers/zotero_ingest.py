@@ -68,8 +68,14 @@ async def get_plan(
     than the one in config without restarting the server.
     """
     client = _client_from_state(library_id=library_id, library_type=library_type)
-    plan = await plan_kbs_from_zotero(client, include_unfiled=include_unfiled)
-    return {"library_name": "Library", "plan": [p.model_dump() for p in plan]}
+    # Resolve the real library name so KB names get a unique per-group
+    # prefix instead of "Library_*" — prevents collisions when running
+    # builds across multiple groups.
+    library_name = await client.get_library_name() or "Library"
+    plan = await plan_kbs_from_zotero(
+        client, include_unfiled=include_unfiled, library_label=library_name,
+    )
+    return {"library_name": library_name, "plan": [p.model_dump() for p in plan]}
 
 
 @router.post("/build-kbs/async")
