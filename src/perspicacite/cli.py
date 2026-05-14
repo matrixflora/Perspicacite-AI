@@ -1207,6 +1207,82 @@ def search_to_kb_cmd(
     asyncio.run(_run())
 
 
+@cli.command("export-kb")
+@click.option("--kb", "-k", "kb_name", required=True, help="KB to export.")
+@click.option("--out", "-o", "out_dir", required=True,
+              type=click.Path(), help="Destination directory (created if missing).")
+@click.option("--with-pdfs/--no-with-pdfs", default=True,
+              help="Copy cached PDFs into <out>/papers/ and reference them in BibTeX.")
+@click.option("--with-supplementary/--no-with-supplementary", default=False,
+              help="Copy supplementary files from capsules into <out>/supplementary/.")
+@click.option("--overwrite", is_flag=True, default=False,
+              help="Overwrite existing <kb>.bib if present.")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Emit the ExportReport as JSON instead of a summary.")
+@click.pass_context
+def export_kb_cmd(
+    ctx: click.Context,
+    kb_name: str,
+    out_dir: str,
+    with_pdfs: bool,
+    with_supplementary: bool,
+    overwrite: bool,
+    as_json: bool,
+) -> None:
+    """Export a KB as BibTeX + cached-PDF folder for Zotero / ZotFile import.
+
+    Produces ``<out>/<kb>.bib`` plus optional ``<out>/papers/<doi>.pdf``
+    files. Drag the .bib into Zotero (File → Import) and the PDFs
+    attach automatically — Zotero reads BetterBibTeX's ``file = {…}``
+    field on import.
+
+    Examples:
+        perspicacite export-kb -k diamond_sensors -o ~/exports/diamond
+        perspicacite export-kb -k metabo_llm -o ./exports/metabo --with-supplementary
+    """
+    from perspicacite.web.state import AppState
+    from perspicacite.pipeline.export_kb import export_kb
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        report = await export_kb(
+            app_state=state,
+            kb_name=kb_name,
+            out_dir=out_dir,
+            with_pdfs=with_pdfs,
+            with_supplementary=with_supplementary,
+            overwrite=overwrite,
+        )
+        if as_json:
+            import json as _json
+            click.echo(_json.dumps(report.to_dict(), indent=2, default=str))
+            return
+        click.echo(f"📤 export-kb: '{kb_name}' → {report.out_dir}")
+        click.echo(f"  • BibTeX: {report.bib_path}  ({report.bibtex_entries} entries)")
+        if with_pdfs:
+            click.echo(
+                f"  • PDFs: {report.pdfs_copied} copied, "
+                f"{len(report.pdfs_missing)} missing"
+            )
+            if report.pdfs_missing and len(report.pdfs_missing) <= 10:
+                click.echo("    missing DOIs:")
+                for d in report.pdfs_missing:
+                    click.echo(f"      {d}")
+        if with_supplementary:
+            click.echo(f"  • SI files: {report.supplementary_copied} copied")
+        if report.skipped_no_doi:
+            click.echo(f"  • {report.skipped_no_doi} entries had no DOI (BibTeX entry written without url/file)")
+        click.echo("")
+        click.echo(f"Import into Zotero: File → Import → '{report.bib_path}'")
+
+    try:
+        asyncio.run(_run())
+    except FileExistsError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+
 @cli.command("check-cookies")
 @click.option(
     "--cookies-path",

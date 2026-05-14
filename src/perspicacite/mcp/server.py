@@ -1901,6 +1901,68 @@ async def build_kb_from_search(
 
 
 # =============================================================================
+# Tool 20: export_kb
+# =============================================================================
+
+
+@mcp.tool()
+async def export_kb(
+    kb_name: str,
+    out_dir: str,
+    with_pdfs: bool = True,
+    with_supplementary: bool = False,
+    overwrite: bool = False,
+) -> str:
+    """Export a KB as BibTeX + cached-PDF folder for Zotero / ZotFile import.
+
+    Produces ``<out_dir>/<kb_name>.bib`` plus optional
+    ``<out_dir>/papers/<sanitized-doi>.pdf`` for every paper with a
+    cached PDF. The BibTeX file references each PDF via the BetterBibTeX
+    ``file`` field so Zotero attaches them on import. With
+    ``with_supplementary=True``, also copies any
+    ``data/capsules/<paper_id>/supplementary/files/*`` into
+    ``<out_dir>/supplementary/<paper_id>/``.
+
+    Use this for the citation-manager-agnostic preservation path —
+    Zotero-free, filesystem-only, portable, git-friendly.
+
+    Args:
+        kb_name: KB to export.
+        out_dir: Destination directory (created if missing).
+        with_pdfs: Copy cached PDFs and reference them in the BibTeX file.
+        with_supplementary: Copy supplementary files from capsules.
+        overwrite: Replace an existing ``<kb_name>.bib`` if present.
+
+    Returns:
+        JSON :class:`ExportReport` with counts and paths.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+    try:
+        from perspicacite.pipeline.export_kb import export_kb as _export
+
+        report = await _export(
+            app_state=state,
+            kb_name=kb_name,
+            out_dir=out_dir,
+            with_pdfs=with_pdfs,
+            with_supplementary=with_supplementary,
+            overwrite=overwrite,
+        )
+        logger.info(
+            "mcp_export_kb", kb=kb_name, out=out_dir,
+            papers=report.papers, pdfs=report.pdfs_copied,
+        )
+        return _json_ok(report.to_dict())
+    except FileExistsError as exc:
+        return _json_error(str(exc))
+    except Exception as e:
+        logger.error("mcp_export_kb_error", kb=kb_name, error=str(e))
+        return _json_error(f"export_kb failed: {e}")
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -1925,6 +1987,7 @@ _TOOL_NAMES: list[str] = [
     "fetch_paper_resources",
     "route_kbs",
     "build_kb_from_search",
+    "export_kb",
 ]
 
 
