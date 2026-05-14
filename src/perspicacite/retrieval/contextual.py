@@ -186,6 +186,118 @@ async def generate_chunk_context(
     return text
 
 
+# ---------------------------------------------------------------------------
+# Document-tier helpers (one prefix per paper, shared across all chunks)
+# ---------------------------------------------------------------------------
+
+
+_DOC_SUMMARY_PROMPT_SYSTEM = """You write retrieval context for a research-paper search system.
+
+Given a research paper's full text, produce a single 50-100 word
+contextual paragraph that captures: the paper's overall subject; the
+methods or instruments used; the main finding; key entities (organisms,
+datasets, software). The paragraph is prepended to every chunk of the
+paper before embedding, so it should help a search query land on this
+paper regardless of which chunk it matches.
+
+Return ONLY the paragraph — no headers, no markdown."""
+
+
+_DOC_SUMMARY_PROMPT_USER = """<paper>
+{document}
+</paper>
+
+Write the 50-100 word retrieval-context paragraph:"""
+
+
+def abstract_prefix_for_paper(
+    *, paper_text: str, abstract: str | None, max_chars: int = 500,
+) -> str:
+    """Free document-tier context: returns the abstract when present,
+    else a leading slice of the paper text. Same string is reused for
+    every chunk of this paper, so zero LLM cost.
+    """
+    if abstract and abstract.strip():
+        text = abstract.strip()
+    elif paper_text:
+        text = paper_text[:max_chars * 2].strip()
+    else:
+        return ""
+    # Single-line + capped
+    text = " ".join(text.split())
+    if len(text) > max_chars:
+        text = text[: max_chars - 1].rstrip() + "…"
+    return text
+
+
+async def generate_document_summary(
+    *,
+    paper_id: str,
+    document_text: str,
+    llm_client: Any,
+    model: str = "claude-haiku-4-5",
+    provider: str = "anthropic",
+    max_chars: int = 500,
+    use_cache: bool = True,
+) -> str:
+    """Generate (and cache) ONE 50-100 word retrieval-context paragraph
+    for a paper. Same string is reused as the prefix for every chunk of
+    the paper at embedding time. ~1/N the cost of full per-chunk
+    contextual retrieval for N chunks.
+    """
+    if not document_text:
+        return ""
+
+    doc_sha = _document_sha(document_text)
+    # Document-tier key omits chunk_index — one summary per (paper, doc version).
+    key = _cache_key(paper_id, -1, doc_sha)
+    if use_cache:
+        cached = _cache_load(key)
+        if cached is not None:
+            logger.debug("contextual_doc_cache_hit", paper_id=paper_id)
+            return cached[:max_chars]
+
+    doc = document_text
+    if len(doc) > 50_000:
+        doc = doc[:50_000] + "\n...[truncated for context generation]"
+
+    messages = [
+        {"role": "system", "content": _DOC_SUMMARY_PROMPT_SYSTEM},
+        {"role": "user", "content": _DOC_SUMMARY_PROMPT_USER.format(document=doc)},
+    ]
+    try:
+        text = await llm_client.complete(
+            messages=messages,
+            model=model,
+            provider=provider,
+            max_tokens=200,
+            temperature=0.2,
+            stage="contextual.doc_summary",
+        )
+    except Exception as e:
+        logger.info(
+            "contextual_doc_summary_failed",
+            paper_id=paper_id,
+            error=str(e),
+        )
+        return ""
+
+    text = " ".join((text or "").split()).strip()
+    if not text:
+        return ""
+    if len(text) > max_chars:
+        text = text[: max_chars - 1].rstrip() + "…"
+
+    if use_cache:
+        _cache_store(key, text)
+    logger.info(
+        "contextual_doc_summary_generated",
+        paper_id=paper_id,
+        chars=len(text),
+    )
+    return text
+
+
 async def generate_chunk_contexts_bulk(
     *,
     paper_id: str,
