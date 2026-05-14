@@ -42,6 +42,11 @@ class SciLExAdapter:
             logger.warning("scilex_not_available")
             return False
 
+    @property
+    def available(self) -> bool:
+        """True if the SciLEx package is importable."""
+        return self._scilex_available
+
     async def search(
         self,
         query: str,
@@ -51,7 +56,12 @@ class SciLExAdapter:
         apis: list[str] | None = None,
         article_type: str | None = None,
     ) -> list[Paper]:
-        """Search academic databases via SciLEx."""
+        """Search academic databases via SciLEx.
+
+        Returns an empty list when the optional SciLEx package isn't
+        installed. Callers should check ``self.available`` first to
+        distinguish "SciLEx missing" from "search returned zero hits".
+        """
         if not self._scilex_available:
             logger.warning("scilex_not_available_fallback")
             return []
