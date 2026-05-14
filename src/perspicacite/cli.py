@@ -1249,6 +1249,73 @@ def search_to_kb_cmd(
     asyncio.run(_run())
 
 
+@cli.command("delete-kb")
+@click.argument("name")
+@click.option("--yes", "-y", "confirm", is_flag=True, default=False,
+              help="Skip the confirmation prompt.")
+@click.option("--keep-collection", is_flag=True, default=False,
+              help="Only drop the KB metadata row; leave the Chroma "
+                   "collection in place (orphans the embeddings; "
+                   "useful when you intend to re-attach a new KB to "
+                   "the same collection name).")
+@click.pass_context
+def delete_kb_cmd(
+    ctx: click.Context,
+    name: str,
+    confirm: bool,
+    keep_collection: bool,
+) -> None:
+    """Permanently delete a knowledge base.
+
+    Drops both the metadata row in SQLite AND the Chroma collection
+    (so the embeddings are reclaimed). Cached PDFs in
+    ``pdf_download.cache_dir`` are *not* removed — they're per-DOI,
+    not per-KB, and useful for future ingests.
+
+    Examples:
+        perspicacite delete-kb _smoketest_st2kb -y
+        perspicacite delete-kb scratch_kb --keep-collection
+    """
+    from perspicacite.web.state import AppState
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        kb = await state.session_store.get_kb_metadata(name)
+        if not kb:
+            click.echo(f"KB '{name}' not found.", err=True)
+            sys.exit(1)
+        if not confirm:
+            click.echo(
+                f"About to delete KB '{name}' "
+                f"({kb.paper_count or 0} papers, {kb.chunk_count or 0} chunks)."
+            )
+            click.confirm("Proceed?", abort=True)
+        # Drop the Chroma collection first so a failure there doesn't
+        # leave the metadata row orphaned.
+        collection_dropped = False
+        if not keep_collection and kb.collection_name:
+            try:
+                await state.vector_store.delete_collection(kb.collection_name)
+                collection_dropped = True
+            except Exception as exc:
+                click.echo(
+                    f"Warning: failed to delete Chroma collection "
+                    f"{kb.collection_name}: {exc}", err=True,
+                )
+        deleted = await state.session_store.delete_kb_metadata(name)
+        if deleted:
+            click.echo(
+                f"✓ deleted KB '{name}'"
+                + (f" + collection {kb.collection_name}" if collection_dropped else "")
+            )
+        else:
+            click.echo(f"✗ KB metadata row not deleted (race?)", err=True)
+            sys.exit(1)
+
+    asyncio.run(_run())
+
+
 @cli.command("expand-kb")
 @click.option("--kb", "-k", "kb_name", required=True, help="KB to grow.")
 @click.option("--direction", type=click.Choice(["forward", "backward", "both"]),

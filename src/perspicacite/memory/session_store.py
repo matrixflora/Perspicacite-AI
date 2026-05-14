@@ -397,6 +397,21 @@ class SessionStore:
                 for r in rows
             ]
 
+    async def delete_kb_metadata(self, name: str) -> bool:
+        """Delete a KB row from ``kb_metadata``.
+
+        Doesn't touch the underlying Chroma collection — the caller
+        is responsible for ``vector_store.delete_collection`` if they
+        also want the embeddings gone. Returns True when a row was
+        deleted, False when no such KB existed.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cur = await db.execute(
+                "DELETE FROM kb_metadata WHERE name = ?", (name,)
+            )
+            await db.commit()
+            return (cur.rowcount or 0) > 0
+
     async def delete_conversation(self, conv_id: str) -> bool:
         """Delete a conversation and all its messages.
 
