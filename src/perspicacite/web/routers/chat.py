@@ -299,29 +299,35 @@ async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] =
         },
     )
 
-    with collecting(collector):
-        async for event in app_state.orchestrator.chat(
-            query=request.query,
-            session_id=request.session_id,
-            kb_name=request.kb_name,
-            stream=True,
-            max_papers_to_download=request.max_papers_to_download,
-        ):
-            # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
-            # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
-            if event.get("type") == "answer":
-                content = event.get("content") or ""
-                safe = {
-                    "type": "answer",
-                    "session_id": event.get("session_id"),
-                    "conversation_id": conversation_id,
-                    "message_id": assistant_message_id,
-                    "content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-                }
-                data = json.dumps(safe, separators=(",", ":"))
-            else:
-                data = json.dumps(event, separators=(",", ":"))
-            yield f"data: {data}\n\n"
+    # See engine.py:query_stream — `with collecting()` inside an async
+    # generator consumed by StreamingResponse can raise
+    # "Token was created in a different Context" when the contextvar token
+    # is reset across asyncio Context boundaries. Set without resetting.
+    from perspicacite.provenance.context import set_collector
+    set_collector(collector)
+
+    async for event in app_state.orchestrator.chat(
+        query=request.query,
+        session_id=request.session_id,
+        kb_name=request.kb_name,
+        stream=True,
+        max_papers_to_download=request.max_papers_to_download,
+    ):
+        # Large answer bodies as JSON strings are fragile over chunked HTTP (mid-string
+        # splits → client JSON.parse "Unterminated string"). Ship answer text as base64.
+        if event.get("type") == "answer":
+            content = event.get("content") or ""
+            safe = {
+                "type": "answer",
+                "session_id": event.get("session_id"),
+                "conversation_id": conversation_id,
+                "message_id": assistant_message_id,
+                "content_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+            }
+            data = json.dumps(safe, separators=(",", ":"))
+        else:
+            data = json.dumps(event, separators=(",", ":"))
+        yield f"data: {data}\n\n"
 
     # End of stream
     yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
