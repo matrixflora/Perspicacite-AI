@@ -104,6 +104,8 @@ markers = [
     "live: Tests requiring API keys (deselect with -m 'not live')",
     "smoke: MCP tool inventory smoke tests (fast, no real I/O)",
     "config: Config loading audit tests (fast, no LLM calls, small YAML reads only)",
+    "e2e: End-to-end pipeline tests (Wave 6.1, mocked LLM + embedder)",
+    "perf: Performance regression tests (Wave 6.3, baseline comparison)",
 ]
 
 [tool.ruff]
