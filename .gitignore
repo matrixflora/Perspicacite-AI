@@ -98,6 +98,7 @@ packages_to_use/
 !docs/mcp-smoke-status-*.md
 !docs/config-audit-status-*.md
 !docs/ci-setup-*.md
+!docs/llm-cache-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
@@ -138,3 +139,4 @@ old_tools/
 
 # Local Claude Code MCP config (server must be running; not for CI)
 .mcp.json
+coverage.xml
