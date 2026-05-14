@@ -166,6 +166,8 @@ class AgentCLIClient:
         output_format: str = "text",
         result_json_path: str | None = None,
         output_file_flag: str | None = None,
+        usage_input_tokens_path: str | None = None,
+        usage_output_tokens_path: str | None = None,
         timeout: float = 180.0,
         cwd: str | None = None,
         env_extra: dict[str, str] | None = None,
@@ -186,6 +188,8 @@ class AgentCLIClient:
         # when the CLI prints banner / progress output to stdout that
         # we'd otherwise need to scrape.
         self.output_file_flag = output_file_flag
+        self.usage_input_tokens_path = usage_input_tokens_path
+        self.usage_output_tokens_path = usage_output_tokens_path
         self.timeout = timeout
         self.cwd = cwd
         self.env_extra = dict(env_extra or {})
@@ -317,7 +321,7 @@ class AgentCLIClient:
                     pass
         else:
             raw = stdout.decode("utf-8", errors="replace").strip()
-        text = self._parse_output(raw)
+        text, in_tokens, out_tokens = self._parse_output_with_usage(raw)
 
         logger.info(
             "agent_cli_call_done",
@@ -339,8 +343,8 @@ class AgentCLIClient:
                     model=resolved_model or "default",
                     prompt_messages=messages,
                     response_text=text,
-                    prompt_tokens=0,  # unknown — CLI doesn't surface usage
-                    completion_tokens=0,
+                    prompt_tokens=in_tokens,
+                    completion_tokens=out_tokens,
                     latency_ms=latency_ms,
                 )
         except Exception:
@@ -386,3 +390,42 @@ class AgentCLIClient:
                     if parts:
                         return "\n".join(parts)
         return raw
+
+    def _parse_output_with_usage(self, raw: str) -> tuple[str, int, int]:
+        """Return ``(assistant_text, input_tokens, output_tokens)``.
+
+        Backwards compat: ``_parse_output`` still returns just the
+        text. This wider variant is used by :meth:`complete` so the
+        provenance row records honest counts.
+
+        Zeros are returned when:
+        - ``output_format != "json"`` (no payload to walk).
+        - No usage paths configured.
+        - The JSON is malformed.
+        - A path resolves to a non-int value.
+        """
+        text = self._parse_output(raw)
+        if self.output_format != "json":
+            return text, 0, 0
+        if not (self.usage_input_tokens_path or self.usage_output_tokens_path):
+            return text, 0, 0
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return text, 0, 0
+
+        def _walk_int(path: str | None) -> int:
+            if not path:
+                return 0
+            v = _walk_json_path(payload, path)
+            if isinstance(v, bool):  # bools are ints in Python — exclude
+                return 0
+            if isinstance(v, int):
+                return v
+            return 0
+
+        return (
+            text,
+            _walk_int(self.usage_input_tokens_path),
+            _walk_int(self.usage_output_tokens_path),
+        )
