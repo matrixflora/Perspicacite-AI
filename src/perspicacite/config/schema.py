@@ -230,6 +230,22 @@ class LLMProviderConfig(BaseModel):
             "for CLIs that pollute stdout with banner / progress."
         ),
     )
+    usage_input_tokens_path: str | None = Field(
+        default=None,
+        description=(
+            "Dotted JSON path to input-token count in the CLI's JSON "
+            "output (e.g. 'usage.input_tokens'). Only used when "
+            "output_format='json'. None → counts stay at 0 in "
+            "provenance (today's behaviour). Wave 2.3."
+        ),
+    )
+    usage_output_tokens_path: str | None = Field(
+        default=None,
+        description=(
+            "Dotted JSON path to output-token count. Same rules as "
+            "usage_input_tokens_path."
+        ),
+    )
     cwd: str | None = Field(
         default=None,
         description="Working directory for the subprocess. ``None`` = inherit.",
