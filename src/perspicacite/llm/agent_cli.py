@@ -297,12 +297,27 @@ class AgentCLIClient:
         latency_ms = (time.monotonic() - t0) * 1000.0
 
         if proc.returncode != 0:
-            err = stderr.decode("utf-8", errors="replace")[:500]
+            err_full = (stderr or b"").decode("utf-8", errors="replace")
+            out_str = (stdout or b"").decode("utf-8", errors="replace")
+            err = err_full[:500]
             if out_path:
                 try:
                     os.unlink(out_path)
                 except OSError:
                     pass
+            # Detect rate-limit signals — raise structured error so the
+            # orchestrator / Wave 3.2 fallback chain can react.
+            from perspicacite.llm.errors import (
+                RateLimitError, detect_rate_limit, suggested_action,
+            )
+            hit = detect_rate_limit(err_full) or detect_rate_limit(out_str)
+            if hit is not None:
+                raise RateLimitError(
+                    f"{self.provider_label}: rate limit. "
+                    f"{suggested_action(self.provider_label)}",
+                    provider=self.provider_label,
+                    retry_after_seconds=hit.retry_after_seconds,
+                )
             raise RuntimeError(
                 f"{self.provider_label}: CLI exited {proc.returncode}: {err}"
             )
