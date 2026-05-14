@@ -367,6 +367,12 @@ class AsyncLLMClient:
                 stage=stage_label, provider=provider, model=model,
             )
 
+        # ---- budget (Wave 2.4) ---------------------------------------
+        from perspicacite.llm.budget import get_budget_tracker
+        tracker = get_budget_tracker()
+        if tracker is not None:
+            tracker.check()
+
         # MCP sampling — first try the connected client's
         # sampling/createMessage protocol when enabled and a ctx is
         # bound. Falls through on capability error.
@@ -401,6 +407,7 @@ class AsyncLLMClient:
                     response=content, latency_ms=0.0,
                     input_tokens=0, output_tokens=0,
                 )
+            # TODO: budget — agent-CLI usage plumbing
             return content
 
         provider_config = self._get_provider_config(provider)
@@ -475,6 +482,12 @@ class AsyncLLMClient:
                         completion_tokens=int(usage.get("completion_tokens", 0) or 0),
                         latency_ms=latency_ms,
                     )
+                if tracker is not None:
+                    tracker.record(
+                        provider=provider, model=model,
+                        input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                        output_tokens=int(usage.get("completion_tokens", 0) or 0),
+                    )
                 if cache is not None and cache_key is not None:
                     await cache.put(
                         key=cache_key, provider=provider, model=model,
@@ -513,6 +526,12 @@ class AsyncLLMClient:
                     prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
                     completion_tokens=int(usage.get("completion_tokens", 0) or 0),
                     latency_ms=latency_ms,
+                )
+            if tracker is not None:
+                tracker.record(
+                    provider=provider, model=model,
+                    input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                    output_tokens=int(usage.get("completion_tokens", 0) or 0),
                 )
             if cache is not None and cache_key is not None:
                 await cache.put(
