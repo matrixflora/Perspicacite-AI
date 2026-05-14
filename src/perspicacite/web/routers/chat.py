@@ -189,7 +189,7 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             elif event_type == "error":
                 # Bug 3: Capture error instead of swallowing
                 error_message = data.get("message", "Unknown pipeline error")
-                logger.warning("non_streaming_pipeline_error", error=error_message)
+                logger.warning("non_streaming_pipeline_error: %s", error_message)
 
         # Bug 2: If no "answer" event arrived, fall back to accumulated tokens
         if not answer and answer_tokens:
@@ -376,6 +376,16 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
     elif request.kb_names and len(request.kb_names) == 1:
         effective_kb_name = request.kb_names[0]
 
+    # Resolve provider/model from server-side config so the chat router
+    # respects llm.default_provider / llm.default_model from config.yml
+    # rather than the hard-coded RAGRequest defaults (deepseek).
+    cfg_llm = getattr(app_state, "config", None)
+    default_provider = "deepseek"
+    default_model = "deepseek-chat"
+    if cfg_llm is not None and getattr(cfg_llm, "llm", None) is not None:
+        default_provider = cfg_llm.llm.default_provider or default_provider
+        default_model = cfg_llm.llm.default_model or default_model
+
     # Create RAG request
     rag_request = RAGReq(
         query=request.query,
@@ -386,8 +396,9 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
         databases=request.databases,
         conversation_history=conv_hist,
         max_papers_retrieval=request.max_papers,
+        provider=default_provider,
+        model=default_model,
     )
-
     # Execute using RAGEngine streaming
     full_answer = ""
     sources = []
