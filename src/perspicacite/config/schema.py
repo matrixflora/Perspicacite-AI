@@ -156,6 +156,15 @@ class KnowledgeBaseConfig(BaseModel):
         ),
     )
 
+    # ---- MCP resources (Wave 5.1) ----------------------------------
+    mcp_resource_max_events: int = Field(
+        default=1000,
+        description=(
+            "Max KB-log events returned by the "
+            "perspicacite://kb/{name}/log MCP resource."
+        ),
+    )
+
     # ---- ORCID disambiguation (Wave 4.4) ---------------------------
     orcid_cache_path: Path = Field(
         default=Path("data/orcid_cache.db"),
