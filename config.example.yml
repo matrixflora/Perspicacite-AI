@@ -261,3 +261,15 @@ capsule:
   auto_build_on_ingest: true
   root: ./data/capsules
   min_version: "0.1"
+
+# =============================================================================
+# Multimodal RAG (Cycle B): figures-in-prompt + inline thumbnails in answers
+# =============================================================================
+multimodal:
+  enabled: true              # Pull figure_refs from retrieved chunks into the LLM call
+  max_images: 6              # Cap on images sent per LLM call
+  vision_allowlist:          # Prefix-match against the model string (provider/model)
+    - "anthropic/claude-"
+    - "claude-"
+    - "openai/gpt-4o"
+    - "gpt-4o"
