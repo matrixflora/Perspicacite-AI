@@ -156,6 +156,30 @@ class KnowledgeBaseConfig(BaseModel):
         ),
     )
 
+    # ---- ORCID disambiguation (Wave 4.4) ---------------------------
+    orcid_cache_path: Path = Field(
+        default=Path("data/orcid_cache.db"),
+        description=(
+            "SQLite cache for name→ORCID resolutions. Covered by the "
+            "data/*.db .gitignore rule."
+        ),
+    )
+    orcid_cache_ttl_days: int = Field(
+        default=30,
+        ge=0,
+        description="Days before a cached resolution expires. 0 = forever.",
+    )
+    orcid_confidence_threshold: float = Field(
+        default=0.20,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum (top1 - top2) / top1 spread between the best and "
+            "second-best OpenAlex candidates. Below this, resolution "
+            "returns None (ambiguous)."
+        ),
+    )
+
     # ---- multimodal visual extraction (Wave 4.1) -------------------
     # Render each PDF page and ask a vision-capable LLM to extract
     # figures / tables / formulas. Off by default — opt-in safety.
