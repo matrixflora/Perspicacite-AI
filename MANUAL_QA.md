@@ -203,3 +203,34 @@ Idempotency:
 
 Provenance:
 - After retro-build, inspect the provenance JSONL sidecar; confirm chunks now carry `source_section`, `char_span`, and `figure_refs`/`resource_refs` when applicable.
+
+## Capsule + multimodal RAG (2026-05-14, cycle B)
+
+Prerequisites: a vision-capable model in `llm.default_model` (e.g., `anthropic/claude-3-5-sonnet-20241022` or `openai/gpt-4o`), Cycle A capsule auto-build enabled, and at least one PDF-ingested paper whose capsule has figures.
+
+Capsule figure HTTP endpoints:
+- `curl http://localhost:8000/api/capsule/<doi:URL-encoded>/figures` → JSON list with `filename`/`page`/`index`/`figure_number`/`caption`.
+- `curl http://localhost:8000/api/capsule/<doi:URL-encoded>/figure/pdf_p<page>_i<idx> --output /tmp/fig.png` → PNG bytes; non-empty file.
+- Unknown paper / figure id → HTTP 404.
+
+Per-mode multimodal hook (run in each mode against a query that retrieves at least one chunk with `figure_refs`):
+- [ ] **Basic** — figures appear in the LLM input (verify via the worker's request log) and the answer references them by `pdf_pN_iM` id.
+- [ ] **Advanced** — same. Two-pass variant also wraps the synthesis call.
+- [ ] **Profound** — final-draft synthesis receives figures; intermediate reflection passes are text-only.
+- [ ] **Agentic** — best-effort: when the orchestrator's `step_results` happens to contain DocumentChunks with `figure_refs`, the final answer is multimodal; otherwise text-only fallback. (Documented limitation: paper dicts are the common case, so most agentic answers will fall through to text-only until Cycle C threads chunks deeper.)
+- [ ] **Literature survey** — no LLM synthesis call exists today; the survey report is deterministic. Multimodal hook intentionally absent (marker comment in source).
+- [ ] **Contradiction** — both the streaming synthesis and the < MIN_PAPERS fallback receive figures when retrieved chunks carry `figure_refs`.
+
+Non-vision model fallback:
+- [ ] Switch `llm.default_model` to a text-only model (e.g., `deepseek/deepseek-chat`); repeat the basic-mode query. Confirm no figures are sent to the LLM, no `Available figures` block leaks into the system prompt, answer renders text-only.
+
+UI inline thumbnails:
+- [ ] In a fresh chat turn, ask a question that retrieves figure-bearing chunks; confirm `pdf_pN_iM` tokens in the answer become inline `<img class="inline-figure">` thumbnails pointing at `/api/capsule/<paper>/figure/<token>`.
+- [ ] Click a thumbnail → full-screen lightbox opens; click again → closes.
+- [ ] Unknown figure-id tokens that don't match any in-scope paper's capsule remain as plain text (graceful no-op).
+
+CapsuleReader (ingest an ASB-shaped capsule):
+- [ ] Copy an ASB-produced capsule directory (one with `metadata.json` containing `capsule_version`) into a configured `local_docs.allowed_roots` location.
+- [ ] Trigger `ingest_local_documents` with that directory (CLI / MCP / UI).
+- [ ] Confirm chunks are written: each chunk's `metadata.source_section` matches a block's `section`, `metadata.figure_refs` propagates from the block, and `metadata.resource_refs` is populated from `resources.json`.
+- [ ] Mixing capsule-dirs and regular PDFs in the same call should route each path correctly (capsule via `ingest_capsule`, PDFs via `_ingest_files`).
