@@ -261,24 +261,18 @@ def _extract_supplementary_from_xml(xml_bytes: bytes, pmcid: str) -> list[dict] 
     def _walk(el: ElementTree.Element) -> None:
         for child in el:
             if _tag(child) in ("supplementary-material", "inline-supplementary-material"):
+                # Prefer the href on the block itself; fall back to child
+                # <media>, <graphic>, <ext-link> (some papers put it there).
                 href = (
                     child.attrib.get(f"{ns_x}href")
                     or child.attrib.get("href")
                     or ""
                 ).strip()
-                if not href:
-                    # Some SI entries reference an external link via <ext-link>.
-                    for sub in child:
-                        if _tag(sub) == "ext-link":
-                            href = (
-                                sub.attrib.get(f"{ns_x}href")
-                                or sub.attrib.get("href")
-                                or ""
-                            ).strip()
-                            if href:
-                                break
-                # Label and caption — concatenate all text from <label>
-                # and <caption> when present.
+                mime = (
+                    child.attrib.get("mimetype")
+                    or child.attrib.get("mime-subtype")
+                    or ""
+                )
                 label = ""
                 caption = ""
                 for sub in child:
@@ -290,11 +284,18 @@ def _extract_supplementary_from_xml(xml_bytes: bytes, pmcid: str) -> list[dict] 
                             "".join(p.itertext()).strip()
                             for p in sub
                         ).strip() or "".join(sub.itertext()).strip()
-                mime = (
-                    child.attrib.get("mimetype")
-                    or child.attrib.get("mime-subtype")
-                    or ""
-                )
+                    elif stag in ("media", "graphic", "self-uri", "ext-link") and not href:
+                        href = (
+                            sub.attrib.get(f"{ns_x}href")
+                            or sub.attrib.get("href")
+                            or ""
+                        ).strip()
+                        if not mime:
+                            mime = (
+                                sub.attrib.get("mimetype")
+                                or sub.attrib.get("mime-subtype")
+                                or ""
+                            )
                 # PMC mirrors SI files at /pmc/articles/<pmcid>/bin/<href>
                 # when href is a relative filename. External href (http://...)
                 # passes through unchanged.
