@@ -1125,6 +1125,10 @@ def import_browser_cookies_cmd(
                    "SciLEx toward adjacent literature.")
 @click.option("--kb-aware-terms", type=int, default=8, show_default=True,
               help="Max number of KB-derived terms to inject.")
+@click.option("--rephrase", type=int, default=0, show_default=True,
+              help="Generate N LLM-rephrased query variants for "
+                   "coverage. Each variant runs its own SciLEx search; "
+                   "hits are deduped by DOI. 0 = single query only.")
 @click.pass_context
 def search_to_kb_cmd(
     ctx: click.Context,
@@ -1144,6 +1148,7 @@ def search_to_kb_cmd(
     screen_threshold: float,
     kb_aware: bool,
     kb_aware_terms: int,
+    rephrase: int,
 ) -> None:
     """Build or enrich a KB from a SciLEx multi-database search.
 
@@ -1188,6 +1193,7 @@ def search_to_kb_cmd(
             screen_threshold=screen_threshold,
             kb_aware=kb_aware,
             kb_aware_terms=kb_aware_terms,
+            rephrase=rephrase,
         )
         if as_json:
             import json as _json
@@ -1199,6 +1205,11 @@ def search_to_kb_cmd(
                 f"  • KB-aware: query augmented with "
                 f"{', '.join(report.injected_terms)}"
             )
+        if report.rephrase_variants:
+            click.echo(f"  • rephrase: {len(report.rephrase_variants)} variants")
+            for v in report.rephrase_variants:
+                hits = report.rephrase_hits_per_variant.get(v, 0)
+                click.echo(f"      [{hits:>3} hits] {v}")
         if report.kb_created:
             click.echo(f"  • KB created")
         click.echo(

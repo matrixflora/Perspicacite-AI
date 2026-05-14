@@ -1826,6 +1826,7 @@ async def build_kb_from_search(
     screen_threshold: float = 0.5,
     kb_aware: bool = False,
     kb_aware_terms: int = 8,
+    rephrase: int = 0,
 ) -> str:
     """Build or enrich a KB from a SciLEx multi-database search.
 
@@ -1892,6 +1893,7 @@ async def build_kb_from_search(
             screen_threshold=screen_threshold,
             kb_aware=kb_aware,
             kb_aware_terms=kb_aware_terms,
+            rephrase=rephrase,
         )
         logger.info(
             "mcp_build_kb_from_search",

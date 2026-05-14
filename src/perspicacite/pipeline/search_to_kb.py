@@ -86,6 +86,83 @@ def _kb_aware_term_candidates(text: str) -> list[str]:
     ]
 
 
+_REPHRASE_PROMPT = """You are helping search scientific literature. The user wants to
+maximise coverage of papers on this topic by issuing multiple SciLEx
+queries with different phrasings. Generate {n} alternate phrasings of
+the query below. Each phrasing should:
+
+- Preserve the scientific meaning exactly.
+- Use different terminology — synonyms, controlled vocabulary
+  (MeSH-style), spelled-out vs abbreviated forms, related sub-fields.
+- Be one short phrase (3-10 words). No leading numbers or bullets.
+
+Return JSON only, in this exact shape:
+{{"variants": ["...", "...", "..."]}}
+
+Original query:
+{query}
+"""
+
+
+async def rephrase_query(
+    *,
+    query: str,
+    num_variants: int,
+    llm_client: Any,
+    model: str = "claude-haiku-4-5",
+    provider: str = "anthropic",
+) -> list[str]:
+    """Generate ``num_variants`` alternate phrasings via one LLM call.
+
+    Returns ``[]`` on parse failure or missing client — callers should
+    treat that as "no rephrase, fall back to single-query search".
+    The original query is *not* included in the return value; callers
+    add it explicitly to the search loop.
+    """
+    if num_variants < 1 or llm_client is None:
+        return []
+    import json as _json
+    prompt = _REPHRASE_PROMPT.format(n=num_variants, query=query)
+    try:
+        text = await llm_client.complete(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            provider=provider,
+            max_tokens=400,
+            temperature=0.4,
+            stage="search_to_kb_rephrase",
+        )
+    except Exception as exc:
+        logger.warning("rephrase_query_llm_failed", error=str(exc))
+        return []
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("```", 2)[1] if cleaned.count("```") >= 2 else cleaned
+        if cleaned.lstrip().lower().startswith("json"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
+        cleaned = cleaned.strip().rstrip("`")
+    try:
+        obj = _json.loads(cleaned)
+    except Exception as exc:
+        logger.warning(
+            "rephrase_query_unparseable",
+            error=str(exc), sample=cleaned[:200],
+        )
+        return []
+    variants = obj.get("variants") or []
+    out: list[str] = []
+    seen: set[str] = {query.strip().lower()}
+    for v in variants:
+        if not isinstance(v, str):
+            continue
+        s = v.strip()
+        if not s or s.lower() in seen:
+            continue
+        seen.add(s.lower())
+        out.append(s)
+    return out[:num_variants]
+
+
 async def kb_aware_query(
     *,
     app_state: Any,
@@ -160,6 +237,8 @@ class IngestReport:
     kb_created: bool = False
     augmented_query: str | None = None
     injected_terms: list[str] = field(default_factory=list)
+    rephrase_variants: list[str] = field(default_factory=list)
+    rephrase_hits_per_variant: dict[str, int] = field(default_factory=dict)
     searched: int = 0
     filtered_out: int = 0
     candidates: int = 0
@@ -475,6 +554,9 @@ async def search_filter_and_ingest(
     screen_threshold: float = 0.5,
     kb_aware: bool = False,
     kb_aware_terms: int = 8,
+    rephrase: int = 0,
+    rephrase_model: str = "claude-haiku-4-5",
+    rephrase_provider: str = "anthropic",
 ) -> IngestReport:
     """End-to-end: SciLEx search → filter → optionally create KB → ingest.
 
@@ -503,14 +585,49 @@ async def search_filter_and_ingest(
                 original=query, injected=injected,
             )
 
-    papers = await run_search(
-        query=effective_query,
-        max_results=max_results,
-        databases=databases,
-        year_min=flt.min_year,
-        year_max=flt.max_year,
-        article_type=article_type,
-    )
+    # Optional LLM-rephrased multi-query expansion: one extra LLM call
+    # generates N variants, we run SciLEx once per variant (+ once for
+    # the original) and merge. Trades cost for coverage on queries
+    # where lexical choice matters (e.g. "metabolomics annotation" vs
+    # "metabolite identification" vs "mass spec annotation").
+    queries_to_run = [effective_query]
+    if rephrase > 0:
+        variants = await rephrase_query(
+            query=effective_query,
+            num_variants=rephrase,
+            llm_client=app_state.llm_client,
+            model=rephrase_model,
+            provider=rephrase_provider,
+        )
+        if variants:
+            queries_to_run.extend(variants)
+            report.rephrase_variants = variants
+            logger.info(
+                "search_to_kb_rephrase",
+                original=effective_query, variants=variants,
+            )
+
+    # Fan out across all queries, dedup hits by DOI before filtering.
+    seen_dois: set[str] = set()
+    merged_papers: list[Any] = []
+    for q in queries_to_run:
+        hits = await run_search(
+            query=q,
+            max_results=max_results,
+            databases=databases,
+            year_min=flt.min_year,
+            year_max=flt.max_year,
+            article_type=article_type,
+        )
+        report.rephrase_hits_per_variant[q] = len(hits)
+        for p in hits:
+            doi = (getattr(p, "doi", None) or "").lower().strip()
+            if doi:
+                if doi in seen_dois:
+                    continue
+                seen_dois.add(doi)
+            merged_papers.append(p)
+    papers = merged_papers
     report.searched = len(papers)
     if not papers:
         return report
