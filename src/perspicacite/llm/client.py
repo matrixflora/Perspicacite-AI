@@ -76,6 +76,44 @@ def resolve_stage_model(
     )
 
 
+def resolve_stage_chain(
+    config: Any,
+    stage: str,
+) -> list[tuple[str, str]]:
+    """Return the ordered ``[(provider, model), ...]`` fallback chain
+    for a stage.
+
+    ``providers_per_stage[stage]`` may be a single provider string
+    (single-element chain) or a list of providers (multi-element).
+    Missing stages produce a one-element chain from
+    ``(default_provider, default_model)``.
+
+    The same model is used for every chain entry (per-provider model
+    overrides are a documented Wave 3.2 followup). Agent-CLI providers
+    apply their own model_aliases internally, so a list like
+    ``["anthropic", "claude_cli"]`` with model ``"claude-sonnet-4-5"``
+    works out of the box.
+
+    See ``docs/superpowers/specs/2026-05-14-fallback-chain-design.md``.
+    """
+    if config is None:
+        return [("anthropic", "claude-haiku-4-5")]
+    llm_cfg = getattr(config, "llm", None)
+    if llm_cfg is None:
+        return [("anthropic", "claude-haiku-4-5")]
+    default_provider = llm_cfg.default_provider or "anthropic"
+    default_model = llm_cfg.default_model or "claude-sonnet-4-5"
+    models = getattr(llm_cfg, "models", {}) or {}
+    providers = getattr(llm_cfg, "providers_per_stage", {}) or {}
+
+    model = models.get(stage, default_model)
+    pinned = providers.get(stage, default_provider)
+    if isinstance(pinned, str):
+        return [(pinned, model)]
+    # list[str]
+    return [(p, model) for p in pinned]
+
+
 def build_cached_messages(
     *,
     system: str | None = None,
