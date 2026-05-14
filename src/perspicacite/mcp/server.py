@@ -2222,3 +2222,46 @@ async def _kb_papers_resource(name: str) -> str:
 async def _kb_log_resource(name: str) -> str:
     """Most-recent KB-log events (bounded by kb.mcp_resource_max_events)."""
     return await _resources.kb_log_resource(name)
+
+
+# =============================================================================
+# Canned prompts (Wave 5.2)
+# =============================================================================
+
+from perspicacite.mcp import prompts as _prompts  # noqa: E402
+
+
+@mcp.prompt()
+def literature_review(
+    topic: str, kb_name: str | None = None, max_papers: int = 30
+) -> list[dict[str, Any]]:
+    """Run a literature review on a topic, optionally against a KB."""
+    return _prompts.literature_review(topic, kb_name, max_papers)
+
+
+@mcp.prompt()
+def compare_papers(
+    paper_a: str, paper_b: str, kb_name: str | None = None
+) -> list[dict[str, Any]]:
+    """Compare two papers side-by-side."""
+    return _prompts.compare_papers(paper_a, paper_b, kb_name)
+
+
+@mcp.prompt()
+def summarize_kb(kb_name: str, max_papers: int = 50) -> list[dict[str, Any]]:
+    """Summarize an entire knowledge base in five paragraphs."""
+    return _prompts.summarize_kb(kb_name, max_papers)
+
+
+@mcp.prompt()
+def ingest_dois(kb_name: str, dois: list[str]) -> list[dict[str, Any]]:
+    """Ingest a list of DOIs into a KB."""
+    return _prompts.ingest_dois(kb_name, dois)
+
+
+@mcp.prompt()
+def screen_topic(
+    topic: str, kb_name: str, threshold: float = 0.6
+) -> list[dict[str, Any]]:
+    """Screen a KB for papers relevant to a topic."""
+    return _prompts.screen_topic(topic, kb_name, threshold)
