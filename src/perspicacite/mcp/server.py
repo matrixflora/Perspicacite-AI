@@ -935,24 +935,32 @@ async def generate_report(
 
 @mcp.tool
 async def screen_papers(
-    candidates: list[str],
+    candidates: list[str] | list[dict],
     query: str,
     method: str = "bm25",
     threshold: float = 0.3,
     max_results: int = 50,
 ) -> str:
-    """
-    Score candidate papers (DOIs or titles) by relevance to a research query.
+    """Score candidate papers by relevance to a research query.
+
+    Each item in ``candidates`` may be either:
+      - A plain **string** — a DOI (e.g. "10.1038/nature12373") or a paper
+        title. DOIs trigger an OA-content lookup so the abstract can be
+        used in scoring.
+      - A **dict** — {"doi": "...", "title": "...", "abstract": "..."}.
+        Use this when you already have the abstract and want to skip the
+        DOI lookup.
 
     Args:
-        candidates: List of DOIs (e.g. "10.1234/abc") or paper titles to screen.
+        candidates: Strings (DOIs or titles) OR dicts with doi/title/abstract.
         query: The research query / topic to screen against.
         method: "bm25" (fast, no LLM) or "llm" (LLM-rated 0-1 with one-line reasons).
         threshold: Keep papers scoring >= this value (0..1).
         max_results: Cap on the number of returned items.
 
     Returns:
-        JSON with keys: query, method, screened (list of doi/title/score/kept/reason).
+        JSON with keys: query, method, screened (list of
+        doi/title/score/kept/reason).
     """
     state = _require_state()
     if isinstance(state, str):
@@ -964,11 +972,23 @@ async def screen_papers(
         from perspicacite.search.screening import screen_papers_llm as _llm
 
         items: list[dict] = []
-        # Only spin up an HTTP client if at least one candidate looks like a DOI.
-        doi_like = [c for c in candidates if c.strip().lower().startswith("10.") or "doi.org/" in c]
+        # Split dicts (already have metadata) from strings (need lookup).
+        dicts_already = [c for c in candidates if isinstance(c, dict)]
+        strings_only = [c for c in candidates if isinstance(c, str)]
+
+        # Accept user-supplied metadata dicts as-is.
+        for d in dicts_already:
+            items.append({
+                "doi": (d.get("doi") or "").strip().replace("https://doi.org/", "") or None,
+                "title": d.get("title") or d.get("doi") or "(untitled)",
+                "abstract": d.get("abstract") or "",
+            })
+
+        # Only spin up an HTTP client if at least one string looks like a DOI.
+        doi_like = [c for c in strings_only if c.strip().lower().startswith("10.") or "doi.org/" in c]
         if doi_like:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                for c in candidates:
+                for c in strings_only:
                     if c.strip().lower().startswith("10.") or "doi.org/" in c:
                         doi = c.strip().replace("https://doi.org/", "")
                         try:
@@ -988,7 +1008,7 @@ async def screen_papers(
                     else:
                         items.append({"title": c, "abstract": ""})
         else:
-            items = [{"title": c, "abstract": ""} for c in candidates]
+            items.extend([{"title": c, "abstract": ""} for c in strings_only])
 
         if method == "llm":
             results = await _llm(items, query=query, llm=state.llm_client, threshold=threshold)
@@ -1306,13 +1326,16 @@ async def build_kbs_from_zotero(
         collection_key=cfg.collection_key,
         base_url=base_url,
     )
+    # Resolve real group name so KB names are scoped per-library.
+    library_name = await client.get_library_name() or "Library"
     plan = await zotero_ingest.plan_kbs_from_zotero(
         client,
         top_level_collection_keys=top_level_collection_keys,
         include_unfiled=include_unfiled,
+        library_label=library_name,
     )
     if plan_only:
-        return {"plan": [p.model_dump() for p in plan]}
+        return {"library_name": library_name, "plan": [p.model_dump() for p in plan]}
 
     # Inline execution with a no-op registry — MCP returns the final summary.
     class _InlineRegistry:

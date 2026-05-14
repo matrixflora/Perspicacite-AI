@@ -185,6 +185,46 @@ class ZoteroClient:
         """All collections (paginated)."""
         return await self._paginated("/collections")
 
+    async def get_library_name(self) -> str | None:
+        """Resolve the human-readable library name.
+
+        For a group library: returns the group's name (e.g. "BioMedOmicsAI").
+        For a user library: returns the username when available.
+        Falls back to None if the API call fails — callers should use a
+        default like "Library" in that case.
+        """
+        c = await self._client()
+        if self.library_type == "groups":
+            # The /groups/<id> endpoint returns the group metadata for the
+            # library_id we're scoped to. On the local API this is the
+            # bare group; on the cloud API it's wrapped in a list when
+            # queried via /users/<userId>/groups, but a direct
+            # /groups/<id> returns the bare object.
+            try:
+                r = await c.get(f"{self.base_url}/groups/{self.library_id}",
+                                headers=self._headers())
+                if r.status_code == 200:
+                    body = r.json() or {}
+                    data = body.get("data") or body
+                    name = data.get("name")
+                    if isinstance(name, str) and name:
+                        return name
+            except httpx.HTTPError:
+                pass
+            return None
+        # User library — try to read /keys/current for username.
+        try:
+            r = await c.get(f"{self.base_url}/keys/current",
+                            headers=self._headers())
+            if r.status_code == 200:
+                body = r.json() or {}
+                username = body.get("username")
+                if isinstance(username, str) and username:
+                    return username
+        except httpx.HTTPError:
+            pass
+        return None
+
     async def list_top_level_collections(self) -> list[dict[str, Any]]:
         """Top-level collections only (no parent)."""
         return await self._paginated("/collections/top")
