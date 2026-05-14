@@ -18,6 +18,22 @@ enabled (Settings → Advanced → Config Editor → ``extensions.zotero.httpSer
 """
 
 
+class ZoteroAPIError(Exception):
+    """Raised when a Zotero API call fails with an unexpected status."""
+
+
+class ZoteroWriteUnsupportedError(ZoteroAPIError):
+    """Raised when trying to write to the local read-only API."""
+
+
+def _extract_doi_from_extra(extra: str) -> str:
+    """Some Zotero item types store DOIs in the free-form ``extra`` field
+    as ``DOI: 10.xxxx/yyy`` lines. Pull it out for dedup matching."""
+    import re
+    m = re.search(r"^\s*DOI:\s*(\S+)", extra, flags=re.IGNORECASE | re.MULTILINE)
+    return m.group(1).strip() if m else ""
+
+
 class _HTMLStripper(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -77,12 +93,28 @@ class ZoteroClient:
             self._http = httpx.AsyncClient()
         return self._http
 
+    @property
+    def is_local(self) -> bool:
+        """True if base_url points at the Zotero desktop local API (loopback)."""
+        return "localhost" in self.base_url or "127.0.0.1" in self.base_url
+
     async def create_item(self, paper: dict[str, Any]) -> str | None:
         """Create a journalArticle item; returns the new (or pre-existing) key.
 
         Searches the library by DOI before creating to avoid duplicates.
-        Returns None if creation fails.
+
+        Raises:
+            ZoteroWriteUnsupportedError: when targeting the local desktop API
+                (which is read-only — items must be created in the Zotero app).
+            ZoteroAPIError: when the create POST returns an unexpected status.
         """
+        if self.is_local:
+            raise ZoteroWriteUnsupportedError(
+                "Zotero local API is read-only — push to Zotero requires the "
+                "cloud API (api.zotero.org). Remove zotero.base_url from "
+                "config.yml or set it to https://api.zotero.org to push items."
+            )
+
         c = await self._client()
         doi = paper.get("doi")
         if doi:
@@ -94,8 +126,15 @@ class ZoteroClient:
                 )
                 if r.status_code == 200:
                     for item in r.json() or []:
-                        existing_doi = (item.get("data") or {}).get("DOI") or ""
-                        if existing_doi.lower() == doi.lower():
+                        # Zotero stores DOI in `DOI` for journalArticle items
+                        # and sometimes in `extra` for other types.
+                        data = item.get("data") or {}
+                        existing_doi = (
+                            data.get("DOI")
+                            or _extract_doi_from_extra(data.get("extra") or "")
+                            or ""
+                        )
+                        if existing_doi.lower().strip() == doi.lower().strip():
                             return item.get("key")
             except httpx.HTTPError:
                 pass  # fall through to create
@@ -123,10 +162,15 @@ class ZoteroClient:
         }]
         try:
             r = await c.post(f"{self._base()}/items", json=body, headers=self._headers())
-        except httpx.HTTPError:
-            return None
+        except httpx.HTTPError as exc:
+            raise ZoteroAPIError(f"Zotero POST failed: {exc}") from exc
         if r.status_code not in (200, 201):
-            return None
+            # Surface the real error so callers can show why the push failed
+            # (auth error, write-not-supported, malformed body, etc.) instead
+            # of just "no key returned".
+            raise ZoteroAPIError(
+                f"Zotero POST /items returned {r.status_code}: {r.text[:300]}"
+            )
         data = r.json() or {}
         successful = data.get("successful") or {}
         if successful:
@@ -135,6 +179,12 @@ class ZoteroClient:
         success = data.get("success") or {}
         if success:
             return next(iter(success.values()))
+        # Zotero accepted the request but didn't actually create — usually
+        # a soft "failed" entry in the response.
+        failed = data.get("failed") or {}
+        if failed:
+            reason = next(iter(failed.values()))
+            raise ZoteroAPIError(f"Zotero create_item failed: {reason}")
         return None
 
     async def _paginated(
