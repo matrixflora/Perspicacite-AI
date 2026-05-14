@@ -1,0 +1,76 @@
+# Perspicacité — Local-only / zero-cloud-cost preset
+#
+# Routes every internal LLM call through Ollama running on the local
+# machine. Zero per-call cost, full data privacy, no API keys.
+#
+# **Prerequisites:**
+# 1. Install Ollama: https://ollama.com/download
+# 2. Pull the recommended models (adjust to taste / hardware):
+#       ollama pull llama3.3:70b      # synthesis (Sonnet-3.5-class quality)
+#       ollama pull qwen2.5:14b       # synthesis fallback for 16-32 GB RAM
+#       ollama pull llama3.2:3b       # cheap roles (routing / screening / rephrase)
+#       ollama pull nomic-embed-text  # embeddings (optional — replace OpenAI)
+# 3. Start the Ollama server (auto-starts on macOS once installed):
+#       ollama serve
+# 4. Use this file as your config:
+#       perspicacite -c config.ollama.example.yml serve
+#
+# **Quality vs hardware tradeoffs**
+# - 70B models need ~40 GB RAM. Worth it for synthesis quality on
+#   profound / agentic modes.
+# - 32B (qwen2.5) fits comfortably in 32 GB RAM. Close to 70B on
+#   most synthesis tasks.
+# - 3B for cheap roles (routing, screening, rephrase) is plenty —
+#   these are short JSON-or-binary judgements, not paragraphs.
+#
+# **What you lose vs cloud:**
+# - Sonnet-4.5-class synthesis quality (Llama 3.3 70B is closer to
+#   Sonnet-3.5).
+# - Anthropic prompt caching (Ollama doesn't have it; build_cached_messages
+#   detects the non-anthropic provider and emits plain messages).
+#
+# **What you gain:**
+# - $0 per-call cost.
+# - All paper content + queries stay on your machine.
+# - Works offline.
+# - No rate limits beyond your GPU.
+
+llm:
+  default_provider: "ollama"
+  default_model: "llama3.3:70b"           # use qwen2.5:32b on 32-GB machines
+
+  # If you also want per-stage tiering (recommended), set these:
+  models:
+    synthesis: "llama3.3:70b"             # RAG modes: basic, advanced, profound, agentic
+    routing: "llama3.2:3b"                # kb_router LLM mode
+    screening: "llama3.2:3b"              # screen_papers LLM
+    rephrase: "llama3.2:3b"               # rephrase_query
+    contextual: "llama3.2:3b"             # per-chunk + per-doc contextual prefixes
+
+  providers:
+    ollama:
+      base_url: "http://localhost:11434"  # Ollama default
+      timeout: 120                         # local models can be slow on first warmup
+
+knowledge_base:
+  # Embeddings — pick one. Ollama path keeps everything local; OpenAI
+  # path is cheap ($0.02 / 1M tokens for text-embedding-3-small) but
+  # leaves the machine.
+  embedding_provider: "ollama"
+  embedding_model: "nomic-embed-text"
+  # Or:
+  # embedding_provider: "openai"
+  # embedding_model: "text-embedding-3-small"
+
+  chunk_size: 1000
+  chunk_overlap: 200
+  contextual_retrieval_tier: "abstract"  # "chunk" / "summary" tiers are expensive
+                                          # without prompt caching; "abstract" is free
+                                          # and uses Crossref metadata only.
+
+# Cookies, Zotero, etc. work the same as the default config.
+pdf_download:
+  cache_pdfs: true
+  cache_dir: "data/papers"
+  # cookies_path: "~/.config/perspicacite/cookies.txt"
+  # cookie_domains: ["nature.com", "wiley.com", "acs.org", "sciencedirect.com"]
