@@ -47,8 +47,21 @@ dev = [
     "mypy>=1.12.0",
     "pre-commit>=3.8.0",
 ]
-# scilex is an optional internal package - install separately if available
-# scilex = ["scilex"]
+# SciLEx (Science Literature Exploration) — multi-database search
+# aggregation across Semantic Scholar / OpenAlex / PubMed / arXiv / HAL /
+# DBLP / IEEE / Springer. MIT-licensed, lives on GitHub (no PyPI release).
+# Without this extra, the `search_literature` MCP tool returns an
+# explicit error pointing the user here.
+#
+# Install with:
+#   uv pip install -e ".[scilex]"
+#
+# Heads-up: SciLEx pins specific versions of beautifulsoup4 /
+# bibtexparser / lxml etc., so installing it may bump those for the
+# whole environment. Run inside the project's venv to avoid surprises.
+scilex = [
+    "scilex @ git+https://github.com/datalogism/SciLEx.git",
+]
 
 [project.scripts]
 perspicacite = "perspicacite.cli:main"

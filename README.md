@@ -351,6 +351,27 @@ export PERSPICACITE_ZOTERO_BASE_URL="http://localhost:23119/api"   # use local Z
 
 These environment overrides take precedence over `config.yml`.
 
+### Multi-database literature search (optional: SciLEx)
+
+`search_literature` (MCP) and the agentic mode's online search rely on
+**[SciLEx](https://github.com/datalogism/SciLEx)** — a MIT-licensed
+multi-DB academic-search aggregator (Semantic Scholar, OpenAlex,
+PubMed, arXiv, HAL, DBLP, IEEE, Springer). It's not on PyPI; install
+it as an extra from GitHub:
+
+```bash
+uv pip install -e ".[scilex]"
+```
+
+Without SciLEx, `search_literature` returns a clear "not installed"
+error and the agentic search step skips external lookups. All KB-side
+tools (`search_knowledge_base`, `generate_report`, `add_dois_to_kb`)
+work without SciLEx.
+
+**Heads-up:** SciLEx pins versions of `beautifulsoup4`, `bibtexparser`,
+`lxml`, etc. Installing it inside Perspicacité's venv may bump those
+for the whole environment.
+
 ### Use the local Zotero desktop API
 
 If you have Linked Files / ZotFile-managed PDFs or simply don't want to
