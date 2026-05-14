@@ -317,6 +317,23 @@ class MultimodalConfig(BaseModel):
     )
 
 
+class ExternalResourcesConfig(BaseModel):
+    """V1 mining + V2 fetch-on-demand for paper-referenced external resources."""
+
+    mine: bool = True                      # V1 — always-on (Cycle A wires this)
+    fetch_on_demand: bool = True           # V2 — gated by user/MCP action
+    cache_dir: Path = Path("./data/cache")
+    cache_ttl_days: int = 30
+    zenodo_max_bytes_per_file: int = 500_000
+    zenodo_max_bytes_per_record: int = 5_000_000
+    text_file_extensions: list[str] = Field(default_factory=lambda: [
+        ".md", ".rst", ".txt",
+        ".py", ".R", ".r", ".jl",
+        ".ipynb",
+        ".yml", ".yaml", ".toml", ".json", ".csv",
+    ])
+
+
 class PDFDownloadConfig(BaseModel):
     """PDF download configuration."""
 
@@ -406,6 +423,7 @@ class Config(BaseModel):
     local_docs: LocalDocsConfig = Field(default_factory=LocalDocsConfig)
     capsule: CapsuleConfig = Field(default_factory=CapsuleConfig)
     multimodal: MultimodalConfig = Field(default_factory=MultimodalConfig)
+    external_resources: ExternalResourcesConfig = Field(default_factory=ExternalResourcesConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":
