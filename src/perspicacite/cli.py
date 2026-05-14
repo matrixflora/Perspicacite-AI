@@ -285,11 +285,56 @@ def add_to_kb(
 
 
 @cli.command()
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Emit JSON instead of a formatted table.")
 @click.pass_context
-def list_kb(ctx: click.Context) -> None:
-    """List all knowledge bases."""
-    click.echo("📚 Knowledge Bases:")
-    click.echo("  (not implemented yet)")
+def list_kb(ctx: click.Context, as_json: bool) -> None:
+    """List all knowledge bases (name, paper count, chunk count, embedding model)."""
+    import asyncio
+    from perspicacite.web.state import AppState
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        kbs = await state.session_store.list_kbs()
+        if as_json:
+            import json as _json
+            click.echo(_json.dumps(
+                [
+                    {
+                        "name": k.name,
+                        "description": k.description,
+                        "paper_count": k.paper_count,
+                        "chunk_count": k.chunk_count,
+                        "embedding_model": k.embedding_model,
+                        "created_at": k.created_at.isoformat() if k.created_at else None,
+                    }
+                    for k in kbs
+                ],
+                indent=2,
+                default=str,
+            ))
+            return
+        click.echo("📚 Knowledge Bases:")
+        if not kbs:
+            click.echo("  (none yet — create one with `perspicacite create-kb …`)")
+            return
+        # Sort by paper count desc, then name
+        kbs_sorted = sorted(kbs, key=lambda k: (-(k.paper_count or 0), k.name))
+        # Compute column widths so the table stays aligned for long KB names
+        name_w = max(4, max(len(k.name) for k in kbs_sorted))
+        click.echo(
+            f"  {'NAME':<{name_w}}  {'PAPERS':>7}  {'CHUNKS':>7}  EMBEDDING MODEL"
+        )
+        for k in kbs_sorted:
+            click.echo(
+                f"  {k.name:<{name_w}}  "
+                f"{(k.paper_count or 0):>7}  "
+                f"{(k.chunk_count or 0):>7}  "
+                f"{k.embedding_model or '?'}"
+            )
+
+    asyncio.run(_run())
 
 
 @cli.command()
