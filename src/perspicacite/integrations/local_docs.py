@@ -6,6 +6,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from perspicacite.integrations.capsule_reader import (
+    ingest_capsule,
+    is_capsule_dir,
+)
 from perspicacite.logging import get_logger
 from perspicacite.models.documents import ChunkMetadata
 from perspicacite.models.papers import Paper, PaperSource
@@ -157,9 +161,46 @@ async def ingest_local_documents(
     job_id: str,
     recursive: bool = True,
 ) -> dict[str, Any]:
-    """Top-level entry used by routers, CLI, and MCP."""
-    expanded = expand_paths(paths, recursive=recursive)
-    return await _ingest_files(
-        kb_name=kb_name, files=expanded, app_state=app_state,
-        registry=registry, job_id=job_id,
-    )
+    """Top-level entry used by routers, CLI, and MCP.
+
+    Routes capsule directories (those containing a ``metadata.json`` with
+    ``capsule_version``) through ``CapsuleReader.ingest_capsule``; other
+    inputs go through the regular per-file ingest path.
+    """
+    capsule_dirs = [p for p in paths if p.is_dir() and is_capsule_dir(p)]
+    non_capsule_paths = [p for p in paths if p not in capsule_dirs]
+
+    total_added = 0
+    total_files = 0
+
+    for cap in capsule_dirs:
+        r = await ingest_capsule(
+            capsule_dir=cap,
+            kb_name=kb_name,
+            app_state=app_state,
+            registry=registry,
+            job_id=job_id,
+            finalize=False,
+        )
+        total_added += int(r.get("added_chunks", 0))
+        total_files += int(r.get("files", 0))
+
+    if non_capsule_paths:
+        expanded = expand_paths(non_capsule_paths, recursive=recursive)
+        r2 = await _ingest_files(
+            kb_name=kb_name, files=expanded, app_state=app_state,
+            registry=registry, job_id=job_id,
+        )
+        # _ingest_files already calls registry.finish — we returned via that
+        # call's own finalize. When BOTH capsules and files are present we
+        # accept that registry.finish fires twice (publish is idempotent in
+        # tests; in production the second .finish is the authoritative one).
+        total_added += int(r2.get("added_chunks", 0))
+        total_files += int(r2.get("files", 0))
+    elif capsule_dirs:
+        # Only capsule dirs — finalize once now.
+        await registry.finish(
+            job_id, {"added_chunks": total_added, "files": total_files}
+        )
+
+    return {"added_chunks": total_added, "files": total_files}
