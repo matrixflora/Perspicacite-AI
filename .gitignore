@@ -107,6 +107,7 @@ packages_to_use/
 !docs/error-modes-*.md
 !docs/multimodal-extraction-*.md
 !docs/time-bounded-queries-*.md
+!docs/export-formats-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
