@@ -43,11 +43,12 @@
 - **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
 - **6 RAG modes** — From fast KB retrieval to multi-cycle agentic research, systematic literature surveys, and cross-paper contradiction detection
 - **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
-- **MCP server** — 18 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
+- **MCP server** — 19 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
 - **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
 - **Provenance tracking** — Per-answer trace (retrieved chunks, mode, model, latency) stored in SQLite and exportable as RO-Crate 1.1 zip bundles
-- **Institutional-access PDFs** — Ride your browser's logged-in session via `perspicacite import-browser-cookies`; paywalled journals your institution licenses become reachable server-side
+- **Institutional-access PDFs** — Ride your browser's logged-in session via `perspicacite import-browser-cookies`; paywalled journals your institution licenses become reachable server-side. `perspicacite check-cookies` reports per-domain freshness and the downloader warns when a paywall HTML response suggests an expired cookie
 - **Auto KB routing** — Send a chat with `kb_name: "auto"` and Perspicacité scores every KB's description + sampled titles against the query (BM25 free; LLM tier optional), then queries the top-N in parallel via the multi-KB path
+- **Search-to-KB pipeline** — One command (`perspicacite search-to-kb` / MCP `build_kb_from_search`) runs a SciLEx multi-database search, applies year/citation/abstract filters, and ingests the results into a new or existing KB. Lets agents (Claude Code, etc.) spin up a focused KB before doing real RAG over it
 - **Zotero integration** — Push to cloud, or point at the desktop app's local API to reach Linked Files / non-cloud-synced PDFs
 - **Obsidian vault export** — Export any KB as an Obsidian-compatible Markdown vault
 - **Async ingestion** — Long BibTeX / DOI import jobs run in the background with SSE progress streaming
@@ -165,7 +166,7 @@ Structured content (PMC, arXiv) provides sections and references. PDF content pr
 
 ## MCP Server
 
-Perspicacité exposes an MCP server with 18 tools at `http://localhost:8000/mcp`, accessible via:
+Perspicacité exposes an MCP server with 19 tools at `http://localhost:8000/mcp`, accessible via:
 - **MCP protocol** — native tool discovery and invocation
 - **HTTP JSON-RPC** — `POST /mcp` with standard JSON-RPC 2.0 envelope
 
@@ -191,6 +192,7 @@ Perspicacité exposes an MCP server with 18 tools at `http://localhost:8000/mcp`
 | `fetch_paper_resources` | Fetch GitHub / Zenodo / Crossref / Unpaywall / PubMed external resources |
 | `fetch_supplementary` | Download Supplementary Information files (PMC OA S3 → Springer ESM → ACS) |
 | `route_kbs` | Pick the most-relevant KBs for a query (BM25 or LLM) — pass results to `kb_names` |
+| `build_kb_from_search` | Search SciLEx, filter (year/citations/abstract), fetch PDFs, ingest into a new or existing KB |
 
 Full usage details and parameter documentation: [`docs/perspicacite_skills.md`](docs/perspicacite_skills.md)
 
@@ -435,6 +437,51 @@ work without SciLEx.
 `lxml`, etc. Installing it inside Perspicacité's venv may bump those
 for the whole environment.
 
+### Build a KB from a SciLEx search (`search-to-kb`)
+
+One command takes you from a query string to a queryable, retrievable
+KB — search → filter → fetch PDFs → chunk → embed → index. Useful when
+you want to spin up a focused KB on a topic before doing real RAG over
+it, or when you want an agent (Claude Code, etc.) to handle the entire
+pipeline autonomously:
+
+```bash
+# Build a fresh KB from the top 30 hits on "NV-diamond magnetometry" since 2020
+perspicacite search-to-kb \
+    --query "nitrogen vacancy diamond magnetometry" \
+    --kb diamond_sensors \
+    --max-results 30 \
+    --min-year 2020 \
+    --min-citations 5
+
+# Dry-run first if you want to see which DOIs would be ingested:
+perspicacite search-to-kb -q "metabolomics LLM annotation" -k metabo_llm --dry-run
+```
+
+Filters apply client-side before any PDF fetch: `--min-year` /
+`--max-year`, `--min-citations`, `--require-abstract`, `--article-type`,
+plus implicit `require_doi=True` (papers without a DOI are unreachable
+through the download pipeline anyway). Duplicate DOIs are deduplicated
+both within the search response and against the existing KB, so re-running
+the same command harmlessly enriches the KB with whatever's new on
+the publisher side.
+
+The same flow is available over MCP as
+[`build_kb_from_search`](#tools) — pass the same parameters as JSON
+arguments. The agentic `mimosa-ai` / Claude Code style:
+
+```python
+# Inside a Claude Code session, after Perspicacité MCP is connected:
+await build_kb_from_search(
+    query="LLM literature screening accuracy",
+    kb_name="llm_screening",
+    max_results=20,
+    min_year=2023,
+)
+# → returns {"added_papers": 14, "added_chunks": 142, ...}
+# → KB is immediately queryable via search_knowledge_base / generate_report
+```
+
 ### Institutional-access PDFs via browser cookies
 
 For papers behind a publisher paywall that your institution licenses,
@@ -503,7 +550,20 @@ curl -sN "http://localhost:8000/api/jobs/<job_id>/events"
 - Empty `cookie_domains` list = attach cookies to **all** PDF requests
   (broader access, slight cookie-leak risk in third-party redirect hops).
 - Cookies expire — re-run `import-browser-cookies` when downloads start
-  failing again.
+  failing again. Check freshness at any time with:
+  ```bash
+  perspicacite check-cookies
+  # 🍪 Cookie freshness for /Users/me/.config/perspicacite/cookies.txt
+  #   DOMAIN                   STATUS         HOSTS  EXPIRES
+  #   nature.com               ✓ ok                 3  2026-08-04
+  #   onlinelibrary.wiley.com  ✓ ok                 2  2026-10-07
+  #   pubs.acs.org             ✓ ok                 1  2026-11-10
+  ```
+  Stale domains are flagged `⚠ expiring_soon` (≤ 7 days) or `✗ all_expired`,
+  and the command exits non-zero so you can wire it into a daily cron.
+  The downloader also logs `pdf_cookie_likely_expired` when a publisher
+  returns HTML on a cookie-gated URL — the canonical symptom of a stale
+  institutional cookie.
 - The CLI's auto-suggested `cookie_domains` may include extra subdomains
   (`assets.nature.com`, etc.); trim to what your institution licenses.
 - The cookies file is written `chmod 600`; anyone with read access can
@@ -595,7 +655,7 @@ uv run mypy src/
 src/perspicacite/
   cli.py                        # CLI commands (serve, create-kb, screen-papers, pubmed-search, version)
   config/schema.py              # Pydantic configuration model
-  mcp/server.py                 # MCP server with 18 tools
+  mcp/server.py                 # MCP server with 19 tools
   pipeline/
     download/                   # Content retrieval pipeline
       discovery.py              # OpenAlex + Unpaywall discovery

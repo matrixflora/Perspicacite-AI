@@ -109,12 +109,20 @@ class PDFDownloader:
 
     def _load_cookie_jar(self) -> Any:
         """Load Netscape-format cookies.txt. Returns an http.cookiejar
-        compatible jar or None on failure / missing file."""
+        compatible jar or None on failure / missing file.
+
+        Also runs a freshness check against ``cookie_domains`` and logs
+        a warning per stale domain — the most common cause of paywalled
+        PDFs silently returning HTML is an expired institutional cookie.
+        """
         if not self.cookies_path:
             return None
         try:
             from http.cookiejar import MozillaCookieJar
             from pathlib import Path
+            from perspicacite.pipeline.download.cookies import (
+                check_cookie_freshness_for_domains,
+            )
             p = Path(self.cookies_path).expanduser()
             if not p.exists():
                 logger.warning("pdf_cookies_path_missing", path=str(p))
@@ -122,6 +130,21 @@ class PDFDownloader:
             jar = MozillaCookieJar(str(p))
             jar.load(ignore_discard=True, ignore_expires=True)
             logger.info("pdf_cookies_loaded", path=str(p), count=len(jar))
+            # Surface stale-domain warnings once at load time. We only
+            # warn for domains that look broken — quiet on healthy ones.
+            warnings = check_cookie_freshness_for_domains(
+                jar, self.cookie_domains
+            )
+            for w in warnings:
+                if w.status == "ok":
+                    continue
+                logger.warning(
+                    "pdf_cookies_stale",
+                    domain=w.domain,
+                    status=w.status,
+                    matched_hosts=w.matched_hosts,
+                    advice=w.advice,
+                )
             return jar
         except Exception as e:
             logger.warning("pdf_cookies_load_failed", error=str(e))
@@ -168,11 +191,37 @@ class PDFDownloader:
             content_type = response.headers.get("content-type", "").lower()
             if "pdf" not in content_type and not url.lower().endswith(".pdf"):
                 if not response.content.startswith(b"%PDF"):
-                    logger.warning(
-                        "pdf_download_not_pdf",
-                        url=url,
-                        content_type=content_type,
+                    # If we're hitting a domain we have cookies configured
+                    # for and got HTML back, the cookie has very likely
+                    # expired. Emit a distinct log so the user sees the
+                    # right fix ("re-import cookies") instead of just
+                    # "PDF not found".
+                    from perspicacite.pipeline.download.cookies import (
+                        looks_like_paywall_html,
                     )
+                    paywalled = (
+                        self.cookies_path
+                        and self.cookie_domains
+                        and self._matches_cookie_domains(url)
+                        and looks_like_paywall_html(response.content)
+                    )
+                    if paywalled:
+                        logger.warning(
+                            "pdf_cookie_likely_expired",
+                            url=url,
+                            content_type=content_type,
+                            advice=(
+                                "Publisher returned HTML on a cookie-gated "
+                                "domain. Re-run `perspicacite "
+                                "import-browser-cookies` to refresh."
+                            ),
+                        )
+                    else:
+                        logger.warning(
+                            "pdf_download_not_pdf",
+                            url=url,
+                            content_type=content_type,
+                        )
                     return None
 
             pdf_bytes = response.content
