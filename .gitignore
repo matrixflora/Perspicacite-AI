@@ -93,6 +93,7 @@ packages_to_use/
 !docs/superpowers/**/*.md
 !docs/agent-cli-caveats.md
 !docs/roadmap-*.md
+!docs/test-status-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
