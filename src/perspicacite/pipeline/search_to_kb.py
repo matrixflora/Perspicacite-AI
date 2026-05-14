@@ -205,10 +205,10 @@ async def ingest_dois_into_kb(
     sites build a per-DOI :class:`Paper`, hand it to
     :class:`DynamicKnowledgeBase`, and update KB metadata counts.
     """
-    import httpx
     from perspicacite.models.kb import chroma_collection_name_for_kb
     from perspicacite.models.papers import Author, Paper, PaperSource
     from perspicacite.pipeline.download import retrieve_paper_content
+    from perspicacite.pipeline.download.cookies import build_authenticated_client
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
     kb_meta = await app_state.session_store.get_kb_metadata(kb_name)
@@ -218,6 +218,7 @@ async def ingest_dois_into_kb(
 
     pdf_config = app_state.config.pdf_download
     pdf_kwargs: dict[str, Any] = {}
+    cookies_path: str | None = None
     if pdf_config:
         pdf_kwargs = {
             "unpaywall_email": pdf_config.unpaywall_email,
@@ -227,13 +228,14 @@ async def ingest_dois_into_kb(
             "rsc_api_key": pdf_config.rsc_api_key,
             "springer_api_key": pdf_config.springer_api_key,
         }
+        cookies_path = pdf_config.cookies_path
 
     papers_to_add: list[Paper] = []
     skipped: list[dict] = []
     failed: list[dict[str, str]] = []
     dl: dict[str, int] = {"attempted": 0, "success": 0, "failed": 0}
 
-    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+    async with build_authenticated_client(cookies_path=cookies_path) as client:
         for raw_doi in dois:
             doi = (raw_doi or "").strip().replace("https://doi.org/", "")
             if not doi:

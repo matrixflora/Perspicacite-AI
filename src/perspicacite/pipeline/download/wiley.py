@@ -97,11 +97,39 @@ async def download_from_wiley_direct(
 
     try:
         clean_doi = doi.replace("https://doi.org/", "").replace("http://doi.org/", "")
-        url = f"https://onlinelibrary.wiley.com/doi/pdf/{clean_doi}"
+        # /doi/pdfdirect/<doi> is the raw-PDF endpoint the browser's
+        # "Download PDF" button uses. /doi/pdf/<doi> returns the ePDF
+        # reader HTML wrapper instead of bytes — useless for ingestion.
+        url = f"https://onlinelibrary.wiley.com/doi/pdfdirect/{clean_doi}"
         logger.info("wiley_direct_attempt", doi=clean_doi, url=url)
-        mailto = os.getenv("UNPAYWALL_EMAIL") or os.getenv("OPENALEX_MAILTO")
-        ua = f"Perspicacite/2.0 (mailto:{mailto})" if mailto else "Perspicacite/2.0"
-        response = await client.get(url, headers={"User-Agent": ua})
+        # Wiley sits behind Cloudflare; cf_clearance cookies (issued to the
+        # user's browser) are tied to the User-Agent that obtained them.
+        # Sending a polite-bot UA invalidates the clearance and we get 403,
+        # even with valid institutional cookies. Use a current Chrome UA so
+        # the cookies we replay still match the browser's WAF challenge.
+        cookies_attached = bool(getattr(client, "cookies", None))
+        # Wiley sits behind Cloudflare; cf_clearance cookies (issued to
+        # the user's browser) are tied to the User-Agent that obtained
+        # them, AND the WAF checks Referer chain on /doi/pdf hits.
+        # When cookies are attached, mimic a real browser click from
+        # the article landing page; otherwise stay polite-bot.
+        if cookies_attached:
+            ua = (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            )
+            headers = {
+                "User-Agent": ua,
+                "Referer": f"https://onlinelibrary.wiley.com/doi/{clean_doi}",
+                "Accept": "application/pdf,application/x-pdf,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+        else:
+            mailto = os.getenv("UNPAYWALL_EMAIL") or os.getenv("OPENALEX_MAILTO")
+            ua = f"Perspicacite/2.0 (mailto:{mailto})" if mailto else "Perspicacite/2.0"
+            headers = {"User-Agent": ua}
+        response = await client.get(url, headers=headers)
         response.raise_for_status()
         content_type = response.headers.get("content-type", "").lower()
         if "pdf" in content_type or response.content.startswith(b"%PDF"):

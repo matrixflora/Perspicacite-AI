@@ -55,11 +55,15 @@ Thumbs.db
 # Papers directory (downloaded PDFs)
 Papers/
 
-# Cached paper full text
+# Local-instance data (runtime caches, provenance, sessions). Only
+# code lives in the repo; per-machine runtime state stays out.
 data/papers/
-
-# Cached paper full text
-data/papers/
+data/capsules/
+data/provenance/
+data/contextual_cache/
+data/*.db
+data/*.db-shm
+data/*.db-wal
 
 # Test outputs
 test_output.txt

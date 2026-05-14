@@ -193,6 +193,51 @@ def check_cookie_freshness_for_domains(
     return results
 
 
+def build_cookie_jar(cookies_path: str) -> Any:
+    """Load a Netscape ``cookies.txt`` and return the jar, or ``None`` on failure.
+
+    Centralizes the load+log so :class:`PDFDownloader`, the top-level
+    :func:`retrieve_paper_content`, and any caller that builds its own
+    ``httpx.AsyncClient`` all attach cookies the same way.
+    """
+    from http.cookiejar import MozillaCookieJar
+    from pathlib import Path
+
+    from perspicacite.logging import get_logger as _gl
+    _logger = _gl("perspicacite.pipeline.download.cookies")
+    try:
+        p = Path(cookies_path).expanduser()
+        if not p.exists():
+            _logger.warning("pdf_cookies_path_missing", path=str(p))
+            return None
+        jar = MozillaCookieJar(str(p))
+        jar.load(ignore_discard=True, ignore_expires=True)
+        _logger.info("pdf_cookies_loaded", path=str(p), count=len(jar))
+        return jar
+    except Exception as e:
+        _logger.warning("pdf_cookies_load_failed", error=str(e))
+        return None
+
+
+def build_authenticated_client(
+    *,
+    cookies_path: str | None,
+    timeout: float = 120.0,
+) -> Any:
+    """Return an ``httpx.AsyncClient`` with the cookie jar attached when
+    ``cookies_path`` is set. Callers that pass their own client into
+    :func:`retrieve_paper_content` should construct it via this helper
+    so paywalled-publisher requests inherit the session cookies.
+    """
+    import httpx
+    kwargs: dict[str, Any] = {"timeout": timeout, "follow_redirects": True}
+    if cookies_path:
+        jar = build_cookie_jar(cookies_path)
+        if jar is not None:
+            kwargs["cookies"] = jar
+    return httpx.AsyncClient(**kwargs)
+
+
 def looks_like_paywall_html(content: bytes, *, head: int = 2048) -> bool:
     """Cheap heuristic: did the publisher return HTML instead of a PDF?
 
