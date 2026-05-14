@@ -38,26 +38,66 @@ logger = get_logger("perspicacite.pipeline.download.supplementary")
 DEFAULT_MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
+# PMC + many publisher endpoints gate non-browser User-Agents (returning
+# either 404 or a tiny HTML "verify you are human" interstitial). Sending
+# a realistic UA gets us past the trivial blocks. We also send Accept so
+# proxies don't try to gzip-encode a PDF.
+_DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    ),
+    "Accept": "application/pdf,application/octet-stream,*/*",
+}
+
+
 async def fetch_supplementary_file(
     url: str,
     *,
     http_client: httpx.AsyncClient | None = None,
     max_bytes: int = DEFAULT_MAX_BYTES,
     timeout: float = 60.0,
+    expected_mime_prefix: str | None = None,
 ) -> bytes | None:
     """Download a single SI file. Returns bytes or None on failure.
 
-    Enforces ``max_bytes`` (default 50 MB). Logs the rejection reason
-    on cap-overflow so callers can opt for a larger cap if needed.
+    - Enforces ``max_bytes`` (default 50 MB) and logs cap-overflow.
+    - Sends a browser-like User-Agent to pass NCBI / publisher bot gates.
+    - Treats text/html responses as a failure: bot-gating frequently
+      returns a small "verify you are human" page with status 200,
+      which would otherwise be saved as a fake "PDF". Skip and log.
+    - Optional ``expected_mime_prefix`` (e.g. ``"application/pdf"``)
+      hardens this further when the caller knows the expected type.
     """
     if not url:
         return None
-    client = http_client or httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+    client = http_client or httpx.AsyncClient(
+        timeout=timeout, follow_redirects=True, headers=_DEFAULT_HEADERS,
+    )
     should_close = http_client is None
     try:
         r = await client.get(url)
         if r.status_code != 200:
             logger.info("si_fetch_non_200", url=url, status=r.status_code)
+            return None
+        ctype = (r.headers.get("content-type") or "").lower()
+        # NCBI bot-gate interstitial: tiny HTML body with content-type text/html.
+        # Reject anything that looks like a landing/error page.
+        if ctype.startswith("text/html"):
+            logger.info(
+                "si_fetch_got_html_likely_bot_gate",
+                url=url,
+                size=len(r.content),
+                content_type=ctype,
+            )
+            return None
+        if expected_mime_prefix and not ctype.startswith(expected_mime_prefix):
+            logger.info(
+                "si_fetch_unexpected_mime",
+                url=url,
+                content_type=ctype,
+                expected=expected_mime_prefix,
+            )
             return None
         body = r.content
         if len(body) > max_bytes:
