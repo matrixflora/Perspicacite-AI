@@ -207,11 +207,22 @@ async def _fetch_forward_citations(
     max_results: int,
     headers: dict[str, str],
 ) -> list[dict[str, Any]]:
-    """Papers that cite the seed. OpenAlex returns a ``cited_by_api_url``
-    on each work — we hit it, optionally paginated."""
+    """Papers that cite the seed. OpenAlex used to ship ``cited_by_api_url``
+    on each work record but at some point stopped — we fall back to
+    building the URL from the seed's OpenAlex id (``filter=cites:<W_ID>``)
+    so well-cited papers don't silently return 0 hits.
+    """
     url = seed_work.get("cited_by_api_url")
     if not url:
-        return []
+        seed_id_full = seed_work.get("id") or ""
+        seed_id = seed_id_full.rsplit("/", 1)[-1] if seed_id_full else ""
+        if not seed_id:
+            logger.warning(
+                "snowball_oa_no_cited_by_url",
+                seed_id=seed_id_full or "<unknown>",
+            )
+            return []
+        url = f"{OPENALEX_BASE}/works?filter=cites:{seed_id}"
     out: list[dict[str, Any]] = []
     per_page = min(max(max_results, 25), 100)
     cursor = "*"
