@@ -26,6 +26,26 @@ _DOCSTRING_MAX = 500
 _METHOD_SUBCHUNK_THRESHOLD_CHARS = 1500
 
 
+def _method_kind_from_decorators(node):
+    """Return symbol_kind based on @classmethod / @staticmethod / @property decorators.
+
+    Falls back to "method" for anything else (including custom decorators).
+    """
+    for dec in node.decorator_list:
+        name = None
+        if isinstance(dec, ast.Name):
+            name = dec.id
+        elif isinstance(dec, ast.Attribute):
+            name = dec.attr
+        if name == "classmethod":
+            return "classmethod"
+        if name == "staticmethod":
+            return "staticmethod"
+        if name == "property":
+            return "property"
+    return "method"
+
+
 def _chunk_python_ast(
     text: str,
     paper: Paper,
@@ -112,7 +132,7 @@ def _chunk_python_ast(
                         language="python",
                         source_file_path=file_path,
                         symbol_name=sub.name,
-                        symbol_kind="method",
+                        symbol_kind=_method_kind_from_decorators(sub),
                         parent_class=node.name,
                         start_line=sub_start,
                         end_line=sub_end,
