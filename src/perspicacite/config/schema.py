@@ -64,6 +64,15 @@ class KnowledgeBaseConfig(BaseModel):
         default=True,
         description="Use language-aware chunking for source-code files",
     )
+    code_chunking: Literal["auto", "ast", "splitter"] = Field(
+        default="auto",
+        description=(
+            "Code-chunking strategy. 'auto' prefers AST/Tree-sitter and "
+            "falls back to the splitter. 'ast' fails loud (logs and falls "
+            "back) when AST/TS is unavailable. 'splitter' keeps today's "
+            "language-aware splitter behaviour."
+        ),
+    )
     # Contextual retrieval — three tiers, pick by cost / quality:
     #
     #   "none"     — structural prefix only (title + section), free.
