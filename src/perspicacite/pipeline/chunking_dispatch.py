@@ -213,17 +213,33 @@ async def chunk_document(
 ) -> list[DocumentChunk]:
     """Dispatch chunking by content type.
 
-    Falls back to the existing token chunker
-    (``perspicacite.pipeline.chunking.chunk_text``) for ``"text"`` / ``"pdf"``
-    and whenever the relevant smart-chunk flag on the config is disabled.
+    Routing:
+    - markdown + ``markdown_heading_aware``  → heading-stack splitter
+    - code     + ``code_chunking != 'splitter'`` → ``chunking_code.chunk_code``
+                                                    (falls back to splitter on None)
+    - everything else → ``chunk_text``
     """
     if content_type == "markdown" and getattr(config, "markdown_heading_aware", True):
         return _chunk_markdown(text, paper, config)
-    if content_type == "code" and getattr(config, "code_language_aware", True) and language:
+
+    if content_type == "code" and language:
+        mode = getattr(config, "code_chunking", "auto")
+        if mode != "splitter":
+            from perspicacite.pipeline.chunking_code import chunk_code
+            cs, co = _chunk_size_overlap(config)
+            result = chunk_code(text, paper, language=language,
+                                file_path=getattr(paper, "source_file_path", None),
+                                chunk_size=cs, chunk_overlap=co)
+            if result is not None:
+                return result
+            # mode == "ast" and backend unavailable → splitter fallback with a log.
+            from perspicacite.logging import get_logger
+            get_logger("perspicacite.pipeline.chunking_dispatch").warning(
+                "code_chunking_ast_unavailable",
+                extra={"language": language, "paper_id": paper.id, "mode": mode},
+            )
         return _chunk_code(text, paper, config, language=language)
 
-    # Fallback: reuse the existing token chunker. Adapt the config so the
-    # fallback works with either ChunkConfig or KnowledgeBaseConfig callers.
+    # Fallback: token chunker.
     from perspicacite.pipeline.chunking import chunk_text
-
     return await chunk_text(text, paper, _to_chunk_config(config))

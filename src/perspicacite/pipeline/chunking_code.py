@@ -342,3 +342,30 @@ def _ts_extract_name(node: Any) -> Optional[str]:
         if nested:
             return nested
     return None
+
+
+def chunk_code(
+    text: str,
+    paper: Paper,
+    *,
+    language: str,
+    file_path: Optional[str],
+    chunk_size: int,
+    chunk_overlap: int,
+) -> Optional[list[DocumentChunk]]:
+    """Dispatch entry. Returns None when no backend applies (caller falls
+    back to the splitter)."""
+    fp = file_path or ""
+    lang = (language or "").lower()
+    if lang == "python":
+        return _chunk_python_ast(text, paper, file_path=fp,
+                                 chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    if lang in ("r", "rmd"):
+        return _chunk_r_regex(text, paper, file_path=fp)
+    if lang == "ipynb":
+        return _chunk_notebook(text, paper, file_path=fp)
+    ts_langs = {"javascript", "typescript", "go", "rust", "java", "cpp",
+                "ruby", "swift", "kotlin", "csharp"}
+    if lang in ts_langs:
+        return _chunk_treesitter(text, paper, file_path=fp, language=lang)
+    return None
