@@ -1,0 +1,9 @@
+{
+  "ingest_5_papers_seconds": 0.0326,
+  "search_top10_seconds_avg": 0.0015,
+  "report_synthesis_seconds": 0.0011,
+  "embeddings_per_second": 16421.4,
+  "kb_log_writes_per_second": 13259.0,
+  "git_sha": "b69b6ba",
+  "timestamp": 1778819363.3445172
+}

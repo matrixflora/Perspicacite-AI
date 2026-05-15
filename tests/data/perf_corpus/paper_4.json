@@ -1,0 +1,9 @@
+{
+  "id": "doi:10.5555/perf-004",
+  "doi": "10.5555/perf-004",
+  "title": "Cross-lingual scientific abstract clustering with multilingual sentence transformers",
+  "authors": [{"name": "D. Lang", "family": "Lang"}],
+  "year": 2025,
+  "abstract": "We benchmark four multilingual sentence-transformer models on the task of clustering scientific abstracts across English, Chinese, French, German, and Japanese. Using a 12-domain test set drawn from OpenAlex, we find that XLM-R-large and paraphrase-multilingual-mpnet both yield silhouette scores within 0.03 of single-language baselines, while distil-variants drop substantially on Japanese and Chinese. We release the cross-lingual cluster gold standard.",
+  "full_text": "Section 1: Introduction. Scientific literature is multilingual and the existing cluster baselines are English-only. Section 2: Dataset construction. We sampled 36000 abstracts across 12 domains and 5 languages from OpenAlex via a stratified sampler. Native speakers produced gold-standard cluster assignments. Section 3: Methods. We compared four sentence-transformer backbones, with k-means clustering tuned via silhouette score. Section 4: Results. paraphrase-multilingual-mpnet hits 0.41 silhouette on French and 0.39 on German, within 0.03 of monolingual baselines. Japanese clustering drops to 0.31 on distil variants but recovers on the larger XLM-R backbone. Section 5: Error analysis. Failure modes cluster around topic-language confounds: clinical-medicine Japanese abstracts are pulled towards English physics by shared technical vocabulary. Section 6: Recommendations. Practitioners should default to XLM-R-large for >2-language pipelines. Section 7: Limitations. Our domain coverage is biased towards STEM. Section 8: Future work. Triplet-loss finetuning on the multilingual corpus. Appendix A: Sampling protocol. Appendix B: Cluster gold standard release. Appendix C: Compute budget."
+}
