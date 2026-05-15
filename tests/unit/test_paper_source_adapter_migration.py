@@ -147,3 +147,30 @@ def test_mcp_add_dois_to_kb_uses_openalex():
         "mcp/server.py add_dois_to_kb must build papers with "
         "PaperSource.OPENALEX"
     )
+
+
+def test_kb_router_uses_correct_enum_values():
+    """src/perspicacite/web/routers/kb.py has three Paper-construction
+    sites that previously defaulted to WEB_SEARCH:
+
+    - _dois_ingest_worker (line ~335) — async DOI ingest → OPENALEX
+    - add_papers_to_kb route (line ~564) — user paper dicts → USER_UPLOAD
+    - add_dois_to_kb route (line ~1062) — sync DOI ingest → OPENALEX
+
+    This invariant test guards all three at once via source scan.
+    """
+    import inspect
+    from perspicacite.web.routers import kb
+
+    src = inspect.getsource(kb)
+    # Must NOT contain the legacy default anywhere
+    assert "source=PaperSource.WEB_SEARCH" not in src, (
+        "web/routers/kb.py must not default any Paper to WEB_SEARCH"
+    )
+    # Must contain the new values (count = at least one each)
+    assert src.count("source=PaperSource.USER_UPLOAD") >= 1, (
+        "kb.py add_papers_to_kb must use USER_UPLOAD"
+    )
+    assert src.count("source=PaperSource.OPENALEX") >= 2, (
+        "kb.py must use OPENALEX for both DOI-ingest paths (sync + async)"
+    )
