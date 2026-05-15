@@ -82,6 +82,9 @@ class BudgetTracker:
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     max_usd: float | None = None
+    # Aliases / additions added by audit 2026-05-15 finding #4.
+    max_tokens: int | None = None       # combined input+output cap
+    max_cost_usd: float | None = None   # alias of max_usd
     action: Literal["abort", "warn"] = "abort"
     pricing_overrides: dict[str, dict[str, tuple[float, float]]] = field(
         default_factory=dict,
@@ -93,6 +96,13 @@ class BudgetTracker:
     has_unknown_costs: bool = False
     _warned_breaches: set[str] = field(default_factory=set)
     breaches: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # `max_cost_usd` is a friendly alias for `max_usd`. If the caller
+        # set only the alias, copy it through; if both were set, canonical
+        # `max_usd` wins (so existing internal callers stay deterministic).
+        if self.max_cost_usd is not None and self.max_usd is None:
+            self.max_usd = self.max_cost_usd
 
     # ---- core API ------------------------------------------------------
 
@@ -161,6 +171,11 @@ class BudgetTracker:
         if self.max_output_tokens is not None and self.tokens_out > self.max_output_tokens:
             breaches.append(("output_tokens",
                 f"output_tokens={self.tokens_out} > cap={self.max_output_tokens}"))
+        if self.max_tokens is not None:
+            total = self.tokens_in + self.tokens_out
+            if total > self.max_tokens:
+                breaches.append(("total_tokens",
+                    f"total_tokens={total} > cap={self.max_tokens}"))
         if self.max_usd is not None and self.usd > self.max_usd:
             note = ""
             if self.has_unknown_costs:
