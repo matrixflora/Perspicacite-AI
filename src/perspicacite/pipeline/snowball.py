@@ -351,6 +351,55 @@ async def fetch_cited_by_works(
     return await _fetch_forward_citations(client, seed_work, max_results, headers)
 
 
+_ARXIV_DOI_PREFIX = "10.48550/arxiv."
+
+
+def _seed_needs_ss_fallback(seed_doi: str, seed_work: dict | None) -> bool:
+    """True if the seed's citation graph is likely underreported by OpenAlex.
+
+    Triggered when:
+      - the seed DOI is an arXiv DOI (10.48550/arxiv.*), case-insensitive, OR
+      - the resolved seed_work has no DOI of its own (rare; means
+        OpenAlex stored the work via title.search but couldn't link it
+        to a CrossRef record).
+
+    Returns False when seed_work is None (caller has already given up
+    on this seed; SS branch can't help without a paper id).
+    """
+    if seed_work is None:
+        return False
+    if (seed_doi or "").lower().startswith(_ARXIV_DOI_PREFIX):
+        return True
+    if not seed_work.get("doi"):
+        return True
+    return False
+
+
+def _ss_id_for_seed(seed_doi: str, seed_work: dict | None) -> str:
+    """Return the Semantic Scholar id string for fetching this seed's
+    /references and /citations.
+
+    Preference order:
+      1. arXiv id parsed from the seed DOI (10.48550/arxiv.X → ArXiv:X),
+         stripping any version suffix (v1/v2/...)
+      2. DOI:<doi> fallback
+
+    The seed_work argument is accepted for forward-compat (a later
+    refinement may inspect the OpenAlex Work record to find an arXiv
+    id when the DOI is a CrossRef DOI) but is currently unused.
+    """
+    del seed_work  # unused in v1
+    import re
+    sd = (seed_doi or "")
+    if sd.lower().startswith(_ARXIV_DOI_PREFIX):
+        bare = sd[len(_ARXIV_DOI_PREFIX):]
+        # Strip "vN" version suffix if present
+        m = re.match(r"^(.*?)(v\d+)?$", bare)
+        bare = m.group(1) if m else bare
+        return f"ArXiv:{bare}"
+    return f"DOI:{sd}"
+
+
 async def snowball_expand(
     *,
     seed_dois: list[str],
