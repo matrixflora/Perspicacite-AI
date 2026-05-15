@@ -145,6 +145,16 @@ async def _ingest_files(
                             existing.append(ext_resource_id)
                         base["resource_refs"] = existing
                 c.metadata = ChunkMetadata(**base)
+            # Sub-project A: best-effort symbol-index sidecar write.
+            try:
+                _kb_dir = Path(app_state.config.capsule.root) / kb_name
+                from perspicacite.pipeline.symbol_index import write_chunks_symbols
+                write_chunks_symbols(kb_dir=_kb_dir, chunks=chunks)
+            except Exception as _sym_exc:  # never break ingest on sidecar failure
+                logger.warning(
+                    "symbol_index_write_failed",
+                    path=str(fp), error=str(_sym_exc)[:200],
+                )
             if chunks:
                 texts = [c.text for c in chunks]
                 embeds = await app_state.embedding_provider.embed(texts)

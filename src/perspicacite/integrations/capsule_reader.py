@@ -183,6 +183,17 @@ async def ingest_capsule(
             c.metadata = ChunkMetadata(**base)
         all_chunks.extend(chunks)
 
+    # Sub-project A: best-effort symbol-index sidecar write for code chunks.
+    try:
+        _kb_dir = Path(app_state.config.capsule.root) / kb_name
+        from perspicacite.pipeline.symbol_index import write_chunks_symbols
+        write_chunks_symbols(kb_dir=_kb_dir, chunks=all_chunks)
+    except Exception as _sym_exc:  # never break ingest on sidecar failure
+        logger.warning(
+            "symbol_index_write_failed",
+            capsule=str(capsule_dir), error=str(_sym_exc)[:200],
+        )
+
     total = 0
     if all_chunks:
         texts = [c.text for c in all_chunks]

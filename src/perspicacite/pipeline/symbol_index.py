@@ -102,3 +102,22 @@ def iter_symbols(kb_dir: Path, *, name_glob: Optional[str] = None) -> Iterator[S
             if name_glob and not fnmatch.fnmatch(obj.get("symbol_name", ""), name_glob):
                 continue
             yield SymbolRecord(**obj)
+
+
+def write_chunks_symbols(*, kb_dir: Path, chunks: Sequence[DocumentChunk]) -> int:
+    """Convenience wrapper: project chunks -> symbols -> append to sidecar.
+
+    Groups by ``paper_id`` so all symbols for a paper share one append
+    batch (still a single file in the end -- JSONL is one record per line).
+    Returns total count written.
+    """
+    syms = symbols_from_chunks(chunks)
+    if not syms:
+        return 0
+    by_paper: dict[str, list[SymbolRecord]] = {}
+    for s in syms:
+        by_paper.setdefault(s.paper_id, []).append(s)
+    total = 0
+    for paper_id, batch in by_paper.items():
+        total += append_symbols(kb_dir, paper_id, batch)
+    return total
