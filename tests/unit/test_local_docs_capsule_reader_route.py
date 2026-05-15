@@ -37,7 +37,7 @@ async def test_capsule_dir_routes_to_capsule_reader(tmp_path):
         assert capsule_dir == cap
         return {"added_chunks": 7, "files": 1}
 
-    async def fake_ingest_files(*, kb_name, files, app_state, registry, job_id):
+    async def fake_ingest_files(*, kb_name, files, app_state, registry, job_id, external_metadata=None):
         raise AssertionError("should not be called for capsule-only input")
 
     registry = AsyncMock()
@@ -62,7 +62,7 @@ async def test_non_capsule_paths_route_to_files(tmp_path):
     async def fake_ingest_capsule(**kw):
         raise AssertionError("should not be called for pdf-only input")
 
-    async def fake_ingest_files(*, kb_name, files, app_state, registry, job_id):
+    async def fake_ingest_files(*, kb_name, files, app_state, registry, job_id, external_metadata=None):
         assert pdf in list(files)
         return {"added_chunks": 4, "files": 1}
 
@@ -93,7 +93,7 @@ async def test_mixed_inputs_route_to_both(tmp_path):
         assert finalize is False
         return {"added_chunks": 3, "files": 1}
 
-    async def fake_ingest_files(*, kb_name, files, app_state, registry, job_id):
+    async def fake_ingest_files(*, kb_name, files, app_state, registry, job_id, external_metadata=None):
         files_called.append(list(files))
         return {"added_chunks": 2, "files": 1}
 
