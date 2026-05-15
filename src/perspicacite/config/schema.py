@@ -1,5 +1,6 @@
 """Pydantic models for configuration."""
 
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -793,6 +794,13 @@ class CapsuleConfig(BaseModel):
     min_version: str = "0.1"
 
 
+class MultimodalMode(str, Enum):
+    """Multimodal RAG mode (sub-project C, 2026-05-15)."""
+    OFF = "off"     # never attach figures to the LLM call
+    AUTO = "auto"   # current behaviour: attach when chunk.figure_refs is non-empty
+    FORCE = "force" # also pull top-N figures by caption relevance (v1: same as AUTO; force-mode retrieval ships in a follow-up)
+
+
 class MultimodalConfig(BaseModel):
     """Multimodal RAG: figures-in-prompt + inline thumbnails in answers."""
 
@@ -805,6 +813,24 @@ class MultimodalConfig(BaseModel):
             "openai/gpt-4o",
             "gpt-4o",
         ]
+    )
+    mode: MultimodalMode = Field(
+        default=MultimodalMode.AUTO,
+        description=(
+            "Multimodal retrieval mode. 'off' never attaches figures, "
+            "'auto' attaches when retrieved chunks reference figures, "
+            "'force' also pulls top-N by caption relevance. In v1, "
+            "'force' is treated as 'auto' (caption-rank retrieval ships "
+            "in a follow-up)."
+        ),
+    )
+    show_code: bool = Field(
+        default=False,
+        description=(
+            "When True, RAGResponse.code_excerpts is populated with "
+            "AST-chunk excerpts from cited code chunks, each linked "
+            "to its source URL (GitHub blob URL with line range)."
+        ),
     )
 
 
