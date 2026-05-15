@@ -154,11 +154,15 @@ class SciLExAdapter:
             api_config = self._build_api_config(apis)
 
             try:
-                # Phase 1: Collect
+                # Phase 1: Collect — one backend at a time so a single
+                # backend failure cannot poison the aggregate.
                 logger.info("scilex_collection_start", query=query, apis=apis)
                 collector = CollectCollection(main_config, api_config)
 
                 queries_by_api = collector.queryCompositor()
+
+                successful_backends: list[str] = []
+                failed_backends: list[str] = []
 
                 for api_name, queries in queries_by_api.items():
                     api_collect_list = []
@@ -171,17 +175,32 @@ class SciLExAdapter:
                         query_dict["max_articles_per_query"] = max_results * 2
                         api_collect_list.append({"query": query_dict, "api": api_name})
 
-                    try:
-                        logger.info(f"Collecting from {api_name}...")
-                        collector.run_job_collects(api_collect_list)
-                        logger.info(f"Successfully collected from {api_name}")
-                    except Exception as api_error:
-                        logger.warning(f"API {api_name} failed: {api_error}")
-                        continue
+                    self._collect_from_backend(
+                        collector=collector,
+                        api_name=api_name,
+                        api_collect_list=api_collect_list,
+                        successful_backends=successful_backends,
+                        failed_backends=failed_backends,
+                    )
+
+                if failed_backends:
+                    logger.warning(
+                        "scilex_collection_partial",
+                        failed=failed_backends,
+                        succeeded=successful_backends,
+                        note="Results from successful backends will still be returned.",
+                    )
 
                 # Phase 2: Manual aggregation
                 logger.info("scilex_aggregation_start")
                 repo_path = Path(tmpdir) / "perspicacite_search"
+
+                if not repo_path.exists():
+                    logger.warning(
+                        "scilex_no_results_dir",
+                        note="No backend produced output; all backends failed.",
+                    )
+                    return []
 
                 all_records = []
 
@@ -196,8 +215,10 @@ class SciLExAdapter:
                     converter = api_converters.get(api_name)
 
                     if not converter:
-                        logger.warning(f"No converter for API: {api_name}")
+                        logger.warning("scilex_no_converter_for_api", api=api_name)
                         continue
+
+                    backend_records_before = len(all_records)
 
                     # Process each query directory
                     for query_dir in api_dir.iterdir():
@@ -228,14 +249,29 @@ class SciLExAdapter:
                                         zotero_record["archive"] = api_name
                                         all_records.append(zotero_record)
                                     except Exception as conv_error:
-                                        logger.debug(f"Conversion error: {conv_error}")
+                                        logger.debug(
+                                            "scilex_conversion_error",
+                                            api=api_name,
+                                            error=str(conv_error),
+                                        )
                                         continue
 
                             except Exception as e:
-                                logger.debug(f"Failed to read {result_file}: {e}")
+                                logger.debug(
+                                    "scilex_result_file_read_error",
+                                    file=str(result_file),
+                                    error=str(e),
+                                )
                                 continue
 
-                logger.info(f"scilex_collected_records", count=len(all_records))
+                    backend_count = len(all_records) - backend_records_before
+                    logger.info(
+                        "scilex_backend_ok",
+                        backend=api_name,
+                        results=backend_count,
+                    )
+
+                logger.info("scilex_collected_records", count=len(all_records))
 
                 if not all_records:
                     logger.warning("scilex_no_results", query=query)
@@ -265,6 +301,47 @@ class SciLExAdapter:
             except Exception as e:
                 logger.error("scilex_collection_error", error=str(e))
                 raise
+
+    def _collect_from_backend(
+        self,
+        collector: Any,
+        api_name: str,
+        api_collect_list: list[dict],
+        successful_backends: list[str],
+        failed_backends: list[str],
+    ) -> None:
+        """Collect results from a single backend, logging loudly on failure.
+
+        Failures are caught and logged at WARNING level so that a single
+        broken backend (network error, missing API key, rate-limit) does not
+        poison the aggregate — the remaining backends' results are still
+        returned to the caller.
+
+        Args:
+            collector: SciLEx CollectCollection instance.
+            api_name: Capitalized backend name ("SemanticScholar", "OpenAlex", …).
+            api_collect_list: Query dicts prepared for this backend.
+            successful_backends: Mutable list; this backend's name is appended
+                on success so the caller can log a summary.
+            failed_backends: Mutable list; this backend's name is appended on
+                failure so the caller can log a summary and warn the user.
+        """
+        try:
+            logger.info("scilex_backend_collect_start", backend=api_name)
+            collector.run_job_collects(api_collect_list)
+            logger.info("scilex_backend_collect_ok", backend=api_name)
+            successful_backends.append(api_name)
+        except Exception as api_error:
+            logger.warning(
+                "scilex_backend_failed",
+                backend=api_name,
+                error=str(api_error),
+                note=(
+                    "This backend's results will be absent from the aggregate. "
+                    "Other backends are unaffected."
+                ),
+            )
+            failed_backends.append(api_name)
 
     def _filter_by_article_type(self, papers: list[Paper], article_type: str) -> list[Paper]:
         """Post-filter papers by article type.
