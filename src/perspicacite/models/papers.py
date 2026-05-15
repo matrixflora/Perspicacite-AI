@@ -12,7 +12,9 @@ class PaperSource(str, Enum):
 
     Legacy values (BIBTEX, SCILEX, WEB_SEARCH, USER_UPLOAD,
     CITATION_FOLLOW, LOCAL) are kept for backward compat.
-    Audit 2026-05-15 finding #5 added explicit database sources.
+    Audit 2026-05-15 finding #5 added explicit database sources
+    (OPENALEX, PUBMED, ARXIV, CROSSREF). The 2026-05-15 follow-up
+    migration added SEMANTIC_SCHOLAR for direct S2 API hits.
     """
 
     BIBTEX = "bibtex"
@@ -25,6 +27,7 @@ class PaperSource(str, Enum):
     PUBMED = "pubmed"
     ARXIV = "arxiv"
     CROSSREF = "crossref"
+    SEMANTIC_SCHOLAR = "semantic_scholar"
 
 
 class Author(BaseModel):

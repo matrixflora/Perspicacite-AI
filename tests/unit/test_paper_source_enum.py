@@ -19,6 +19,7 @@ def test_enum_has_new_database_values():
     assert PaperSource.PUBMED.value == "pubmed"
     assert PaperSource.ARXIV.value == "arxiv"
     assert PaperSource.CROSSREF.value == "crossref"
+    assert PaperSource.SEMANTIC_SCHOLAR.value == "semantic_scholar"
 
 
 def test_enum_constructs_from_string_for_chroma_roundtrip():
@@ -27,3 +28,4 @@ def test_enum_constructs_from_string_for_chroma_roundtrip():
     assert PaperSource("pubmed") is PaperSource.PUBMED
     assert PaperSource("arxiv") is PaperSource.ARXIV
     assert PaperSource("crossref") is PaperSource.CROSSREF
+    assert PaperSource("semantic_scholar") is PaperSource.SEMANTIC_SCHOLAR
