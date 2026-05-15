@@ -113,6 +113,7 @@ markers = [
     "unit: Unit tests (no external services)",
     "integration: Integration tests (may need services)",
     "live: Tests requiring API keys (deselect with -m 'not live')",
+    "slow: Slow tests, opt-in or excluded in fast runs",
     "smoke: MCP tool inventory smoke tests (fast, no real I/O)",
     "config: Config loading audit tests (fast, no LLM calls, small YAML reads only)",
     "e2e: End-to-end pipeline tests (Wave 6.1, mocked LLM + embedder)",
