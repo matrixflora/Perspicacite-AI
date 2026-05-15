@@ -1,0 +1,168 @@
+{
+  "timestamp": "20260515-142540",
+  "git_sha": "ee4465a",
+  "articles": {
+    "rag": {
+      "name": "Retrieval-Augmented Generation",
+      "sub_a": {
+        "status": "ok",
+        "fetch_seconds": 0.343,
+        "chunk_seconds": 0.018,
+        "file_size_kb": 86.5,
+        "n_chunks": 6,
+        "kinds": [
+          "class"
+        ],
+        "chunks_with_docstring": 2,
+        "top_3_imports": [
+          "collections",
+          "dataclasses",
+          "torch"
+        ],
+        "first_3_symbols": [
+          [
+            "RetrievAugLMMarginOutput",
+            "class",
+            "L42-L129"
+          ],
+          [
+            "RetrievAugLMOutput",
+            "class",
+            "L134-L218"
+          ],
+          [
+            "RagPreTrainedModel",
+            "class",
+            "L231-L368"
+          ]
+        ]
+      },
+      "symbol_index": {
+        "written": 6,
+        "read_back": 6,
+        "sidecar_path": "tests/audit/results/audit_kb/rag/symbols.jsonl"
+      },
+      "sub_c_code_excerpts": {
+        "n_excerpts": 6,
+        "first_source_url": "https://github.com/huggingface/transformers/blob/main/src/transformers/models/rag/modeling_rag.py#L42-L129"
+      },
+      "sub_b": {
+        "status": "ok",
+        "model_name": "text-embedding-3-small+code:codestral-embed",
+        "dimension": 4,
+        "text_batch": [
+          [
+            "the cat sat on the mat",
+            "another text"
+          ]
+        ],
+        "code_batch": [
+          [
+            "def fit(): pass"
+          ]
+        ]
+      },
+      "sub_c_sse": {
+        "status": "ok"
+      },
+      "cite_graph": {
+        "status": "ok",
+        "seconds": 0.74,
+        "n_hits": 0,
+        "top_3": []
+      }
+    },
+    "alphafold": {
+      "name": "AlphaFold protein structure prediction",
+      "sub_a": {
+        "status": "ok",
+        "fetch_seconds": 0.316,
+        "chunk_seconds": 0.023,
+        "file_size_kb": 50.5,
+        "n_chunks": 8,
+        "kinds": [
+          "function"
+        ],
+        "chunks_with_docstring": 8,
+        "top_3_imports": [
+          "collections",
+          "functools",
+          "os"
+        ],
+        "first_3_symbols": [
+          [
+            "load_stereo_chemical_props",
+            "function",
+            "L413-L511"
+          ],
+          [
+            "sequence_to_onehot",
+            "function",
+            "L587-L629"
+          ],
+          [
+            "atom_id_to_type",
+            "function",
+            "L659-L682"
+          ]
+        ]
+      },
+      "symbol_index": {
+        "written": 8,
+        "read_back": 8,
+        "sidecar_path": "tests/audit/results/audit_kb/alphafold/symbols.jsonl"
+      },
+      "sub_c_code_excerpts": {
+        "n_excerpts": 8,
+        "first_source_url": "https://github.com/deepmind/alphafold/blob/main/alphafold/common/residue_constants.py#L413-L511"
+      },
+      "sub_b": {
+        "status": "ok",
+        "model_name": "text-embedding-3-small+code:codestral-embed",
+        "dimension": 4,
+        "text_batch": [
+          [
+            "the cat sat on the mat",
+            "another text"
+          ]
+        ],
+        "code_batch": [
+          [
+            "def fit(): pass"
+          ]
+        ]
+      },
+      "sub_c_sse": {
+        "status": "ok"
+      },
+      "cite_graph": {
+        "status": "ok",
+        "seconds": 1.91,
+        "n_hits": 7,
+        "top_3": [
+          {
+            "doi": "10.3322/caac.21660",
+            "year": 2021,
+            "citation_count": 111597,
+            "score": 0.65,
+            "title": "Global Cancer Statistics 2020: GLOBOCAN Estimates of Incidence and Mortality Worldwide for 36 Cancers in 185 Countries"
+          },
+          {
+            "doi": "10.1136/bmj.n71",
+            "year": 2021,
+            "citation_count": 90765,
+            "score": 0.65,
+            "title": "The PRISMA 2020 statement: an updated guideline for reporting systematic reviews"
+          },
+          {
+            "doi": "10.1585/pfr.15.2402039",
+            "year": 2020,
+            "citation_count": 801217,
+            "score": 0.6371,
+            "title": "Radiation Resistant Camera System for Monitoring Deuterium Plasma Discharges in the Large Helical Device"
+          }
+        ]
+      }
+    }
+  }
+}

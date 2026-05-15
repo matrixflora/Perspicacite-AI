@@ -212,17 +212,20 @@ async def _fetch_forward_citations(
     building the URL from the seed's OpenAlex id (``filter=cites:<W_ID>``)
     so well-cited papers don't silently return 0 hits.
     """
-    url = seed_work.get("cited_by_api_url")
-    if not url:
-        seed_id_full = seed_work.get("id") or ""
-        seed_id = seed_id_full.rsplit("/", 1)[-1] if seed_id_full else ""
-        if not seed_id:
-            logger.warning(
-                "snowball_oa_no_cited_by_url",
-                seed_id=seed_id_full or "<unknown>",
-            )
-            return []
-        url = f"{OPENALEX_BASE}/works?filter=cites:{seed_id}"
+    # Build URL + params separately. httpx REPLACES a URL's existing
+    # query string when ``params=`` is passed, so embedding
+    # ``?filter=cites:...`` in the URL is silently dropped — that's the
+    # audit-caught bug where queries returned globally-cited papers
+    # instead of the cited_by set.
+    seed_id_full = seed_work.get("id") or ""
+    seed_id = seed_id_full.rsplit("/", 1)[-1] if seed_id_full else ""
+    if not seed_id:
+        logger.warning(
+            "snowball_oa_no_seed_id",
+            seed_id=seed_id_full or "<unknown>",
+        )
+        return []
+    url = f"{OPENALEX_BASE}/works"
     out: list[dict[str, Any]] = []
     per_page = min(max(max_results, 25), 100)
     cursor = "*"
@@ -230,7 +233,14 @@ async def _fetch_forward_citations(
         try:
             r = await client.get(
                 url,
-                params={"per-page": str(per_page), "cursor": cursor},
+                params={
+                    "filter": f"cites:{seed_id}",
+                    "per-page": str(per_page),
+                    "cursor": cursor,
+                    # Sort by citation count so well-known recent papers
+                    # float above OpenAlex's noisy bidirectional edges.
+                    "sort": "cited_by_count:desc",
+                },
                 headers=headers, timeout=30.0,
             )
             if r.status_code != 200:
