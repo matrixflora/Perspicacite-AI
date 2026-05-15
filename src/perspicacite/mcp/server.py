@@ -217,7 +217,7 @@ async def search_literature(
                 "abstract": p.abstract,
                 "journal": p.journal,
                 "citation_count": p.citation_count,
-                "source": str(p.source) if p.source else None,
+                "source": p.source.value if p.source else None,
                 "url": p.url,
             }
             if p.authors:
