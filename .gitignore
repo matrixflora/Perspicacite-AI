@@ -117,6 +117,15 @@ packages_to_use/
 !docs/architecture-*.md
 !docs/upstream-prompts/**/*.md
 !MANUAL_QA.md
+# GitHub community health files
+!.github/*.md
+!.github/ISSUE_TEMPLATE/*.md
+# User-facing docs tree
+!docs/*.md
+!docs/concepts/*.md
+!docs/guides/*.md
+!docs/reference/*.md
+!docs/development/*.md
 agenticRAG_improvement_plan.txt
 
 # Image files (except logo/screenshots)
