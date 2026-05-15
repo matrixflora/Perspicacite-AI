@@ -238,7 +238,9 @@ async def chunk_document(
                 from perspicacite.logging import get_logger
                 get_logger("perspicacite.pipeline.chunking_dispatch").warning(
                     "code_chunking_ast_unavailable",
-                    extra={"language": language, "paper_id": paper.id, "mode": mode},
+                    language=language,
+                    paper_id=paper.id,
+                    mode=mode,
                 )
         return _chunk_code(text, paper, config, language=language)
 
