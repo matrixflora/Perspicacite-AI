@@ -73,6 +73,17 @@ cookies = [
     "browser-cookie3>=0.20.0",
 ]
 
+# Optional Tree-sitter-backed chunker for non-Python code (Go, Rust,
+# Java, JS/TS, etc.). When installed, `_chunk_treesitter` uses a
+# real parse tree instead of the LangChain splitter fallback.
+#
+# Install with:
+#   uv pip install -e ".[code-parsing]"
+code-parsing = [
+  "tree-sitter>=0.21",
+  "tree-sitter-languages>=1.10",
+]
+
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
 
