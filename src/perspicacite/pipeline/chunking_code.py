@@ -228,3 +228,117 @@ def _chunk_notebook(text: str, paper: Paper, *, file_path: str) -> list[Document
                                         text=cell_text, metadata=md))
             out_idx += 1
     return chunks
+
+
+# Optional Tree-sitter path. Activates when `tree_sitter_languages` is
+# importable; otherwise _chunk_treesitter returns None and the dispatcher
+# falls back to the LangChain splitter for the same content.
+try:
+    import importlib
+
+    importlib.import_module("tree_sitter_languages")  # noqa: F401
+    HAS_TREE_SITTER = True
+except Exception:
+    HAS_TREE_SITTER = False
+
+
+_TS_NODE_TYPES = {
+    # node_type → symbol_kind. Language-specific names are unified here.
+    "function_declaration": "function",
+    "function_definition": "function",
+    "method_definition": "method",
+    "method_declaration": "method",
+    "class_declaration": "class",
+    "class_definition": "class",
+    "struct_specifier": "class",
+    "struct_item": "class",
+    "type_declaration": "class",
+}
+
+
+def _chunk_treesitter(
+    text: str, paper: Paper, *, file_path: str, language: str
+) -> Optional[list[DocumentChunk]]:
+    """Tree-sitter-backed chunker for non-Python languages.
+
+    Returns None when the optional dep isn't installed OR when the parser
+    cannot be obtained for ``language``; the caller falls back to the
+    splitter. Never raises.
+    """
+    if not HAS_TREE_SITTER:
+        return None
+    try:
+        from tree_sitter_languages import get_parser  # type: ignore
+    except Exception:
+        return None
+    try:
+        parser = get_parser(language)
+    except Exception:
+        return None
+    try:
+        tree = parser.parse(text.encode("utf-8"))
+    except Exception:
+        return None
+
+    lines = text.splitlines()
+    chunks: list[DocumentChunk] = []
+    idx = 0
+
+    def _walk(node: Any) -> None:
+        nonlocal idx
+        for child in node.children:
+            kind = _TS_NODE_TYPES.get(child.type)
+            if kind is not None:
+                start_row = child.start_point[0] + 1
+                end_row = child.end_point[0] + 1
+                body = "\n".join(lines[start_row - 1 : end_row])
+                name = _ts_extract_name(child) or f"{kind}_{idx}"
+                md = ChunkMetadata(
+                    paper_id=paper.id,
+                    chunk_index=idx,
+                    source=paper.source,
+                    title=paper.title,
+                    content_type="code",
+                    language=language,
+                    source_file_path=file_path,
+                    symbol_name=name,
+                    symbol_kind=kind,
+                    start_line=start_row,
+                    end_line=end_row,
+                    docstring=None,
+                    imports=[],
+                )
+                chunks.append(DocumentChunk(id=f"{paper.id}_code_{idx}",
+                                            text=body, metadata=md))
+                idx += 1
+            else:
+                _walk(child)
+
+    _walk(tree.root_node)
+
+    if not chunks:
+        md = ChunkMetadata(
+            paper_id=paper.id, chunk_index=0, source=paper.source, title=paper.title,
+            content_type="code", language=language, source_file_path=file_path,
+            symbol_name=file_path or "module", symbol_kind="module",
+            start_line=1, end_line=max(len(lines), 1), docstring=None, imports=[],
+        )
+        return [DocumentChunk(id=f"{paper.id}_code_0", text=text, metadata=md)]
+    return chunks
+
+
+def _ts_extract_name(node: Any) -> Optional[str]:
+    """Best-effort name extraction: scan children for an ``identifier`` /
+    ``type_identifier`` / ``name`` node and use its text."""
+    for child in node.children:
+        if child.type in ("identifier", "type_identifier", "name"):
+            try:
+                return child.text.decode("utf-8")
+            except Exception:
+                return None
+    # Some grammars nest the name one level deeper (e.g. function_declarator).
+    for child in node.children:
+        nested = _ts_extract_name(child)
+        if nested:
+            return nested
+    return None
