@@ -35,6 +35,7 @@ the existing vector store + session store + LLM client + PDF cache.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, asdict, field
 from typing import Any
 
@@ -43,6 +44,7 @@ import httpx
 from perspicacite.logging import get_logger
 from perspicacite.models.papers import Author, Paper, PaperSource
 from perspicacite.pipeline.arxiv_ids import parse_arxiv_doi, resolve_arxiv_title
+from perspicacite.search.semantic_scholar import fetch_ss_references, fetch_ss_citations
 
 logger = get_logger("perspicacite.pipeline.snowball")
 
@@ -389,7 +391,6 @@ def _ss_id_for_seed(seed_doi: str, seed_work: dict | None) -> str:
     id when the DOI is a CrossRef DOI) but is currently unused.
     """
     del seed_work  # unused in v1
-    import re
     sd = (seed_doi or "")
     if sd.lower().startswith(_ARXIV_DOI_PREFIX):
         bare = sd[len(_ARXIV_DOI_PREFIX):]
@@ -400,6 +401,39 @@ def _ss_id_for_seed(seed_doi: str, seed_work: dict | None) -> str:
     return f"DOI:{sd}"
 
 
+def _merge_ss_into_hits(
+    existing: list[ExpansionHit],
+    ss_works: list[dict],
+    *,
+    seed_doi: str,
+    direction: str,
+) -> None:
+    """Mutate ``existing`` in place: flip provenance to 'both' for any
+    SS hit whose dedup key matches an existing OpenAlex hit; append
+    new SS-only hits with provenance='semantic_scholar'."""
+    existing_keys: dict[str, ExpansionHit] = {}
+    for h in existing:
+        existing_keys[f"doi:{(h.expanded_doi or '').lower()}"] = h
+
+    for w in ss_works:
+        doi, fields = _paper_from_oa_work(w)
+        if not doi:
+            continue
+        key = f"doi:{doi.lower()}"
+        existing_hit = existing_keys.get(key)
+        if existing_hit is not None:
+            existing_hit.provenance = "both"
+            continue
+        existing.append(ExpansionHit(
+            seed_doi=seed_doi,
+            expanded_doi=doi,
+            direction=direction,
+            provenance="semantic_scholar",
+            **fields,
+        ))
+        existing_keys[key] = existing[-1]
+
+
 async def snowball_expand(
     *,
     seed_dois: list[str],
@@ -407,6 +441,7 @@ async def snowball_expand(
     max_per_seed: int = 10,
     http_client: httpx.AsyncClient | None = None,
     mailto: str | None = None,
+    include_semantic_scholar: bool = True,
 ) -> list[ExpansionHit]:
     """Walk one citation hop from each seed DOI.
 
@@ -453,6 +488,12 @@ async def snowball_expand(
             work = await _fetch_seed_work(client, seed, headers)
             if not work:
                 continue
+
+            # Collect hits for this seed into per-direction locals so the
+            # SS merge pass can dedup within the seed before we extend hits.
+            seed_back: list[ExpansionHit] = []
+            seed_fwd: list[ExpansionHit] = []
+
             # Backward — referenced_works is a list of OpenAlex IDs.
             if direction in {"backward", "both"}:
                 refs = work.get("referenced_works") or []
@@ -463,7 +504,7 @@ async def snowball_expand(
                         doi, fields = _paper_from_oa_work(rw)
                         if not doi:
                             continue
-                        hits.append(ExpansionHit(
+                        seed_back.append(ExpansionHit(
                             seed_doi=seed, expanded_doi=doi,
                             direction="backward", **fields,
                         ))
@@ -476,10 +517,34 @@ async def snowball_expand(
                     doi, fields = _paper_from_oa_work(fw)
                     if not doi:
                         continue
-                    hits.append(ExpansionHit(
+                    seed_fwd.append(ExpansionHit(
                         seed_doi=seed, expanded_doi=doi,
                         direction="forward", **fields,
                     ))
+
+            # SS pass — only for arxiv-only seeds (preprints underreported
+            # by OpenAlex cite-graph).
+            if include_semantic_scholar and _seed_needs_ss_fallback(seed, work):
+                ss_id = _ss_id_for_seed(seed, work)
+                if direction in {"backward", "both"}:
+                    ss_back_works = await fetch_ss_references(
+                        ss_id, limit=max_per_seed, http_client=client,
+                    )
+                    _merge_ss_into_hits(
+                        seed_back, ss_back_works,
+                        seed_doi=seed, direction="backward",
+                    )
+                if direction in {"forward", "both"}:
+                    ss_fwd_works = await fetch_ss_citations(
+                        ss_id, limit=max_per_seed, http_client=client,
+                    )
+                    _merge_ss_into_hits(
+                        seed_fwd, ss_fwd_works,
+                        seed_doi=seed, direction="forward",
+                    )
+
+            hits.extend(seed_back)
+            hits.extend(seed_fwd)
     finally:
         if own_client:
             await client.aclose()
