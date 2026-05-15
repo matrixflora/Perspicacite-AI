@@ -1,12 +1,21 @@
 """Pin adapter-specific PaperSource values after the 2026-05-15 audit.
 
-These three adapters historically all defaulted to ``WEB_SEARCH``, which
-made downstream "where did this paper come from?" queries useless. The
-fix labels each path with its true origin:
+These adapters historically defaulted to ``WEB_SEARCH``, which made
+downstream "where did this paper come from?" queries useless. The
+migration labels each path with its true origin:
 
-  - ``search.pubmed.py``        → ``PaperSource.PUBMED`` (Task 4)
-  - ``search.doi_resolver.py``  → ``PaperSource.CROSSREF`` (this batch)
-  - ``pipeline.snowball.py``    → ``PaperSource.CITATION_FOLLOW`` (this batch)
+  - ``search.doi_resolver.py``        → ``PaperSource.CROSSREF``
+  - ``pipeline.snowball.py``          → ``PaperSource.CITATION_FOLLOW``
+  - ``search.semantic_scholar.py``    → ``PaperSource.SEMANTIC_SCHOLAR``
+  - ``rag.chunking.py`` (stub Paper)  → ``PaperSource.LOCAL``
+  - ``mcp.server.py`` (2 sites)       → ``USER_UPLOAD`` / ``OPENALEX``
+  - ``web.routers.kb`` (3 sites)      → ``USER_UPLOAD`` / ``OPENALEX``
+  - ``pipeline.search_to_kb.py``      → ``PaperSource.OPENALEX``
+  - ``rag.agentic.orchestrator.py``   → ``OPENALEX`` / ``SEMANTIC_SCHOLAR``
+
+See also ``test_paper_source_no_websearch_defaults.py`` for the
+file-wide invariant that no production module constructs Papers with
+``source=PaperSource.WEB_SEARCH``.
 """
 from __future__ import annotations
 
