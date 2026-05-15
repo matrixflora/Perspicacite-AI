@@ -88,9 +88,9 @@ def _chunk_by_tokens(
             chunks.append(chunk)
             chunk_index += 1
 
-        start = end - overlap_chars
-        if start >= end:
-            start = end
+        next_start = end - overlap_chars
+        # Ensure forward progress: start must strictly advance.
+        start = max(next_start, start + 1) if next_start <= start else next_start
 
     return chunks
 
