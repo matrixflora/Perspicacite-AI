@@ -246,8 +246,9 @@ the splitter exactly as today. No breaking change.
 ### 4.1 Goals
 
 - Use a code-specialised embedder for `content_type == "code"` chunks
-  (Voyage code-3 by default; `codestral-embed` / others swappable via
-  config). Keep the default text embedder for everything else.
+  (Mistral `codestral-embed` as default; `voyage-code-3` / others
+  swappable via config). Keep the default text embedder for everything
+  else.
 - Stay backward-compatible: when no per-type config is set, behave
   identically to today.
 
@@ -259,23 +260,35 @@ the splitter exactly as today. No breaking change.
 - No automatic re-embedding of historical KBs. A separate `re-embed`
   command can be added later if needed.
 
-### 4.3 Notes on Codestral
+### 4.3 Default code embedder: Mistral `codestral-embed`
 
-Mistral's **`codestral`** is an LLM (chat / completion), not an
-embedding model — passing it to an embedder API will return an error.
-What Mistral *does* offer for code embeddings is **`codestral-embed`**
-(distinct model id). The matrix:
+We will use **Mistral `codestral-embed`**
+(<https://mistral.ai/news/codestral-embed>) as the recommended /
+example-yaml default for the `code` content type. It is purpose-built
+for code retrieval (announced May 2025, beats `voyage-code-3` and
+OpenAI `text-embedding-3-large` on the CodeSearchNet, SWE-Bench-Lite
+and CommitPack reference benchmarks Mistral published). Available via
+litellm under model id `mistral/codestral-embed`.
+
+Important distinction (kept from earlier discussion): Mistral
+**`codestral`** is an LLM, not an embedder — passing it to an embedder
+API errors. The embedder is **`codestral-embed`** (distinct model id).
+
+The full matrix for reference:
 
 | Embedder | Where | Free tier | Notes |
 |---|---|---|---|
-| `voyage-code-3` | Voyage API via litellm | No (paid) | Strongest code-retrieval scores on CodeSearchNet at time of design. Recommended default. |
-| `codestral-embed` | Mistral API via litellm | No (paid) | Comparable on Python, weaker on Go/Rust per public benchmarks. |
+| `codestral-embed` | Mistral API via litellm | No (paid) | **Recommended default for code.** Strongest published code-retrieval scores at time of design. |
+| `voyage-code-3` | Voyage API via litellm | No (paid) | Strong alternative; configurable. |
 | `text-embedding-3-small` | OpenAI via litellm | No (paid) | What we currently use for text. Adequate fallback for code. |
 | `all-MiniLM-L6-v2` | sentence-transformers (local) | Yes | Final-fallback. Bad on code but free. |
 
-We will **not** ship a specific paid provider as the default. The
-config is free-form; the example yaml sets `voyage-code-3` for the
-`code` slot and leaves `text` on whatever the user already configured.
+The config is free-form — the user can swap any of the above. The
+example yaml ships `codestral-embed` in the `code` slot. Pricing /
+dimensionality at time of design: `codestral-embed` is 1536-dim with
+optional Matryoshka truncation to 256 / 512 / 1024 supported by the
+provider; we will pass the full 1536 vector and let users configure
+truncation later if needed (out of scope for v1).
 
 ### 4.4 File changes
 
@@ -293,7 +306,7 @@ tests/unit/test_embedding_typed_router.py  # NEW
 
 ```python
 embedding_models_per_type: dict[str, str] = Field(default_factory=dict)
-# e.g. {"code": "voyage-code-3", "text": "text-embedding-3-small"}
+# e.g. {"code": "mistral/codestral-embed", "text": "text-embedding-3-small"}
 # Missing keys fall through to the default embedder.
 ```
 
@@ -307,7 +320,7 @@ class TypedEmbeddingProvider:
 
     @property
     def model_name(self) -> str:
-        # "voyage-code-3+text-embedding-3-small" — used for KB metadata only.
+        # "codestral-embed+text-embedding-3-small" — used for KB metadata only.
         ...
 
     @property
@@ -344,14 +357,15 @@ today (single embed, single Chroma query).
 
 - `test_embedding_typed_router.py`:
   - Routes `["def f(): pass", "the cat sat"]` with content types
-    `["code", "text"]` to two different stub providers; result order
+    `["code", "text"]` to two different stub providers (stubs mimicking
+    `codestral-embed` and `text-embedding-3-small`); result order
     preserved.
   - Missing key (e.g. only `"code"` configured, text comes in) falls
     through to default.
   - Single-type case (`content_types is None`) goes straight to default
     and matches today's behaviour byte-for-byte.
 
-## 5. Sub-project C — Multimodal retrieval modes (force / display)
+## 5. Sub-project C — Multimodal modes + figure & code display in the GUI
 
 ### 5.1 Goals
 
@@ -362,33 +376,55 @@ today (single embed, single Chroma query).
    papers' figure indices even when no chunk explicitly carries
    `figure_refs`. Send them with the LLM call when the model supports
    vision.
-3. Add a **display** channel: copy the rendered figures into the
-   session artefact dir and surface a structured `figures` field on
-   the response, so the CLI / MCP / web UI can show them inline.
-4. Expose figures via an MCP resource so external clients can fetch
-   the rendered image bytes by id.
+3. Add a **display channel** with two attachment kinds: **figures**
+   (rendered images) and **code excerpts** (the AST/notebook chunks
+   from sub-project A that were used as citations). Both are surfaced
+   on the response so the CLI / MCP / web UI can render them inline
+   alongside the answer text.
+4. In the web UI, code excerpts render as a syntax-highlighted code
+   box with a header showing `file_path · symbol_name · lines L<s>-L<e>`
+   and a "View on GitHub" link out to the original URI. Figures render
+   as captioned thumbnails with a "View source" link to the paper.
+5. Expose figures *and* code excerpts via MCP resources so external
+   clients can fetch them by id.
 
 ### 5.2 Non-goals
 
-- No new web UI work. The CLI prints a path; the MCP exposes a URI;
-  whether the user opens the image is their call.
 - No image-search-by-image. The "relevance" score for `force` mode
   is computed from figure caption embeddings vs the query embedding,
   same way text chunks are scored.
 - No image OCR / table-extraction changes (already handled by
   `pipeline/parsers/figures.py`).
+- No new web-UI page; the changes are in-place additions to the
+  existing `templates/index.html` answer panel.
+- No in-browser code editing or "open in IDE" actions. The link-out
+  is a normal `<a target="_blank">` to GitHub / GitLab / equivalent.
 
 ### 5.3 File changes
 
 ```
 src/perspicacite/rag/multimodal.py            # MODIFY — force + display
 src/perspicacite/rag/figure_retrieval.py      # NEW — figure-level retrieval
-src/perspicacite/config/schema.py             # MODIFY — multimodal.mode, .display
-src/perspicacite/cli/main.py                  # MODIFY — --figures flag
+src/perspicacite/rag/code_excerpts.py         # NEW — collect code-chunk excerpts
+                                              #   from cited chunks; build
+                                              #   CodeExcerpt records (with
+                                              #   source URI + line range)
+src/perspicacite/config/schema.py             # MODIFY — multimodal.mode, .display,
+                                              #   multimodal.show_code
+src/perspicacite/cli/main.py                  # MODIFY — --figures, --code flags
 src/perspicacite/mcp/resources.py             # MODIFY — perspicacite://session/{id}/figures/{fid}
-src/perspicacite/models/responses.py          # MODIFY — Response.figures
+                                              #   and  perspicacite://session/{id}/code/{cid}
+src/perspicacite/models/rag.py                # MODIFY — RAGResponse.figures,
+                                              #   RAGResponse.code_excerpts
+templates/index.html                          # MODIFY — render figures + code-box
+static/css/main.css                           # MODIFY — .code-excerpt, .figure-card
+static/js/main.js                             # MODIFY — render hooks + Prism init
 tests/unit/test_multimodal_modes.py           # NEW
+tests/unit/test_code_excerpts.py              # NEW
 tests/integration/test_multimodal_force_e2e.py  # NEW (live, opt-in)
+tests/web/test_index_renders_attachments.py   # NEW (renders index.html with
+                                              #   stub response, asserts code-box
+                                              #   + figure markup present)
 ```
 
 ### 5.4 Mode semantics
@@ -400,17 +436,55 @@ class MultimodalMode(str, Enum):
     FORCE = "force"    # also pull top-N figures by caption relevance
 ```
 
-Plus an orthogonal flag `multimodal.display: bool` (default False):
+Plus two orthogonal flags (both default False):
 
-- `display=True` writes each attached figure to
+- `multimodal.display: bool` — turn on the figure-display channel.
+- `multimodal.show_code: bool` — turn on the code-excerpt display
+  channel.
+
+**Figure display (`display=True`):**
+
+- Writes each attached figure to
   `<session-dir>/figures/<paper_id>__<fid>.png` and adds a
   `FigureRef(id=fid, paper_id, label, caption, local_path, page,
-  source_url)` entry to `Response.figures`.
+  source_url)` entry to `RAGResponse.figures`.
 - The CLI prints paths after the answer. The MCP exposes them via
-  `perspicacite://session/{sid}/figures/{fid}`.
-- A new CLI flag `--figures [N]` toggles `mode=force` with cap N
-  (default 4) and `display=True`. With no flag, current `auto`
-  behaviour is unchanged.
+  `perspicacite://session/{sid}/figures/{fid}`. The web UI renders
+  them as captioned thumbnails.
+
+**Code-excerpt display (`show_code=True`):**
+
+- After retrieval, the system walks the cited chunks and keeps the
+  ones with `content_type == "code"`. For each, it emits a
+  `CodeExcerpt(id, paper_id, file_path, symbol_name, symbol_kind,
+  language, start_line, end_line, text, source_url)` record on
+  `RAGResponse.code_excerpts`.
+- `source_url` is built from `paper_id`. For GitHub-sourced KBs
+  ingested via the GitHub-KB / skill-bundle path, `paper_id` already
+  embeds `owner/repo@SHA:path`; the URL is
+  `https://github.com/<owner>/<repo>/blob/<sha>/<path>#L<start>-L<end>`.
+  For Zotero PDFs, `source_url` falls back to the paper's DOI / Zotero
+  link.
+- The web UI renders each excerpt as a syntax-highlighted code box
+  (Prism.js, already used elsewhere; loaded from CDN with SRI; falls
+  back to plain `<pre>` if blocked). Header: `<file_path> · <symbol>
+  · L<s>-L<e>`. Footer: "View on GitHub →" anchor.
+- The MCP exposes raw excerpt text via
+  `perspicacite://session/{sid}/code/{cid}` returning `text/plain`.
+- The CLI prints a compact one-liner per excerpt by default
+  (`<file>:<line> <symbol> → <url>`) and the full text only when
+  `--code-full` is passed.
+
+**CLI flags:**
+
+- `--figures [N]` — sets `multimodal.mode=force`, `display=True`,
+  `max_images=N` (default 4).
+- `--code` — sets `multimodal.show_code=True`. Implied on by default
+  in the web UI; opt-in in CLI to avoid wall-of-code output.
+- `--code-full` — in CLI, print the full excerpt text rather than the
+  one-liner.
+
+With no flags, behaviour is unchanged from today.
 
 ### 5.5 `force` retrieval
 
@@ -429,17 +503,27 @@ This sits *alongside* the existing chunk-driven attach path: in
 `force` mode, the LLM call gets `figures = auto_figures ∪ force_figures`,
 deduplicated by `fid`, capped at `multimodal.max_images`.
 
-### 5.6 MCP resource
+### 5.6 MCP resources
+
+Two new readers under `src/perspicacite/mcp/resources.py`:
 
 ```python
 @mcp.resource("perspicacite://session/{session_id}/figures/{figure_id}")
 def get_figure(session_id: str, figure_id: str) -> Resource:
-    """Return rendered figure bytes for a session figure."""
+    """Return rendered figure bytes for a session figure (image/png)."""
+
+@mcp.resource("perspicacite://session/{session_id}/code/{excerpt_id}")
+def get_code_excerpt(session_id: str, excerpt_id: str) -> Resource:
+    """Return the raw code-excerpt text for a session code excerpt
+    (text/plain). Body is the excerpt text; metadata header carries
+    file_path, symbol, lines, source_url."""
 ```
 
-Reads `<sessions_root>/<session_id>/figures/<figure_id>.png` and
-returns `Resource(mimeType="image/png", blob=base64)`. Surfaces 404
-when missing.
+`get_figure` reads `<sessions_root>/<session_id>/figures/<figure_id>.png`
+and returns `Resource(mimeType="image/png", blob=base64)`. `get_code_excerpt`
+reads `<sessions_root>/<session_id>/code/<excerpt_id>.json` (a small
+JSON containing text + metadata) and returns the unwrapped text plus
+metadata in the resource description. Both surface 404 when missing.
 
 ### 5.7 Tests
 
@@ -451,10 +535,30 @@ when missing.
   - `MultimodalMode.FORCE` adds figures when no chunk has refs, deduped
     against auto-figures.
   - `display=True` writes files to a fake session dir and populates
-    `Response.figures`.
+    `RAGResponse.figures`.
+- `test_code_excerpts.py`:
+  - Given a retrieval result with three chunks (one Python AST chunk,
+    one notebook cell, one text chunk), `collect_code_excerpts(...)`
+    returns exactly two `CodeExcerpt` records (skips text), each with
+    correct `source_url` (GitHub blob URL with `#L<s>-L<e>` for the
+    Python chunk; falls back to paper DOI for the notebook).
+  - Excerpts are deduplicated by `(paper_id, file_path, start, end)`.
+  - `show_code=False` (default) skips the excerpt collection entirely
+    — `RAGResponse.code_excerpts` is empty.
+- `test_index_renders_attachments.py` (web):
+  - Renders `templates/index.html` with a stub `RAGResponse`
+    containing one figure and one code excerpt. Asserts:
+    - `<figure class="figure-card">` is present with `<img>` and
+      caption text.
+    - `<div class="code-excerpt">` is present with the file-path
+      header, the line-range, a `<pre><code class="language-python">`
+      block, and a "View on GitHub" `<a target="_blank">` whose href
+      matches the expected GitHub blob URL.
 - `test_multimodal_force_e2e.py` (live, slow):
   - Real one-paper KB with figures; query that doesn't surface
     `figure_refs` in chunks; force mode pulls the right figure.
+  - GitHub-KB ingest + RAG query; assert `code_excerpts` contains the
+    expected function with the right source URL.
 
 ## 6. Cython / perf sidebar (cross-cut, not its own sub-project)
 
@@ -487,13 +591,21 @@ slow down minimal installs.
 - `LLMConfig.embedding_models_per_type` defaults to `{}`, which routes
   every content type through the existing single embedder.
 - `multimodal.mode` defaults to `"auto"`, the current behaviour. The
-  CLI flag `--figures` is opt-in.
+  CLI flags `--figures`, `--code`, `--code-full` are opt-in.
+- `multimodal.show_code` defaults to `False` in CLI / API and to `True`
+  in the web UI's default config preset (web users expect code to be
+  visible). `RAGResponse.code_excerpts` defaults to an empty list; old
+  consumers that ignore the field continue to work.
 
 ## 8. Open questions deliberately closed
 
-- **Codestral vs Voyage as default code embedder:** neither is shipped
-  as a default. Example yaml uses `voyage-code-3` because it is
-  better-benchmarked on multi-language code today; users can swap.
+- **Default code embedder:** Mistral `codestral-embed` (model id
+  `mistral/codestral-embed` in litellm). Selected over `voyage-code-3`
+  per the public benchmarks Mistral published at launch and the user's
+  explicit preference. Users can swap to `voyage-code-3` or any other
+  model via `embedding_models_per_type`. Requires a Mistral API key
+  (`MISTRAL_API_KEY` env var); when missing, falls through to the
+  default embedder with a structured warning.
 - **Symbol index storage:** JSONL sidecar, not SQLite. Append-only,
   one line per symbol, glob-on-read. SQLite is overkill at expected
   sizes (≤100k symbols per KB).
@@ -508,12 +620,20 @@ slow down minimal installs.
   `docstring`, `imports`, and a `symbols.jsonl` sidecar. Existing text
   KBs ingest unchanged (regression test).
 - **Sub-project B:** a KB configured with `embedding_models_per_type =
-  {"code": "voyage-code-3"}` writes code chunks under that model while
-  text chunks stay on the default. Query path stitches results from
-  both correctly.
-- **Sub-project C:** `--figures 4` on a paper KB returns an answer
-  with `Response.figures` populated and image files written to the
-  session dir. The MCP resource returns the rendered bytes.
+  {"code": "mistral/codestral-embed"}` writes code chunks under that
+  model while text chunks stay on the default. Query path stitches
+  results from both correctly via per-type embed + RRF fusion.
+- **Sub-project C:**
+  - `--figures 4` on a paper KB returns an answer with
+    `RAGResponse.figures` populated, image files written to the
+    session dir, and the figure MCP resource returns the rendered
+    bytes.
+  - `--code` on a GitHub-ingested KB returns an answer with
+    `RAGResponse.code_excerpts` populated; each excerpt has a working
+    GitHub blob URL with line range. Rendering `templates/index.html`
+    against that response shows the answer text, captioned figure
+    thumbnails (if any), and one syntax-highlighted code box per
+    excerpt with a "View on GitHub" link.
 
 ## 10. Decomposition for writing-plans
 
