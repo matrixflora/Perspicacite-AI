@@ -16,46 +16,30 @@
 
 **Perspicacité** (French for "insight") helps scientists, researchers, and students search, understand, and organize academic literature using AI grounded in real research papers. It works entirely on your machine — only LLM inference calls leave your environment.
 
-## Table of Contents
+## Documentation
 
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [How to Use Perspicacité](#how-to-use-perspicacité)
-- [RAG Modes](#rag-modes)
-- [Content Retrieval Pipeline](#content-retrieval-pipeline)
-- [MCP Server](#mcp-server)
-- [REST API](#rest-api)
-- [Integration with AI Agents](#integration-with-ai-agents)
-- [CLI Commands](#cli-commands)
-- [Configuration](#configuration)
-- [Knowledge Bases](#knowledge-bases)
-- [Development](#development)
-- [Privacy & Data](#privacy--data)
-- [Contributing](#contributing)
-- [License](#license)
-- [Citation](#citation)
+- [docs/index.md](docs/index.md) — documentation home with links to all sections
+- [docs/VISION.md](docs/VISION.md) — framework vision, design philosophy, architecture overview
+- [docs/getting-started.md](docs/getting-started.md) — install, configure, first KB, first question
 
 ---
 
 ## Features
 
-- **Multi-database search** — Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP, and more via SciLEx
-- **Unified content pipeline** — Retrieves structured full text (PMC JATS XML, arXiv HTML), PDFs, or abstracts with quality-based priority routing
-- **6 RAG modes** — From fast KB retrieval to multi-cycle agentic research, systematic literature surveys, and cross-paper contradiction detection
-- **Knowledge base management** — Import from BibTeX, add papers by DOI, semantic search within your collections
-- **MCP server** — 22 tools exposed via Model Context Protocol for integration with AI agents (Mimosa-AI, SmolAgents, etc.)
-- **REST API** — Full JSON API for chat, KB management, conversations, and literature surveys
-- **Provenance tracking** — Per-answer trace (retrieved chunks, mode, model, latency) stored in SQLite and exportable as RO-Crate 1.1 zip bundles
-- **Institutional-access PDFs** — Ride your browser's logged-in session via `perspicacite import-browser-cookies`; paywalled journals your institution licenses become reachable server-side. `perspicacite check-cookies` reports per-domain freshness and the downloader warns when a paywall HTML response suggests an expired cookie
-- **Auto KB routing** — Send a chat with `kb_name: "auto"` and Perspicacité scores every KB's description + sampled titles against the query (BM25 free; LLM tier optional), then queries the top-N in parallel via the multi-KB path
-- **Search-to-KB pipeline** — One command (`perspicacite search-to-kb` / MCP `build_kb_from_search`) runs a SciLEx multi-database search with optional LLM/BM25 **relevance screen**, **KB-aware query expansion** (mix in topic terms from the target KB's description + titles), and **multi-variant rephrasing** (`--rephrase N` has a cheap LLM generate N alternate phrasings, fans out across SciLEx, merges deduped results)
-- **Citation-graph KB expansion** (`perspicacite expand-kb` / MCP `expand_kb_via_citations`) — forward + backward snowball over OpenAlex. Grow an existing KB along its citation lineage with the same filter + screen pipeline as search-to-kb
-- **Long-term preservation** — Three complementary modes: (1) **PDF byte cache** keyed by DOI (`pdf_download.cache_pdfs: true`) so re-ingest is free and downstream tools have something to attach; (2) **Zotero attachment push** (`push_to_zotero(attach_pdf, attach_supplementary)`) uploads the cached PDF + capsule SI files as child attachments via Zotero's 4-step Web API protocol; (3) **`export-kb`** writes a portable BibTeX + cached-PDF folder a citation manager can ingest (drag the .bib into Zotero and PDFs attach via the BetterBibTeX `file` field)
-- **Zotero integration** — Push to cloud, or point at the desktop app's local API to reach Linked Files / non-cloud-synced PDFs
-- **Obsidian vault export** — Export any KB as an Obsidian-compatible Markdown vault
-- **Async ingestion** — Long BibTeX / DOI import jobs run in the background with SSE progress streaming
-- **Local-first** — Data stays on your machine; only API calls go to LLM providers
-- **Flexible LLM routing** — Five paths: direct API (Anthropic / OpenAI / DeepSeek / Gemini, with Anthropic prompt caching — ~90% discount on repeated prefixes — already enabled on the two hottest call sites), Ollama (local, free), `agent_cli` (subprocess wrapper that routes through Claude Code / Codex / OpenClaw / Hermes / any one-shot CLI via YAML presets), MCP `sampling/createMessage` (uses the connected client's credentials), and per-stage tiering (Haiku for routing/screening, Sonnet for synthesis)
+- **Multi-database search** — Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP via SciLEx
+- **Unified content pipeline** — PMC JATS XML, arXiv HTML, OA PDFs, publisher APIs, and institutional-access via browser-cookie replay; quality-priority routing
+- **6 RAG modes** — Basic, Advanced, Profound, Agentic, Literature Survey, Contradiction; per-stage LLM tiering (Haiku routing/screening, Sonnet synthesis)
+- **Knowledge base management** — BibTeX import, DOI bulk-add, local document ingest, Zotero-collection import; async ingestion with SSE progress streaming
+- **Citation-graph expansion** — forward + backward snowball over OpenAlex; automatic Semantic Scholar fallback for arXiv-seeded papers (see [docs/concepts/citation-graph.md](docs/concepts/citation-graph.md))
+- **Honest sourcing** — `PaperSource` enum records the true origin of every paper (`OPENALEX`, `PUBMED`, `ARXIV`, `CROSSREF`, `SEMANTIC_SCHOLAR`, `BIBTEX`, `LOCAL`) — no generic `WEB_SEARCH` catch-all (see [docs/reference/paper-source-enum.md](docs/reference/paper-source-enum.md))
+- **MCP server** — 23 tools at `/mcp` for integration with Mimosa-AI, Claude Code, SmolAgents, Codex
+- **REST API** — full JSON API with SSE streaming for async jobs
+- **Provenance tracking** — per-answer retrieval trace stored in SQLite; exportable as RO-Crate 1.1 zip
+- **Auto KB routing** — `kb_name: "auto"` scores all KBs against your query (BM25 or LLM) and fans across the top-N in parallel
+- **Capsule enrichment** — per-paper figures, references, code snippets, and supplementary files indexed alongside main text
+- **Long-term preservation** — PDF byte cache, Zotero attachment push (4-step file-upload protocol), BibTeX + PDF folder export, Obsidian vault export
+- **Flexible LLM routing** — direct API (Anthropic with prompt caching, OpenAI, DeepSeek, Gemini), Ollama (local), agent-CLI subprocess (Claude Code, Codex, OpenClaw, Hermes), MCP sampling
+- **Local-first** — data stays on your machine; no telemetry
 
 ---
 
@@ -82,11 +66,13 @@ cp .env.example .env
 # Edit .env — add at least one LLM API key
 ```
 
-| Provider | Get a key at |
-|----------|-------------|
-| **DeepSeek** (default) | [platform.deepseek.com](https://platform.deepseek.com/) |
-| **OpenAI** | [platform.openai.com](https://platform.openai.com/) |
-| **Anthropic** | [console.anthropic.com](https://console.anthropic.com/) |
+| Provider | Key variable | Get a key at |
+|----------|-------------|--------------|
+| **DeepSeek** (default) | `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com/) |
+| **OpenAI** | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com/) |
+| **Anthropic** | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) |
+
+Also set `pdf_download.unpaywall_email` in `config.yml` for open-access PDF discovery.
 
 ### Run
 
@@ -94,804 +80,135 @@ cp .env.example .env
 uv run perspicacite -c config.yml serve
 ```
 
-Open **http://localhost:8000** in your browser. The MCP server runs on the same port at `/mcp`. Use `--no-mcp` to disable it.
+Open **http://localhost:5468** in your browser. The MCP server is at `/mcp` on the same port.
+
+### First knowledge base
+
+```bash
+# From a BibTeX file
+uv run perspicacite -c config.yml create-kb my-kb --from-bibtex refs.bib
+
+# Or from a live literature search (requires SciLEx extra)
+uv pip install -e ".[scilex]"
+uv run perspicacite -c config.yml search-to-kb --query "diamond magnetometry" --kb sensors --max-results 20
+```
+
+Full walkthrough: [docs/getting-started.md](docs/getting-started.md).
 
 ---
 
-## How to Use Perspicacité
+## Documentation
 
-### 1. Choose Your Knowledge Base (or Don't)
-
-In the left sidebar, under **"Knowledge Base"**:
-
-- **"No KB (web search only)"** — searches academic databases live for every query
-- **Your own KBs** — searches only papers you have added
-
-**Create a Knowledge Base:**
-1. Click "+ Create new KB"
-2. Enter a name and drag-and-drop a `.bib` file
-3. Click "Create from BibTeX" to import papers and index them
-
-### 2. Ask a Question
-
-Type your research question in the chat box. Examples:
-
-- *"What are the effects of green tea extract on metabolism?"*
-- *"How is feature-based molecular networking used in metabolomics?"*
-- *"Compare transformer models to CNNs for medical imaging"*
-
-### 3. Choose a Mode
-
-Select a RAG mode from the dropdown. See the [RAG Modes](#rag-modes) table below for guidance on which to use.
-
-### 4. Review the Answer
-
-Perspicacité will:
-1. Show its thinking process (click to expand)
-2. Search and score relevant papers
-3. Download full texts when possible
-4. Generate an answer with citations
-
-### 5. Save Interesting Papers
-
-At the bottom of each response, click **"Add to KB"** on any paper to save it to your knowledge base.
+| Section | What it covers |
+|---------|---------------|
+| [docs/concepts/](docs/concepts/) | Knowledge bases, RAG modes, capsules, provenance, citation graph |
+| [docs/guides/](docs/guides/) | BibTeX import, search-to-KB, citation expansion, Zotero, Obsidian, institutional PDFs |
+| [docs/reference/](docs/reference/) | CLI flags, REST endpoints, MCP tools, config schema, PaperSource enum |
+| [docs/development/](docs/development/) | Contributing, architecture tour, testing, design workflow |
 
 ---
 
 ## RAG Modes
 
-| Mode | Description | Best For | Speed |
-|------|-------------|----------|-------|
-| **Basic** | Single-query hybrid vector+BM25 retrieval from your KB | Well-curated KB, quick answers | Fast |
-| **Advanced** | Query expansion, WRRF fusion scoring, reranking | Broader KB search, better precision | Medium |
-| **Profound** | Multi-cycle research (up to 3 iterations) with planning and self-evaluation | Complex questions, multiple perspectives | Slower |
-| **Agentic** | Intent-based agent with tool use (web search, PDF download), up to 5 iterations | Questions requiring live discovery beyond your KB | Variable |
-| **Literature Survey** | Systematic field mapping: broad search, theme clustering, AI recommendations | Mapping a research field, exploring a new topic | Slowest |
-| **Contradiction** | Multi-paper claim clustering into agreement / disagreement / open-question buckets | Comparing conflicting findings across papers | Medium |
+Six modes covering different cost/depth trade-offs. See [docs/concepts/rag-modes.md](docs/concepts/rag-modes.md) for when to use each.
 
----
-
-## Content Retrieval Pipeline
-
-Paper content is retrieved through a unified pipeline with quality-based priority routing:
-
-```
-1. Discovery      — OpenAlex + Unpaywall → PMCID, arXiv ID, OA status, abstract
-2. Structured     — PMC JATS XML → Europe PMC → arXiv HTML (sections + references)
-3. PDF full text  — OA PDF, arXiv PDF, Unpaywall, publisher APIs (ACS, Springer, Wiley, Elsevier, …)
-4. Abstract only  — from discovery metadata when no full text is available
-5. Discard        — returns failure for papers with no retrievable content
-```
-
-Structured content (PMC, arXiv) provides sections and references. PDF content provides raw text via PyMuPDF. Papers behind paywalls with no OA version are served as abstracts. The `content_type` field in results is `"structured"` > `"full_text"` > `"abstract"` > `"none"`.
+| Mode | Best for | Speed |
+|------|----------|-------|
+| **Basic** | Quick answers from a well-curated KB | Fast |
+| **Advanced** | Broader KB search with query expansion and WRRF fusion | Medium |
+| **Profound** | Complex multi-faceted questions (3 retrieval cycles) | Slower |
+| **Agentic** | Questions requiring live discovery beyond the KB | Variable |
+| **Literature Survey** | Mapping a research field (checkpoint/resume supported) | Slowest |
+| **Contradiction** | Comparing conflicting findings across papers | Medium |
 
 ---
 
 ## MCP Server
 
-Perspicacité exposes an MCP server with 22 tools at `http://localhost:8000/mcp`, accessible via:
-- **MCP protocol** — native tool discovery and invocation
-- **HTTP JSON-RPC** — `POST /mcp` with standard JSON-RPC 2.0 envelope
+23 tools at `http://localhost:5468/mcp`. Key tools:
 
-### Tools
+`search_literature` · `get_paper_content` · `search_knowledge_base` · `generate_report` · `add_dois_to_kb` · `build_kb_from_search` · `expand_kb_via_citations` · `push_to_zotero` · `build_capsules_for_kb` · `export_kb`
 
-| Tool | Description |
-|------|-------------|
-| `search_literature` | Search academic databases with year range and article-type filters |
-| `get_paper_content` | Fetch full text + sections by DOI through the unified pipeline |
-| `get_paper_references` | Extract cited references from a paper |
-| `create_knowledge_base` | Create a new KB |
-| `add_papers_to_kb` | Add papers with auto-download and indexing |
-| `add_dois_to_kb` | Bulk-add papers to a KB from a list of DOIs (max 200 per call) |
-| `search_knowledge_base` | Semantic search within a KB |
-| `list_knowledge_bases` | List all KBs with stats |
-| `generate_report` | Synthesize a research report using RAG |
-| `screen_papers` | Score candidate papers by relevance to a query (BM25 or LLM-rated) |
-| `push_to_zotero` | Push a list of DOIs to a configured Zotero library |
-| `build_kbs_from_zotero` | Build one KB per Zotero top-level collection (per-call `library_id` override) |
-| `ingest_local_documents` | Server-side ingest of local PDFs / docs under configured allowlist roots |
-| `build_capsule` | Build per-paper Capsule (figures + structured text + mined resources) |
-| `build_capsules_for_kb` | Build Capsules for every paper in a KB (idempotent) |
-| `fetch_paper_resources` | Fetch GitHub / Zenodo / Crossref / Unpaywall / PubMed external resources |
-| `fetch_supplementary` | Download Supplementary Information files (PMC OA S3 → Springer ESM → ACS) |
-| `route_kbs` | Pick the most-relevant KBs for a query (BM25 or LLM) — pass results to `kb_names` |
-| `build_kb_from_search` | Search SciLEx, filter (year/citations/abstract), fetch PDFs, ingest into a new or existing KB |
-| `export_kb` | Export a KB as BibTeX + cached-PDF folder for Zotero / ZotFile import |
-| `expand_kb_via_citations` | Grow a KB by following forward / backward citations from its existing papers (OpenAlex; optional LLM/BM25 relevance screen) |
-| `delete_knowledge_base` | Permanently delete a KB's metadata row + Chroma collection |
+Full tool catalog: [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).
 
-Full usage details and parameter documentation: [`docs/perspicacite_skills.md`](docs/perspicacite_skills.md)
-
-### Example: JSON-RPC Call
-
-```python
-import httpx
-
-# Initialize session
-r = httpx.post("http://localhost:8000/mcp", json={
-    "jsonrpc": "2.0", "id": 1, "method": "initialize",
-    "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-               "clientInfo": {"name": "my-agent", "version": "1.0"}}
-}, headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
-session_id = r.headers["mcp-session-id"]
-
-# Call a tool
-r = httpx.post("http://localhost:8000/mcp", json={
-    "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-    "params": {"name": "search_literature", "arguments": {"query": "flash attention"}}
-}, headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
-            "Mcp-Session-Id": session_id})
-```
+For use with Mimosa-AI, Claude Code, SmolAgents, or any MCP-compatible agent, point at `http://localhost:5468/mcp` (streamable-HTTP transport).
 
 ---
 
 ## REST API
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/chat` | Chat endpoint (streaming SSE or non-streaming JSON) |
-| `GET` | `/api/health` | Health check |
-| `GET` | `/api/conversations` | List conversations |
-| `POST` | `/api/conversations` | Create conversation |
-| `DELETE` | `/api/conversations/{id}` | Delete conversation |
-| `GET` | `/api/conversations/search?q=...` | Full-text search across conversations (FTS5) |
-| `GET` | `/api/conversations/{id}/export?format=markdown` | Download conversation as Markdown |
-| `GET` | `/api/conversations/{id}/export?format=ro-crate` | Download conversation + provenance as RO-Crate 1.1 zip |
-| `GET` | `/api/conversations/{conv_id}/messages/{msg_id}/provenance` | Provenance trace for a single answer |
-| `GET` | `/api/conversations/{conv_id}/provenance` | All provenance records for a conversation |
-| `GET` | `/api/kb` | List knowledge bases |
-| `POST` | `/api/kb` | Create KB |
-| `GET` | `/api/kb/{name}` | Get KB details |
-| `DELETE` | `/api/kb/{name}` | Delete KB |
-| `GET` | `/api/kb/{name}/stats` | KB statistics (paper/chunk counts, year histogram, sources) |
-| `POST` | `/api/kb/{name}/papers` | Add papers to KB |
-| `POST` | `/api/kb/{name}/bibtex` | Import from BibTeX (synchronous) |
-| `POST` | `/api/kb/{name}/bibtex/async` | Import from BibTeX (async job, SSE progress) |
-| `POST` | `/api/kb/{name}/dois` | Bulk-add papers by DOI list (synchronous) |
-| `POST` | `/api/kb/{name}/dois/async` | Bulk-add papers by DOI list (async job, SSE progress) |
-| `GET` | `/api/kb/{name}/export?format=obsidian-vault` | Download KB as Obsidian Markdown vault zip |
-| `GET` | `/api/jobs/{id}` | Check async ingestion job status |
-| `GET` | `/api/jobs/{id}/events` | SSE stream of async job progress events |
-| `GET` | `/api/zotero/status` | Check Zotero integration status |
-| `POST` | `/api/zotero/push` | Push papers to Zotero by DOI list |
-| `GET` | `/api/paper?doi=...` | Fetch discovery metadata + content-type availability for a DOI |
-| `GET` | `/api/survey/{session_id}` | Get literature survey status |
-| `POST` | `/api/survey/{session_id}/generate` | Generate survey report |
+Full JSON API with SSE streaming. Key endpoints:
 
-Pass `"stream": false` to `/api/chat` to get a JSON response instead of server-sent events.
+`POST /api/chat` · `GET /api/kb` · `POST /api/kb/{name}/bibtex/async` · `POST /api/kb/{name}/dois/async` · `GET /api/jobs/{id}/events` · `GET /api/conversations/{id}/export`
 
-### Auto KB routing — `kb_name: "auto"`
-
-When you don't want to pick a KB by hand, send `kb_name: "auto"` (or
-`kb_names: ["auto"]`). Perspicacité scores every KB's description +
-sampled paper titles against your query and queries the top-N most
-relevant in parallel.
-
-```bash
-curl -sN -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"query": "metabolomics annotation methods", "kb_name": "auto", "mode": "basic", "stream": true}'
-```
-
-Look for a `kb_route` SSE event near the start of the stream — it
-shows which KBs the router picked and their scores:
-
-```json
-{"type": "kb_route", "method": "bm25",
- "hits": [
-   {"kb_name": "MetaboLinkAI_final_Unfiled", "score": 1.000, "sampled_titles": 12},
-   {"kb_name": "Library_AI-FORGE",          "score": 0.668, "sampled_titles": 12}]}
-```
-
-Tune in `config.yml`:
-```yaml
-rag_modes:
-  route_method: "bm25"   # bm25 = free + fast; llm = one cheap LLM call
-  route_top_k: 3
-  route_threshold: 0.1
-```
-
-For introspection without running synthesis, use the MCP `route_kbs`
-tool — same scoring, returns just the ranked hits.
-
----
-
-## Integration with AI Agents
-
-Perspicacité is designed to be used as a scientific grounding companion by autonomous AI agents:
-
-**[Mimosa-AI](https://github.com/HolobiomicsLab/Mimosa-AI)** — a self-evolving multi-agent framework for autonomous scientific research — integrates natively with Perspicacité via its MCP interface. When Perspicacité is running, Mimosa automatically calls its literature search and KB tools to ground workflow creation and evaluation in peer-reviewed literature.
-
-To use Perspicacité with Mimosa:
-1. Start Perspicacité: `uv run perspicacite -c config.yml serve`
-2. Start Mimosa separately and point it at `http://localhost:8000/mcp`
-
-For **SmolAgents** or any MCP-compatible agent framework, add the MCP server URL to your agent's tool discovery configuration.
+Full endpoint list: [docs/reference/rest-api.md](docs/reference/rest-api.md).
 
 ---
 
 ## CLI Commands
 
-All CLI commands except `serve` route structured logs to stderr, so
-stdout stays a clean stream you can pipe into `jq`, `tee`, etc.
-
 ```bash
-# Start the server (web UI + MCP)
-perspicacite -c config.yml serve [--host 0.0.0.0] [--port 8000] [--no-mcp] [--reload]
-
-# List all KBs (sorted by paper count; --json for machine-readable)
-perspicacite list-kb
-perspicacite list-kb --json | jq '.[] | {name, paper_count}'
-
-# Create an empty KB (add papers later via add-to-kb or the REST API)
-perspicacite create-kb my-kb [--description "..."]
-
-# Create a KB from BibTeX (downloads PDFs + indexes in one shot)
-perspicacite -c config.yml create-kb my-kb --from-bibtex papers.bib
-
-# Ask a question against a KB (full RAG via the same engine the web uses)
-perspicacite query "what methods does this paper use?" --kb my-kb --mode basic
-# Modes: basic | advanced | profound | contradiction
-
-# Screen candidate papers by relevance (BM25; no server needed)
-perspicacite -c config.yml screen-papers --input refs.bib --candidates cand.bib --output out.bib [--threshold 0.3] [--csv]
-
-# Search PubMed and export to BibTeX (no server needed)
-perspicacite -c config.yml pubmed-search --query "microbiome" --max-results 50 --output hits.bib
-
-# Export browser cookies for institutional-access PDF downloads
-# (requires the `cookies` extras: uv pip install -e ".[cookies]")
-perspicacite import-browser-cookies --browser brave \
-    --domain nature.com --domain wiley.com \
-    --output ~/.config/perspicacite/cookies.txt
-
-# Show version
-perspicacite version
+perspicacite serve                  # Start server (web UI + MCP)
+perspicacite create-kb NAME         # Create KB (from BibTeX with --from-bibtex)
+perspicacite add-to-kb NAME         # Add papers to existing KB
+perspicacite list-kb                # List all KBs
+perspicacite query QUESTION         # Ask a question against a KB
+perspicacite search-to-kb           # Build KB from a literature search
+perspicacite expand-kb              # Grow KB via citation graph
+perspicacite export-kb              # Export KB (BibTeX / Obsidian vault)
+perspicacite screen-papers          # Score candidates by relevance (no server needed)
+perspicacite pubmed-search          # Search PubMed to BibTeX (no server needed)
+perspicacite import-browser-cookies # Export session cookies for institutional PDF access
+perspicacite check-cookies          # Check cookie freshness
+perspicacite build-capsule          # Build per-paper capsule (figures, SI, code)
+perspicacite build-capsules         # Build capsules for all papers in a KB
+perspicacite version                # Show installed version
 ```
+
+Full flags and usage: [docs/reference/cli.md](docs/reference/cli.md).
 
 ---
 
 ## Configuration
 
-Copy and edit `config.example.yml`. Key sections:
+Copy `config.example.yml` and edit. Key sections:
 
 ```yaml
 llm:
-  default_provider: "deepseek"   # deepseek, openai, anthropic
+  default_provider: "deepseek"
   default_model: "deepseek-chat"
 
 knowledge_base:
   embedding_model: "text-embedding-3-small"
   chunk_size: 1000
-  chunk_overlap: 200
-  chunking_method: "token"       # token, semantic, agentic
 
 pdf_download:
   unpaywall_email: "your@email.com"
-  # Optional publisher API keys:
-  # elsevier_api_key: "..."
-  # springer_api_key: "..."
-  # wiley_tdm_token: "..."
 
 mcp:
   enabled: true
 ```
 
-Academic database search APIs are configured under `scilex:` — enabled sources include Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, and DBLP by default.
-
-### LLM routing — pick the path that fits your wallet
-
-Perspicacité supports five complementary paths for internal LLM
-calls. Mix and match per stage; preserve the multi-provider design.
-
-| Path | Pays | Best for | Caveats |
-|------|------|----------|---------|
-| **Direct API** (Anthropic, OpenAI, DeepSeek, Gemini, Minimax) | Per-token API key | Default. Streaming, full control, prompt caching. | Per-token billing. |
-| **Ollama** (`config.ollama.example.yml`) | Nothing | Privacy-first, offline, dev/CI. | Quality < Sonnet-4.5. Tool-use limited (agentic mode best avoided). |
-| **`claude_cli` / `agent_cli`** (subprocess wrapper) | Your agent subscription | Route through any one-shot agent CLI — Claude Code, OpenAI Codex, OpenClaw, Hermes, opencode, OpenHands. Use your existing subscription without an API key. | Shares rate limits with your interactive session; no streaming/temperature; brittle. |
-| **MCP sampling** (`use_mcp_sampling: true`) | Client's credentials | Cleanest path *if* your MCP client implements `sampling/createMessage`. | Claude Code CLI does not yet (anthropics/claude-code#1785); Claude Desktop has partial support. |
-| **Anthropic prompt caching** | Anthropic API but 90 % cheaper on cached prefix | Per-chunk contextual retrieval, repeated `kb_name="auto"` routing. | Already enabled — no config needed. |
-
-#### Per-stage model tiering
-
-Mix Sonnet for synthesis with Haiku (or local Ollama) for the cheap
-roles:
-
-```yaml
-llm:
-  default_provider: "anthropic"
-  default_model:    "claude-sonnet-4-5"      # synthesis (profound, agentic)
-
-  models:                                     # per-stage overrides
-    routing:    "claude-haiku-4-5"            # kb_router LLM
-    screening:  "claude-haiku-4-5"            # screen_papers LLM
-    rephrase:   "claude-haiku-4-5"            # rephrase_query
-    contextual: "claude-haiku-4-5"            # contextual retrieval
-
-  providers_per_stage:                        # optional per-stage provider
-    screening: "ollama"                        # e.g. screen locally,
-                                                # synthesize on Anthropic
-```
-
-Empty `models` (today's default) sends every stage to
-`(default_provider, default_model)` — no behaviour change for
-existing configs.
-
-#### Agent-CLI subscription routing (`claude_cli` / `agent_cli`)
-
-Route every internal LLM call through a one-shot agent CLI on your
-machine — Claude Code, OpenAI Codex, OpenClaw, Hermes Agent, opencode,
-or any future tool that takes a prompt and prints a completion. Your
-subscription pays; no API key sits in Perspicacité's config.
-
-Drop-in presets (copy → edit → run):
-
-| File | CLI | Notes |
-|------|-----|-------|
-| [`config.claude_code.example.yml`](config.claude_code.example.yml) | `claude` (Claude Code) | Verified path. Pro/Max subscription. Haiku for cheap stages, Sonnet for synthesis. |
-| [`config.codex.example.yml`](config.codex.example.yml) | `codex` (OpenAI Codex CLI) | Best-effort — verify flags against your Codex version. |
-| [`config.openclaw.example.yml`](config.openclaw.example.yml) | `openclaw` ([openclaw/openclaw](https://github.com/openclaw/openclaw)) | Multi-channel agent; model picked from `~/.openclaw/openclaw.json`. |
-| [`config.hermes.example.yml`](config.hermes.example.yml) | `hermes` ([Nous Research](https://hermes-agent.nousresearch.com/)) | Best-effort one-shot mode; alternative is Ollama (`hermes-3:70b`). |
-
-Under the hood, all four route through one
-[`AgentCLIClient`](src/perspicacite/llm/agent_cli.py); the YAML supplies
-the binary, flags, prompt-delivery mode (stdin or arg), and JSON-output
-path. Add your own preset by setting `llm.providers.agent_cli.executable`
-+ flags — no Python changes needed.
-
-**Caveats**: rate limits are shared with your interactive agent
-session; no prompt caching; no streaming; no per-call temperature.
-A heavy contextual-retrieval ingest may freeze you out for hours.
-Mitigate with `pdf_download.cache_pdfs: true` + per-stage tiering
-(Haiku/Ollama for hot loops, agent CLI only for synthesis). For
-production / unattended use, prefer direct API + prompt caching.
-Full caveats and per-CLI notes (live-verified flag schemas, latency
-measurements, recommended tiering): [`docs/agent-cli-caveats.md`](docs/agent-cli-caveats.md).
-
-#### MCP sampling (`use_mcp_sampling`)
-
-When Perspicacité runs as an MCP server, the protocol-native way to
-use the client's credentials is `sampling/createMessage`. Opt in:
-
-```yaml
-llm:
-  use_mcp_sampling: true
-  default_provider: "anthropic"     # fallback when sampling fails
-  default_model:    "claude-sonnet-4-5"
-```
-
-Inside the 5 LLM-heavy MCP tools (`route_kbs`, `screen_papers`,
-`build_kb_from_search`, `expand_kb_via_citations`, `generate_report`)
-Perspicacité asks the connected client to produce the completion. On
-success: client pays. On failure (client doesn't advertise the
-capability): silent fall-through to LiteLLM with the configured
-provider. Status as of May 2026:
-
-- **Claude Code CLI**: not yet implemented
-  ([anthropics/claude-code#1785](https://github.com/anthropics/claude-code/issues/1785)).
-- **Claude Desktop**: partial support — works for many calls.
-- **Cursor / Cline / community clients**: vary, opt-in per-client.
-
-Design doc:
-[`docs/superpowers/specs/2026-05-14-claude-code-sampling-integration-design.md`](docs/superpowers/specs/2026-05-14-claude-code-sampling-integration-design.md).
-
-#### Cheap / local-only mode (Ollama)
-
-Run with no paid API calls — dev, CI, air-gapped machine, full data
-privacy. Use the dedicated preset:
-
-```bash
-perspicacite -c config.ollama.example.yml serve
-```
-
-See [`config.ollama.example.yml`](config.ollama.example.yml) for
-the recommended model split (70B for synthesis, 3B for cheap roles).
-
-**Caveats** (same for any local route):
-- Ollama's tool-use support is limited, so agentic mode is best
-  avoided — basic / advanced / contradiction modes work fine.
-- A given KB is bound to the embedding model that wrote it. Local
-  mode only makes sense for **fresh KBs**; you can't query a KB
-  built with OpenAI embeddings using a local model (different
-  vector spaces).
-- Local sentence-transformers download once on first use
-  (`~/.cache/torch/sentence_transformers/`).
-
-### Zotero secrets via environment variables
-
-Instead of putting `zotero.api_key` in `config.yml`, you can set:
-
-```bash
-export ZOTERO_API_KEY=...                       # or PERSPICACITE_ZOTERO_API_KEY
-export PERSPICACITE_ZOTERO_LIBRARY_ID=5691738   # optional override
-export PERSPICACITE_ZOTERO_BASE_URL="http://localhost:23119/api"   # use local Zotero
-```
-
-These environment overrides take precedence over `config.yml`.
-
-### Multi-database literature search (optional: SciLEx)
-
-`search_literature` (MCP) and the agentic mode's online search rely on
-**[SciLEx](https://github.com/datalogism/SciLEx)** — a MIT-licensed
-multi-DB academic-search aggregator (Semantic Scholar, OpenAlex,
-PubMed, arXiv, HAL, DBLP, IEEE, Springer). It's not on PyPI; install
-it as an extra from GitHub:
-
-```bash
-uv pip install -e ".[scilex]"
-```
-
-Without SciLEx, `search_literature` returns a clear "not installed"
-error and the agentic search step skips external lookups. All KB-side
-tools (`search_knowledge_base`, `generate_report`, `add_dois_to_kb`)
-work without SciLEx.
-
-**Heads-up:** SciLEx pins versions of `beautifulsoup4`, `bibtexparser`,
-`lxml`, etc. Installing it inside Perspicacité's venv may bump those
-for the whole environment.
-
-### Build a KB from a SciLEx search (`search-to-kb`)
-
-One command takes you from a query string to a queryable, retrievable
-KB — search → filter → fetch PDFs → chunk → embed → index. Useful when
-you want to spin up a focused KB on a topic before doing real RAG over
-it, or when you want an agent (Claude Code, etc.) to handle the entire
-pipeline autonomously:
-
-```bash
-# Build a fresh KB from the top 30 hits on "NV-diamond magnetometry" since 2020
-perspicacite search-to-kb \
-    --query "nitrogen vacancy diamond magnetometry" \
-    --kb diamond_sensors \
-    --max-results 30 \
-    --min-year 2020 \
-    --min-citations 5
-
-# Dry-run first if you want to see which DOIs would be ingested:
-perspicacite search-to-kb -q "metabolomics LLM annotation" -k metabo_llm --dry-run
-```
-
-Filters apply client-side before any PDF fetch: `--min-year` /
-`--max-year`, `--min-citations`, `--require-abstract`, `--article-type`,
-plus implicit `require_doi=True` (papers without a DOI are unreachable
-through the download pipeline anyway). Duplicate DOIs are deduplicated
-both within the search response and against the existing KB, so re-running
-the same command harmlessly enriches the KB with whatever's new on
-the publisher side.
-
-The same flow is available over MCP as
-[`build_kb_from_search`](#tools) — pass the same parameters as JSON
-arguments. The agentic `mimosa-ai` / Claude Code style:
-
-```python
-# Inside a Claude Code session, after Perspicacité MCP is connected:
-await build_kb_from_search(
-    query="LLM literature screening accuracy",
-    kb_name="llm_screening",
-    max_results=20,
-    min_year=2023,
-)
-# → returns {"added_papers": 14, "added_chunks": 142, ...}
-# → KB is immediately queryable via search_knowledge_base / generate_report
-```
-
-#### Smart-search options on top of `search-to-kb`
-
-```bash
-# Relevance screen between filter and ingest (BM25 free; LLM uses haiku):
-perspicacite search-to-kb -q "metabolomics LLM annotation" -k metabo_llm \
-    --max-results 30 --screen llm --screen-threshold 0.5
-
-# KB-aware: when the KB already exists, append its top topic terms
-# (from description + sampled titles) to bias SciLEx toward adjacent literature:
-perspicacite search-to-kb -q "imaging" -k diamond_sensors --kb-aware
-
-# Multi-variant rephrasing for coverage (one cheap LLM call generates N
-# alternate phrasings; fan out across SciLEx and merge dedup'd by DOI):
-perspicacite search-to-kb -q "metabolite annotation LLM" -k metabo_llm \
-    --rephrase 3 --max-results 10
-```
-
-All three options stack — `--rephrase 3 --kb-aware --screen llm` runs
-4 queries (original + 3 variants, each augmented with KB topic terms),
-unions deduped, and screens the result for topic fit.
-
-### Citation-graph expansion (`expand-kb`)
-
-Grow an existing KB by following one citation hop from each of its
-papers — no new query needed.
-
-```bash
-# Pull both forward (papers citing) and backward (papers cited),
-# 8 per seed paper per direction, year-filter, LLM-screen for topic fit:
-perspicacite expand-kb -k diamond_sensors \
-    --direction both --max-per-seed 8 --min-year 2020 \
-    --screen llm --screen-threshold 0.5
-
-# Just the intellectual lineage (no new follow-up work):
-perspicacite expand-kb -k diamond_sensors --direction backward --dry-run
-```
-
-Uses OpenAlex directly — no SciLEx dependency. Polite-pool UA via
-`pdf_download.unpaywall_email`. Hits already in the KB are skipped
-(no duplicate ingest). Same `--min-year` / `--min-citations` /
-`--require-abstract` filter stack as `search-to-kb`.
-
-Also available as MCP `expand_kb_via_citations`.
-
-### Institutional-access PDFs via browser cookies
-
-For papers behind a publisher paywall that your institution licenses,
-Perspicacité can ride your existing browser session by replaying the
-cookies your browser already has — the same trick the Zotero Connector
-browser extension uses, just from server-side.
-
-**One-command setup:**
-
-```bash
-# 1. Log in to your library proxy / publisher SSO in your browser
-#    (Chrome / Brave / Firefox / Edge / Safari / Opera / Arc).
-# 2. Install the cookies helper:
-uv pip install -e ".[cookies]"
-
-# 3. Export the cookies you care about:
-perspicacite import-browser-cookies \
-    --browser brave \
-    --domain nature.com \
-    --domain wiley.com \
-    --domain sciencedirect.com \
-    --domain pubs.acs.org \
-    --output ~/.config/perspicacite/cookies.txt
-```
-
-The command reads + decrypts cookies via the OS keychain (macOS may
-prompt once), filters to the requested domains, writes a Netscape
-`cookies.txt` with `chmod 600`, and prints the matching `config.yml`
-block to paste under `pdf_download:`. Typical output:
-
-```text
-Wrote 54 of 3122 cookies to /Users/me/.config/perspicacite/cookies.txt
-Top cookie hosts captured:
-   18  www.nature.com
-   12  onlinelibrary.wiley.com
-   ...
-
-Add to your config.yml:
-
-pdf_download:
-  cookies_path: "/Users/me/.config/perspicacite/cookies.txt"
-  cookie_domains:
-    - "nature.com"
-    - "onlinelibrary.wiley.com"
-    - "pubs.acs.org"
-    ...
-```
-
-After updating `config.yml` and restarting, every PDF request to those
-hosts carries your session — paywalled PDFs the institution licenses
-become reachable.
-
-**Verifying it works:**
-
-```bash
-# Add a paywalled DOI; check pdf_download.success in the response:
-curl -s -X POST http://localhost:8000/api/kb/<your-kb>/dois/async \
-  -H "Content-Type: application/json" \
-  -d '{"dois":["10.1038/s41586-023-06924-6"]}'
-
-curl -sN "http://localhost:8000/api/jobs/<job_id>/events"
-# Expect: {"pdf_download":{"attempted":1,"success":1,"failed":0}}
-```
-
-**Notes:**
-- Empty `cookie_domains` list = attach cookies to **all** PDF requests
-  (broader access, slight cookie-leak risk in third-party redirect hops).
-- Cookies expire — re-run `import-browser-cookies` when downloads start
-  failing again. Check freshness at any time with:
-  ```bash
-  perspicacite check-cookies
-  # 🍪 Cookie freshness for /Users/me/.config/perspicacite/cookies.txt
-  #   DOMAIN                   STATUS         HOSTS  EXPIRES
-  #   nature.com               ✓ ok                 3  2026-08-04
-  #   onlinelibrary.wiley.com  ✓ ok                 2  2026-10-07
-  #   pubs.acs.org             ✓ ok                 1  2026-11-10
-  ```
-  Stale domains are flagged `⚠ expiring_soon` (≤ 7 days) or `✗ all_expired`,
-  and the command exits non-zero so you can wire it into a daily cron.
-  The downloader also logs `pdf_cookie_likely_expired` when a publisher
-  returns HTML on a cookie-gated URL — the canonical symptom of a stale
-  institutional cookie.
-- The CLI's auto-suggested `cookie_domains` may include extra subdomains
-  (`assets.nature.com`, etc.); trim to what your institution licenses.
-- The cookies file is written `chmod 600`; anyone with read access can
-  impersonate your library session.
-
-**Manual export still works** — drop a Netscape-format `cookies.txt`
-from any "Get cookies.txt" / "EditThisCookie" browser extension at the
-configured `cookies_path` and Perspicacité picks it up the same way.
-
-### Use the local Zotero desktop API
-
-If you have Linked Files / ZotFile-managed PDFs or simply don't want to
-hit Zotero's rate limits, point at the desktop app's local API:
-
-1. Zotero 7+ → Settings → Advanced → check **"Allow other applications on
-   this computer to communicate with Zotero"** (Zotero 6 → about:config →
-   `extensions.zotero.httpServer.enabled = true`).
-2. Restart Zotero.
-3. In `config.yml`:
-   ```yaml
-   zotero:
-     enabled: true
-     base_url: "http://localhost:23119/api"
-     library_id: "5691738"        # your group/user library ID
-     library_type: "group"        # or "user"
-     api_key: ""                  # optional on loopback
-   ```
-
-The local API is **read-only** (you cannot push items to it — use the
-cloud API for `push_to_zotero`).
-
-### Long-term preservation (PDF cache + Zotero push + BibTeX export)
-
-Three complementary preservation paths, pick any combination:
-
-**1. PDF byte cache (decoupled, default on).** Every successfully-fetched
-PDF lands in `pdf_download.cache_dir` (default `data/papers/`) with a
-sidecar `<doi>.meta.json` recording source, fetched_at, size, and sha256.
-Re-ingesting the same DOI serves bytes from disk (typical 100–200×
-speedup) and gives the other two modes something to attach. Disable with
-`pdf_download.cache_pdfs: false` if you want strictly ephemeral fetches.
-
-**2. Zotero push with attachments (integrated, cloud only).**
-
-```python
-# MCP: push DOIs + attach the cached PDF + capsule SI files
-await push_to_zotero(
-    dois=["10.1002/jcc.21366", "10.1038/s41586-023-06924-6"],
-    attach_pdf=True,
-    attach_supplementary=True,  # uploads data/capsules/<doi>/supplementary/files/*
-)
-# → {"created": [{"doi": "...", "key": "ABCD1234",
-#                "attached_pdf": true, "attached_supplementary": ["table1.xlsx"]}]}
-```
-
-Uses Zotero's documented 4-step Web API file-upload protocol (register
-shell → request creds → multipart POST to storage → finalize). Cloud-only
-— the local desktop API and group writes both require
-`api.zotero.org`. Without a cached PDF, the tool triggers a full fetch
-first (which populates the cache as a side effect).
-
-**3. BibTeX + folder export (citation-manager bridge, fully offline).**
-
-```bash
-# Write <kb>.bib + papers/<doi>.pdf next to it
-perspicacite export-kb -k diamond_sensors -o ~/exports/diamond --with-pdfs
-
-# With capsule SI files too:
-perspicacite export-kb -k diamond_sensors -o ~/exports/diamond \
-    --with-pdfs --with-supplementary
-```
-
-Output:
-
-```
-~/exports/diamond/
-    diamond_sensors.bib         # one @article per paper, with file = {…}
-    manifest.json               # export report (counts, missing DOIs)
-    papers/<doi>.pdf            # cached PDF copies
-    supplementary/<paper_id>/   # SI files from capsules (when present)
-```
-
-Drag the `.bib` into Zotero (**File → Import**) — Zotero reads the
-BetterBibTeX `file` field and attaches PDFs automatically. Or keep the
-folder under git for a portable, citation-manager-agnostic snapshot.
-
-Same surface available over MCP as the `export_kb` tool.
-
----
-
-## Knowledge Bases
-
-**Create from BibTeX:**
-- Web UI: click "+ Create new KB", drag a `.bib` file, enter a name
-- CLI: `perspicacite create-kb my-kb --from-bibtex refs.bib`
-- MCP: `create_knowledge_base` then `add_papers_to_kb`
-
-**Add papers during research:**
-- Agentic mode finds and downloads papers — click "Add to KB" to save
-- Literature Survey mode lets you select recommended papers and add in bulk
-
-**Chunking strategies:**
-
-| Strategy | Description |
-|----------|-------------|
-| `token` | Fixed-size token chunks (default) |
-| `semantic` | Splits at semantic boundaries |
-| `agentic` | AI-driven chunking optimized for RAG |
-
-**Multi-KB queries:** Pass `kb_names` (a list of KB names) in the chat advanced options or the `generate_report` MCP tool to fan a query across multiple KBs simultaneously. All queried KBs must share the same embedding model.
-
-**Tips:**
-- Keep KBs focused — create separate ones for different projects
-- Start with 10–20 key papers and expand as needed
-- Pay attention to relevance scores — higher-scoring papers are most useful
-
----
-
-## Development
-
-### Run Tests
-
-```bash
-# Unit tests (no external services needed)
-uv run pytest tests/unit/ -v
-
-# Skip tests requiring live API keys
-uv run pytest tests/unit/ -m "not live" -v
-
-# Live MCP tests (requires running server on port 8000)
-uv run python tests/test_mcp_live.py --all --port 8000
-uv run python tests/test_mcp_live.py --test search
-```
-
-### Lint and Type Check
-
-```bash
-uv run ruff check src/ tests/
-uv run ruff format src/ tests/
-uv run mypy src/
-```
-
-### Project Structure
-
-```
-src/perspicacite/
-  cli.py                        # CLI commands (serve, create-kb, screen-papers, pubmed-search, version)
-  config/schema.py              # Pydantic configuration model
-  mcp/server.py                 # MCP server with 22 tools
-  pipeline/
-    download/                   # Content retrieval pipeline
-      discovery.py              # OpenAlex + Unpaywall discovery
-      unified.py                # retrieve_paper_content() — main entry point
-      europepmc.py              # PMC JATS XML fetcher
-      arxiv.py                  # arXiv HTML + PDF
-      biorxiv.py                # bioRxiv/medRxiv JATS XML fetcher
-      crossref.py               # Crossref metadata enrichment
-    parsers/pdf.py              # PyMuPDF-based parser
-    bibtex_kb.py                # BibTeX → KB pipeline
-  rag/
-    engine.py                   # RAGEngine (routes to mode handlers)
-    modes/                      # basic, advanced, profound, agentic, literature_survey, contradiction
-    tools/                      # Tool registry, KB search, LOTUS
-  retrieval/                    # ChromaDB vector store + hybrid BM25 search
-    multi_kb.py                 # MultiKBRetriever — fan-out across multiple KB collections
-    recency.py                  # apply_recency_weighting() — exponential decay by year
-  search/
-    scilex_adapter.py           # Multi-database literature search
-    screening.py                # screen_papers() BM25 + LLM relevance scoring
-    pubmed.py                   # PubMedSearchAdapter (Biopython Entrez)
-  web/                          # FastAPI app, routers, AppState singleton
-templates/index.html            # Single-page chat UI
-static/css/                     # 6 stylesheets: theme, base, layout, chat, kb, survey
-static/js/                      # 10 scripts: utils, databases, mode, conversations, chat, kb, kb_stats, paper_detail, survey, main
-```
-
-> **Developer note:** After editing files in `static/css/` or `static/js/`, force a browser hard-refresh (Ctrl+Shift+R / Cmd+Shift+R) to bypass the cache. A `MANUAL_QA.md` checklist at the repo root covers the Phase 5 UI features.
+Full schema: [docs/reference/config.md](docs/reference/config.md).
+
+Alternative config presets: `config.ollama.example.yml` (local Ollama),
+`config.claude_code.example.yml` (Claude Code CLI), `config.codex.example.yml`,
+`config.hermes.example.yml`, `config.openclaw.example.yml`.
 
 ---
 
 ## Privacy & Data
 
-- **Your data stays local** — KBs are stored in ChromaDB and SQLite on your machine
-- **API calls only** — Queries are sent to your configured LLM provider; no data is sent elsewhere
-- **No tracking** — No usage analytics are collected
+- **Your data stays local** — KBs stored in ChromaDB and SQLite on your machine
+- **API calls only** — queries sent to your configured LLM provider; no other data leaves your environment
+- **No tracking** — no usage analytics
 
 ---
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for guidelines.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the CLA workflow and contribution guidelines.
+Dev-loop setup, test structure, and architecture: [docs/development/](docs/development/).
 
 ---
 
@@ -932,5 +249,5 @@ L. Pradi, T. Jiang, M. Feraud, M. Bekbergenova, Y. Taghzouti, L.-F. Nothias — 
 
 - **[SciLEx](https://github.com/Wimmics/SciLEx)** — literature exploration toolkit powering multi-database search
 - **[ChromaDB](https://www.trychroma.com/)** — local vector storage
-- **[OpenAlex](https://openalex.org/)** and **[Semantic Scholar](https://www.semanticscholar.org/)** — academic search
+- **[OpenAlex](https://openalex.org/)** and **[Semantic Scholar](https://www.semanticscholar.org/)** — academic search and citation graphs
 - **[Unpaywall](https://unpaywall.org/)** — open access discovery
