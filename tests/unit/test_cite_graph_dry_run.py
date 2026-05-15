@@ -26,7 +26,7 @@ async def test_dry_run_returns_ranked_hits():
     ]
 
     with patch("perspicacite.pipeline.cite_graph._resolve_and_fetch",
-               new=AsyncMock(return_value=fake_works)):
+               new=AsyncMock(return_value=(fake_works, None))):
         kb_cfg = KnowledgeBaseConfig(
             library_paper_map={"my-lib": "10.0/seed"},
             cite_graph=CiteGraphConfig(max_papers=5, min_year_offset=10),
@@ -47,7 +47,7 @@ async def test_dry_run_returns_empty_when_resolver_fails():
     from perspicacite.pipeline.cite_graph import enrich_kb_from_cite_graph
 
     with patch("perspicacite.pipeline.cite_graph._resolve_and_fetch",
-               new=AsyncMock(return_value=[])):
+               new=AsyncMock(return_value=([], None))):
         kb_cfg = KnowledgeBaseConfig()
         hits = await enrich_kb_from_cite_graph(
             tool="unknown-lib", kb_config=kb_cfg, existing_dois=set(),
@@ -61,7 +61,7 @@ async def test_dry_run_does_not_call_ingest():
     from perspicacite.pipeline.cite_graph import enrich_kb_from_cite_graph
 
     with patch("perspicacite.pipeline.cite_graph._resolve_and_fetch",
-               new=AsyncMock(return_value=[])):
+               new=AsyncMock(return_value=([], None))):
         kb_cfg = KnowledgeBaseConfig()
         hits = await enrich_kb_from_cite_graph(
             tool="x", kb_config=kb_cfg, existing_dois=set(),

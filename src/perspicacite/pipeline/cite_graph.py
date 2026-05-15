@@ -49,6 +49,50 @@ def _recency_score(year: int, *, now_year: int) -> float:
 
 _WORD_RE = re.compile(r"\w+")
 
+# Common English stopwords — minimal, just enough to strip filler from
+# paper titles. Not a full NLTK list; we want fast and dependency-free.
+_TITLE_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+    "has", "have", "in", "into", "is", "it", "its", "of", "on", "or",
+    "that", "the", "this", "to", "via", "we", "were", "with", "without",
+    "using", "use", "uses", "used", "their", "these", "those", "based",
+    "new", "novel", "recent", "approach", "method", "methods",
+    "paper", "study", "studies", "result", "results",
+})
+
+
+def tool_synonyms_from_seed(
+    *,
+    tool: Optional[str],
+    seed_title: Optional[str],
+) -> list[str]:
+    """Build a synonyms list for cite-graph ranking.
+
+    Includes the tool name plus content-word tokens from the seed
+    paper's title (lowercased, deduped, stopword-filtered, short tokens
+    dropped). Order: tool first, then unique title tokens in title order.
+    """
+    syns: list[str] = []
+    seen: set[str] = set()
+
+    def _add(token: str) -> None:
+        t = token.lower().strip()
+        if not t or len(t) < 3:
+            return
+        if t in _TITLE_STOPWORDS:
+            return
+        if t in seen:
+            return
+        seen.add(t)
+        syns.append(t)
+
+    if tool:
+        _add(tool)
+    if seed_title:
+        for token in _WORD_RE.findall(seed_title):
+            _add(token)
+    return syns
+
 
 def _keyword_match(text: Optional[str], synonyms: list[str]) -> float:
     """Score how well the abstract text matches the tool synonym list.
@@ -141,11 +185,12 @@ from typing import Optional as _Optional
 
 async def _resolve_and_fetch(
     *, tool: _Optional[str], doi: _Optional[str], kb_config,
-) -> list[dict]:
+) -> tuple[list[dict], _Optional[str]]:
     """Resolve the library to a seed DOI, then fetch OpenAlex citing works.
 
-    Returns a list of raw OpenAlex work dicts. This is the only network
-    surface; tests patch this function.
+    Returns a (citing_works, seed_title) tuple. The title — when known —
+    is used by the orchestrator to expand tool_synonyms for topic-aware
+    scoring.
     """
     import httpx
     from perspicacite.pipeline.library_doi import resolve_library_paper
@@ -154,7 +199,7 @@ async def _resolve_and_fetch(
     seed_doi: _Optional[str] = doi
     if seed_doi is None:
         if not tool:
-            return []
+            return ([], None)
         paper = await resolve_library_paper(
             tool,
             bundle=None, github_repo=None,
@@ -162,17 +207,19 @@ async def _resolve_and_fetch(
             readme_text=None,
         )
         if paper is None:
-            return []
+            return ([], None)
         seed_doi = paper.doi
 
     async with httpx.AsyncClient() as client:
         seed_work = await _fetch_seed_work(client, seed_doi, {})
         if seed_work is None:
-            return []
-        return await fetch_cited_by_works(
+            return ([], None)
+        seed_title = seed_work.get("title")
+        works = await fetch_cited_by_works(
             client, seed_work=seed_work,
             max_results=kb_config.cite_graph.max_papers * 4,
         )
+        return (works, seed_title)
 
 
 def _hit_from_oa_work(work: dict) -> _Optional["CiteHit"]:
@@ -218,17 +265,19 @@ async def enrich_kb_from_cite_graph(
 ) -> list[CiteHit]:
     """Resolve library/DOI → fetch citing works → filter+score → top-N.
 
-    v1 returns the ranked CiteHit list (top max_papers). The
-    ``dry_run`` parameter is reserved for future ingest plumbing —
-    currently it has no effect on behaviour (no ingest is implemented
-    in v1).
+    Returns the ranked CiteHit list (top max_papers). Synonyms for the
+    abstract-match signal are expanded with content-word tokens from
+    the seed paper's title via :func:`tool_synonyms_from_seed`.
+
+    The ``dry_run`` parameter is reserved for future ingest plumbing —
+    currently it has no effect on behaviour.
     """
     import datetime as _dt
     if now_year is None:
         now_year = _dt.datetime.now(_dt.UTC).year
 
     cfg = kb_config.cite_graph
-    works = await _resolve_and_fetch(tool=tool, doi=doi, kb_config=kb_config)
+    works, seed_title = await _resolve_and_fetch(tool=tool, doi=doi, kb_config=kb_config)
     raw_hits: list[CiteHit] = []
     for w in works:
         h = _hit_from_oa_work(w)
@@ -239,7 +288,7 @@ async def enrich_kb_from_cite_graph(
         raw_hits, config=cfg, existing_dois=existing_dois, now_year=now_year,
     )
 
-    synonyms = [tool] if tool else []
+    synonyms = tool_synonyms_from_seed(tool=tool, seed_title=seed_title)
     for h in filtered:
         score_cite_hit(h, synonyms, cfg, now_year=now_year)
 
