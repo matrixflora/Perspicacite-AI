@@ -2149,6 +2149,60 @@ async def delete_knowledge_base(
 
 
 # =============================================================================
+# Tool 23: enrich_kb_from_cite_graph_tool
+# =============================================================================
+
+
+@mcp.tool()
+async def enrich_kb_from_cite_graph_tool(
+    kb_name: str,
+    tool: str | None = None,
+    doi: str | None = None,
+    max_papers: int | None = None,
+    dry_run: bool = True,
+) -> dict:
+    """MCP tool: cite-graph enrichment preview.
+
+    Resolves a library/tool name (or explicit DOI) to a canonical
+    paper, fetches OpenAlex citing works, filters and scores them, and
+    returns a ranked list of CiteHit records.
+
+    v1: dry-run only. Returns ranked CiteHit records as dicts.
+
+    Args:
+        kb_name: Target KB name (used for context; no ingest in v1).
+        tool: Library/tool name to resolve to its canonical DOI.
+        doi: Skip the resolver and use this DOI directly as the seed.
+        max_papers: Override the max_papers cap from config.
+        dry_run: Preview only — no ingest (default True; v1 always behaves
+            as dry-run regardless of this flag).
+
+    Returns:
+        Dict ``{"hits": [...]}`` where each hit contains doi, title,
+        year, citation_count, is_oa, venue, score, score_breakdown.
+    """
+    from perspicacite.pipeline.cite_graph import enrich_kb_from_cite_graph
+
+    cfg = mcp_state.config
+    kb_cfg = cfg.knowledge_base
+    if max_papers is not None:
+        kb_cfg.cite_graph.max_papers = max_papers
+    hits = await enrich_kb_from_cite_graph(
+        tool=tool, doi=doi, kb_config=kb_cfg, existing_dois=set(),
+        dry_run=dry_run,
+    )
+    return {"hits": [
+        {
+            "doi": h.doi, "title": h.title, "year": h.year,
+            "citation_count": h.citation_count, "is_oa": h.is_oa,
+            "venue": h.venue, "score": h.score,
+            "score_breakdown": h.score_breakdown,
+        }
+        for h in hits
+    ]}
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -2176,6 +2230,7 @@ _TOOL_NAMES: list[str] = [
     "export_kb",
     "expand_kb_via_citations",
     "delete_knowledge_base",
+    "enrich_kb_from_cite_graph_tool",
 ]
 
 
