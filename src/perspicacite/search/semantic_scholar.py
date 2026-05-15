@@ -137,7 +137,7 @@ def _map_s2_response(data: dict) -> Paper:
         url=data.get("url"),
         pdf_url=pdf_url,
         citation_count=data.get("citationCount"),
-        source=PaperSource.WEB_SEARCH,
+        source=PaperSource.SEMANTIC_SCHOLAR,
         metadata={
             "s2_paper_id": data.get("paperId"),
             "s2_arxiv_id": ext_ids.get("ArXiv"),

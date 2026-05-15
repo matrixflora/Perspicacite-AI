@@ -62,3 +62,32 @@ def test_snowball_expansion_hit_uses_citation_follow_enum():
     papers = _papers_from_hits(hits)
     assert len(papers) == 1
     assert papers[0].source is PaperSource.CITATION_FOLLOW
+
+
+@pytest.mark.asyncio
+async def test_semantic_scholar_lookup_uses_ss_enum(monkeypatch):
+    """semantic_scholar.lookup_paper() calls the S2 API; the returned
+    Paper must carry source=SEMANTIC_SCHOLAR (not WEB_SEARCH)."""
+    from perspicacite.search.semantic_scholar import lookup_paper
+
+    sample = {
+        "paperId": "s2id123",
+        "title": "Attention Is All You Need",
+        "abstract": "We propose a new simple network architecture...",
+        "authors": [{"name": "Ashish Vaswani"}, {"name": "Noam Shazeer"}],
+        "year": 2017,
+        "externalIds": {"DOI": "10.48550/arXiv.1706.03762", "ArXiv": "1706.03762"},
+        "citationCount": 100000,
+        "venue": "NeurIPS",
+        "openAccessPdf": {"url": "https://arxiv.org/pdf/1706.03762"},
+        "url": "https://www.semanticscholar.org/paper/s2id123",
+    }
+
+    async def fake_get(self, url, **kwargs):
+        req = httpx.Request("GET", url)
+        return httpx.Response(200, json=sample, request=req)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    paper = await lookup_paper("10.48550/arXiv.1706.03762")
+    assert paper is not None
+    assert paper.source is PaperSource.SEMANTIC_SCHOLAR
