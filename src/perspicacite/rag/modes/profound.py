@@ -57,6 +57,7 @@ from perspicacite.rag.utils import (
     get_doc_citation,
     format_documents_for_prompt,
     get_system_prompt,
+    flatten_paper_results_to_chunks,
 )
 
 logger = get_logger("perspicacite.rag.modes.profound")
@@ -1850,7 +1851,7 @@ Follow the system instructions for this situation."""
         _mm = getattr(self.config, "multimodal", None)
         _show_code = bool(getattr(_mm, "show_code", False)) if _mm else False
         _mode = getattr(_mm, "mode", None) if _mm else None
-        _dc_chunks = [c for c in documents if isinstance(c, DocumentChunk)]
+        _dc_chunks = flatten_paper_results_to_chunks(documents)
         _code_excerpts = collect_code_excerpts(_dc_chunks) if _show_code else []
         _figure_refs = (
             collect_figure_refs(_dc_chunks, capsule_root=Path(self.config.capsule.root))

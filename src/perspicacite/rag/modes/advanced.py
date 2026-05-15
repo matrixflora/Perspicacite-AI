@@ -51,6 +51,7 @@ from perspicacite.rag.utils import (
     get_doc_citation,
     format_documents_for_prompt,
     format_paper_results_for_prompt,
+    flatten_paper_results_to_chunks,
 )
 from perspicacite.rag.wrrf_v1 import doc_page_content, select_wrrf_merged_documents
 
@@ -437,7 +438,7 @@ Sources:
         _show_code = bool(getattr(_mm, "show_code", False)) if _mm else False
         _mode = getattr(_mm, "mode", None) if _mm else None
         _all_docs = list(paper_results) if paper_results else list(selected_documents)
-        _dc_chunks = [c for c in _all_docs if isinstance(c, DocumentChunk)]
+        _dc_chunks = flatten_paper_results_to_chunks(_all_docs)
         _code_excerpts = collect_code_excerpts(_dc_chunks) if _show_code else []
         _figure_refs = (
             collect_figure_refs(_dc_chunks, capsule_root=Path(self.config.capsule.root))
