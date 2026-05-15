@@ -155,6 +155,8 @@ class StreamEvent(BaseModel):
         "tool_result",  # Tool result
         "error",  # Error message
         "done",  # Stream complete
+        "code_excerpt",  # Code-chunk attachment (sub-project C, 2026-05-15)
+        "figure_ref",  # Figure-reference attachment (sub-project C, 2026-05-15)
     ]
     data: str  # JSON-encoded payload
 
@@ -204,3 +206,15 @@ class StreamEvent(BaseModel):
                 }
             ),
         )
+
+    @classmethod
+    def code_excerpt(cls, payload: dict) -> "StreamEvent":
+        """Create a code-excerpt event (sub-project C)."""
+        import json
+        return cls(event="code_excerpt", data=json.dumps(payload))
+
+    @classmethod
+    def figure_ref(cls, payload: dict) -> "StreamEvent":
+        """Create a figure-ref event (sub-project C)."""
+        import json
+        return cls(event="figure_ref", data=json.dumps(payload))
