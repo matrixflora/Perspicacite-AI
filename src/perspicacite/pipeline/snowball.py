@@ -151,6 +151,19 @@ async def _fetch_seed_work(
         return None
 
 
+async def openalex_id_for_doi(
+    client: httpx.AsyncClient, doi: str, *, headers: dict[str, str] | None = None,
+) -> str | None:
+    """Resolve a DOI to an OpenAlex work id (W12345...). Returns None on miss."""
+    if headers is None:
+        headers = {}
+    work = await _fetch_seed_work(client, doi, headers)
+    if not work:
+        return None
+    full_id = work.get("id", "")
+    return full_id.rsplit("/", 1)[-1] if full_id else None
+
+
 async def _batch_get_works(
     client: httpx.AsyncClient,
     oa_ids: list[str],
@@ -224,6 +237,20 @@ async def _fetch_forward_citations(
             logger.warning("snowball_oa_forward_error", error=str(exc))
             break
     return out[:max_results]
+
+
+async def fetch_cited_by_works(
+    client: httpx.AsyncClient,
+    *,
+    seed_work: dict,
+    max_results: int = 100,
+    headers: dict[str, str] | None = None,
+) -> list[dict]:
+    """Public alias for the forward-citation fetcher. Returns a list of
+    OpenAlex work records that cite the given seed work."""
+    if headers is None:
+        headers = {}
+    return await _fetch_forward_citations(client, seed_work, max_results, headers)
 
 
 async def snowball_expand(
