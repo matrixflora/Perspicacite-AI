@@ -332,7 +332,7 @@ async def _dois_ingest_worker(
                 doi=doi,
                 abstract=result.abstract or md.get("abstract"),
                 journal=md.get("journal"),
-                source=PaperSource.WEB_SEARCH,
+                source=PaperSource.OPENALEX,
             )
             if result.full_text:
                 paper.full_text = result.full_text
@@ -561,7 +561,7 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
             doi=pd.doi,
             abstract=pd.abstract,
             citation_count=pd.citations,
-            source=PaperSource.WEB_SEARCH,
+            source=PaperSource.USER_UPLOAD,
         )
 
         # Try local PDF first (e.g. from Zotero/Mendeley export)
@@ -1059,7 +1059,7 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
             doi=doi,
             abstract=result.abstract or md.get("abstract"),
             journal=md.get("journal"),
-            source=PaperSource.WEB_SEARCH,
+            source=PaperSource.OPENALEX,
         )
         if result.full_text:
             paper.full_text = result.full_text
