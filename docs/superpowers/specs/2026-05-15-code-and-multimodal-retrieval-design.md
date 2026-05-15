@@ -606,6 +606,15 @@ slow down minimal installs.
   model via `embedding_models_per_type`. Requires a Mistral API key
   (`MISTRAL_API_KEY` env var); when missing, falls through to the
   default embedder with a structured warning.
+- **Live verification of `codestral-embed` deferred.** The user does
+  not have a `MISTRAL_API_KEY` at design time. Sub-project B ships
+  with mocked `codestral-embed` responses in its unit tests (asserting
+  the routing path picks the right inner provider and stitches results
+  correctly); a live integration test guarded by the env var will be
+  added once the key is available, modelled on
+  `tests/integration/test_perf_baseline_llm.py`. The fallback path
+  (missing key → default embedder + structured warning) is covered by
+  unit tests so the codepath is safe to merge before live verification.
 - **Symbol index storage:** JSONL sidecar, not SQLite. Append-only,
   one line per symbol, glob-on-read. SQLite is overkill at expected
   sizes (≤100k symbols per KB).
