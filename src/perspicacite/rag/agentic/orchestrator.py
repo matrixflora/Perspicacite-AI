@@ -1139,7 +1139,7 @@ class AgenticOrchestrator:
                             "full_text": result.full_text,
                             "abstract": result.abstract,
                         },
-                        source=PaperSource.WEB_SEARCH,
+                        source=PaperSource.OPENALEX,
                     )
                     paper_dict["relevance_score"] = 5
                     paper_dict["_step_id"] = "url_prefetch"
@@ -1171,7 +1171,7 @@ class AgenticOrchestrator:
                         "citation_count": paper.citation_count,
                         "arxiv_id": bare_id,
                     },
-                    source=PaperSource.WEB_SEARCH,
+                    source=PaperSource.SEMANTIC_SCHOLAR,
                 )
                 paper_dict["relevance_score"] = 4
                 paper_dict["_step_id"] = "url_prefetch"
