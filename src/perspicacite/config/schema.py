@@ -417,6 +417,19 @@ class LLMConfig(BaseModel):
     # v1 core/core.py get_response: truncate mandatory + base system prompt to this length (chars)
     max_context_window: int = Field(default=10000, ge=2000, le=500000)
 
+    embedding_models_per_type: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Optional per-content-type embedding model routing. "
+            "Keys are content types ('code', 'text', 'markdown', etc.); "
+            "values are model strings passed to the embedding factory. "
+            "When empty (default), every chunk goes through a single "
+            "embedder selected from KnowledgeBaseConfig.embedding_model. "
+            "Example: {'code': 'mistral/codestral-embed', 'text': "
+            "'text-embedding-3-small'}."
+        ),
+    )
+
     # Per-stage model overrides. When set, the corresponding call site
     # uses this model/provider pair instead of (default_provider,
     # default_model). When ``None`` the stage falls back to the default
