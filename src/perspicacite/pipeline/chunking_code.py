@@ -55,9 +55,9 @@ def _chunk_python_ast(
     idx = 0
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            start = node.lineno - 1
-            end = getattr(node, "end_lineno", node.lineno) - 1
-            body_text = "\n".join(lines[start : end + 1])
+            start = node.lineno
+            end = getattr(node, "end_lineno", start)
+            body_text = "\n".join(lines[start - 1 : end])
             kind = "class" if isinstance(node, ast.ClassDef) else "function"
             ds = ast.get_docstring(node)
             md = ChunkMetadata(
