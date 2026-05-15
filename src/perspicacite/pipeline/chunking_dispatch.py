@@ -232,12 +232,14 @@ async def chunk_document(
                                 chunk_size=cs, chunk_overlap=co)
             if result is not None:
                 return result
-            # mode == "ast" and backend unavailable → splitter fallback with a log.
-            from perspicacite.logging import get_logger
-            get_logger("perspicacite.pipeline.chunking_dispatch").warning(
-                "code_chunking_ast_unavailable",
-                extra={"language": language, "paper_id": paper.id, "mode": mode},
-            )
+            # In "ast" mode this is unexpected — log it. In "auto" mode the
+            # splitter fallback is the documented behaviour; stay quiet.
+            if mode == "ast":
+                from perspicacite.logging import get_logger
+                get_logger("perspicacite.pipeline.chunking_dispatch").warning(
+                    "code_chunking_ast_unavailable",
+                    extra={"language": language, "paper_id": paper.id, "mode": mode},
+                )
         return _chunk_code(text, paper, config, language=language)
 
     # Fallback: token chunker.
