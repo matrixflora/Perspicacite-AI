@@ -45,6 +45,38 @@ class DatabaseConfig(BaseModel):
         return v.expanduser()
 
 
+class CiteGraphConfig(BaseModel):
+    """Cite-graph enrichment knobs (2026-05-15 spec)."""
+
+    min_year_offset: int = Field(
+        default=7, ge=0, le=100,
+        description="Drop citing papers older than now - min_year_offset years.",
+    )
+    min_citations: int = Field(
+        default=1, ge=0,
+        description="Drop citing papers with fewer than this many citations.",
+    )
+    max_papers: int = Field(
+        default=50, ge=1, le=1000,
+        description="Hard cap on papers ingested per enrichment run.",
+    )
+    venue_denylist: list[str] = Field(
+        default_factory=list,
+        description="Venue/journal names to drop (e.g., predatory journals).",
+    )
+    include_scripts: bool = Field(
+        default=False,
+        description=(
+            "When True, also pull ≤3 GitHub scripts per citing paper "
+            "(deferred to follow-up; v1 ignores this flag)."
+        ),
+    )
+    w_citations: float = Field(default=0.30, ge=0.0, le=1.0)
+    w_recency:   float = Field(default=0.20, ge=0.0, le=1.0)
+    w_oa:        float = Field(default=0.20, ge=0.0, le=1.0)
+    w_match:     float = Field(default=0.30, ge=0.0, le=1.0)
+
+
 class KnowledgeBaseConfig(BaseModel):
     """Knowledge base defaults."""
 
@@ -230,6 +262,16 @@ class KnowledgeBaseConfig(BaseModel):
             "150 is a good default for typical scientific PDFs."
         ),
     )
+
+    library_paper_map: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Optional curated map of library name → canonical paper DOI. "
+            "First lookup source for the cite-graph resolver. "
+            "Example: {'openff-evaluator': '10.1021/acs.jctc.8b00640'}."
+        ),
+    )
+    cite_graph: CiteGraphConfig = Field(default_factory=CiteGraphConfig)
 
 
 class CopyrightFilterConfig(BaseModel):
