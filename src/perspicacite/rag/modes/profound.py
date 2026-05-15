@@ -17,12 +17,17 @@ import re
 from collections import Counter
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from perspicacite.logging import get_logger
+from perspicacite.models.documents import DocumentChunk
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.provenance.context import get_collector
+from perspicacite.config.schema import MultimodalMode
+from perspicacite.rag.code_excerpts import collect_code_excerpts
+from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
@@ -1841,6 +1846,18 @@ Follow the system instructions for this situation."""
             references = self._format_references(sources)
             answer = answer.strip() + "\n\n" + references
 
+        # Sub-project C (2026-05-15): attach code excerpts + figure refs.
+        _mm = getattr(self.config, "multimodal", None)
+        _show_code = bool(getattr(_mm, "show_code", False)) if _mm else False
+        _mode = getattr(_mm, "mode", None) if _mm else None
+        _dc_chunks = [c for c in documents if isinstance(c, DocumentChunk)]
+        _code_excerpts = collect_code_excerpts(_dc_chunks) if _show_code else []
+        _figure_refs = (
+            collect_figure_refs(_dc_chunks, capsule_root=Path(self.config.capsule.root))
+            if _mode is not None and _mode != MultimodalMode.OFF
+            else []
+        )
+
         return RAGResponse(
             answer=answer,
             sources=sources,
@@ -1849,6 +1866,8 @@ Follow the system instructions for this situation."""
             web_search_used=any(
                 isinstance(d, dict) and d.get("source") == "web_search" for d in documents
             ),
+            code_excerpts=_code_excerpts,
+            figures=_figure_refs,
         )
 
     async def _stream_final_response(

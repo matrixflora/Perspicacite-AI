@@ -11,11 +11,16 @@ import contextlib
 import math
 from collections import Counter
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 from perspicacite.logging import get_logger
+from perspicacite.models.documents import DocumentChunk
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.provenance.context import get_collector
+from perspicacite.config.schema import MultimodalMode
+from perspicacite.rag.code_excerpts import collect_code_excerpts
+from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
@@ -427,12 +432,27 @@ Sources:
 
         logger.info("advanced_rag_complete", sources=len(sources), refined=self.use_refinement)
 
+        # Sub-project C (2026-05-15): attach code excerpts + figure refs.
+        _mm = getattr(self.config, "multimodal", None)
+        _show_code = bool(getattr(_mm, "show_code", False)) if _mm else False
+        _mode = getattr(_mm, "mode", None) if _mm else None
+        _all_docs = list(paper_results) if paper_results else list(selected_documents)
+        _dc_chunks = [c for c in _all_docs if isinstance(c, DocumentChunk)]
+        _code_excerpts = collect_code_excerpts(_dc_chunks) if _show_code else []
+        _figure_refs = (
+            collect_figure_refs(_dc_chunks, capsule_root=Path(self.config.capsule.root))
+            if _mode is not None and _mode != MultimodalMode.OFF
+            else []
+        )
+
         return RAGResponse(
             answer=answer,
             sources=sources,
             mode=RAGMode.ADVANCED,
             iterations=1,
             web_search_used=False,
+            code_excerpts=_code_excerpts,
+            figures=_figure_refs,
         )
 
     def _advanced_paper_stream_messages(
