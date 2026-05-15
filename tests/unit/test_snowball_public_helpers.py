@@ -39,13 +39,20 @@ async def test_openalex_id_for_doi_returns_none_on_miss(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_cited_by_works_returns_works(monkeypatch):
-    seed_work = {"cited_by_api_url": "https://api.openalex.org/works?filter=cites:W1"}
+    # Real OpenAlex responses always include ``id``; fetch_cited_by_works
+    # now builds the cites filter from it (rather than from the legacy
+    # ``cited_by_api_url`` field which OpenAlex stopped reliably returning,
+    # and which httpx was silently dropping when params= was passed).
+    seed_work = {"id": "https://openalex.org/W3177828909"}
     page = {
         "results": [{"id": f"https://openalex.org/W{i}"} for i in range(10, 20)],
         "meta": {"next_cursor": None},
     }
+    captured: dict[str, object] = {}
 
     async def fake_get(self, url, **kwargs):
+        captured["url"] = str(url)
+        captured["params"] = dict(kwargs.get("params") or {})
         req = httpx.Request("GET", url)
         return httpx.Response(200, json=page, request=req)
 
@@ -56,3 +63,7 @@ async def test_fetch_cited_by_works_returns_works(monkeypatch):
             client, seed_work=seed_work, max_results=15, headers={},
         )
     assert len(works) == 10  # one page of 10 results
+    # Confirm the cites filter is passed as a separate param so httpx
+    # doesn't drop it via URL-vs-params interaction.
+    assert captured["params"].get("filter") == "cites:W3177828909"
+    assert captured["params"].get("sort") == "cited_by_count:desc"
