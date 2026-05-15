@@ -221,3 +221,25 @@ def test_orchestrator_url_prefetch_uses_correct_enums():
     assert "source=PaperSource.WEB_SEARCH" not in src, (
         "orchestrator must not default to WEB_SEARCH"
     )
+
+
+def test_snowball_ss_provenance_papers_still_use_citation_follow_enum():
+    """Cite-graph hits — regardless of whether OpenAlex or SS sourced
+    them — produce Papers with source=CITATION_FOLLOW. provenance is
+    the edge-level signal; Paper.source is the paper-record signal."""
+    from perspicacite.pipeline.snowball import ExpansionHit, _papers_from_hits
+    h = ExpansionHit(
+        seed_doi="10.48550/arXiv.2005.11401",
+        expanded_doi="10.1234/cited",
+        direction="forward",
+        title="A Cited Work",
+        authors=["Author A"],
+        year=2024,
+        abstract="...",
+        journal="Journal",
+        citation_count=3,
+        provenance="semantic_scholar",
+    )
+    papers = _papers_from_hits([h])
+    assert len(papers) == 1
+    assert papers[0].source is PaperSource.CITATION_FOLLOW
