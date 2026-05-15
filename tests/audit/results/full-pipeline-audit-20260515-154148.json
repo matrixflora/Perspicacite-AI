@@ -1,0 +1,222 @@
+{
+  "timestamp": "20260515-154148",
+  "git_sha": "a3acae0",
+  "python": "3.13.2",
+  "host": "NOTHIASs-MacBook-Air.local",
+  "articles": [
+    {
+      "id": "alphafold",
+      "name": "AlphaFold protein structure prediction",
+      "doi": "10.1038/s41586-021-03819-2"
+    },
+    {
+      "id": "rag",
+      "name": "Retrieval-Augmented Generation (arXiv preprint, no journal DOI)",
+      "doi": "10.48550/arXiv.2005.11401"
+    },
+    {
+      "id": "attention_is_all_you_need",
+      "name": "Attention is All You Need (transformer original paper)",
+      "doi": "10.48550/arXiv.1706.03762"
+    }
+  ],
+  "lab": {
+    "alphafold": {
+      "oa_fetch_seconds": 0.755,
+      "status": "ok",
+      "title": "Highly accurate protein structure prediction with AlphaFold",
+      "year": 2021,
+      "cited_by_count": 44072,
+      "has_doi": true,
+      "openalex_doi": "https://doi.org/10.1038/s41586-021-03819-2",
+      "abstract_len": 374,
+      "chunk_count": 1,
+      "first_chunk_preview": ", demonstrating accuracy competitive with experimental structures in a majority of cases and greatly outperforming other"
+    },
+    "rag": {
+      "oa_fetch_seconds": 0.587,
+      "status": "ok",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "year": 2020,
+      "cited_by_count": 18,
+      "has_doi": false,
+      "openalex_doi": null,
+      "abstract_len": 1630,
+      "chunk_count": 1,
+      "first_chunk_preview": "Large pre-trained language models have been shown to store factual knowledge in their parameters, and achieve state-of-t"
+    },
+    "attention_is_all_you_need": {
+      "oa_fetch_seconds": 0.192,
+      "status": "oa_fetch_failed"
+    }
+  },
+  "asb": {
+    "capsule_root": "/var/folders/7t/n4yt9y_n1pb9dcrdxrltwqfw0000gn/T/audit_capsule_haa57vsd",
+    "alphafold": {
+      "metadata_ok": true,
+      "blocks_written": 1,
+      "resources_written": 0,
+      "symbol_index": {
+        "n_chunks": 8,
+        "n_wrote": 8,
+        "n_read": 8,
+        "kinds": [
+          "function"
+        ]
+      },
+      "capsule_inventory": {
+        "metadata.json": 352,
+        "resources.json": 2,
+        "symbols.jsonl": 4560,
+        "text/blocks.jsonl": 567,
+        "text/figure_mentions.jsonl": 0
+      }
+    },
+    "rag": {
+      "metadata_ok": true,
+      "blocks_written": 1,
+      "resources_written": 0,
+      "symbol_index": {
+        "n_chunks": 36,
+        "n_wrote": 36,
+        "n_read": 36,
+        "kinds": [
+          "class",
+          "classmethod",
+          "method",
+          "property",
+          "staticmethod"
+        ]
+      },
+      "capsule_inventory": {
+        "metadata.json": 375,
+        "resources.json": 2,
+        "symbols.jsonl": 26544,
+        "text/blocks.jsonl": 1824,
+        "text/figure_mentions.jsonl": 0
+      }
+    },
+    "attention_is_all_you_need": {
+      "metadata_ok": true,
+      "blocks_skipped": "no abstract",
+      "resources_written": 0,
+      "capsule_inventory": {
+        "metadata.json": 366,
+        "resources.json": 2
+      }
+    },
+    "cleanup_ok": true
+  },
+  "kg_memory": {
+    "session_kb_metadata": {
+      "save_ok": true,
+      "load_ok": true,
+      "load_name_matches": true
+    },
+    "session_list_kbs": {
+      "n": 1
+    },
+    "session_conversation": {
+      "create_ok": true,
+      "n_messages": 2,
+      "first_role": "user",
+      "last_role": "assistant"
+    },
+    "provenance_error": "OperationalError: no such table: provenance",
+    "provenance_trace": "Traceback (most recent call last):\n  File \"/Users/holobiomicslab/git/Perspicacite-AI/tests/audit/run_full_pipeline_audit.py\", line 394, in _audit_provenance\n    leaked = await leak_store.get_for_message(\"msg-leak\")\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/git/Perspicacite-AI/src/perspicacite/provenance/store.py\", line 90, in get_for_message\n    cur = await db.execute(\n          ^^^^^^^^^^^^^^^^^\n        \"SELECT * FROM provenance WHERE message_id = ?\", (message_id,)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/aiosqlite/core.py\", line 223, in execute\n    cursor = await self._execute(self._conn.execute, sql, parameters)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/aiosqlite/core.py\", line 160, in _execute\n    return await future\n           ^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/aiosqlite/core.py\", line 63, in _connection_worker_thread\n    result = function()\nsqlite3.OperationalError: no such tab",
+    "cite_graph": {
+      "alphafold": {
+        "doi": {
+          "status": "ok",
+          "seconds": 1.92,
+          "n_hits": 10,
+          "top_score": 0.915,
+          "top_title": "Harnessing protein folding neural networks for peptide\u2013protein docking"
+        },
+        "openalex_id": {
+          "status": "ok",
+          "seconds": 2.55,
+          "n_hits": 10,
+          "top_score": 0.915,
+          "top_title": "Harnessing protein folding neural networks for peptide\u2013protein docking"
+        }
+      },
+      "rag": {
+        "doi": {
+          "status": "ok",
+          "seconds": 0.5,
+          "n_hits": 0,
+          "top_score": null,
+          "top_title": null
+        },
+        "openalex_id": {
+          "status": "ok",
+          "seconds": 1.43,
+          "n_hits": 10,
+          "top_score": 0.637,
+          "top_title": "On the Opportunities and Risks of Foundation Models"
+        }
+      },
+      "attention_is_all_you_need": {
+        "doi": {
+          "status": "ok",
+          "seconds": 0.22,
+          "n_hits": 0,
+          "top_score": null,
+          "top_title": null
+        },
+        "openalex_id": {
+          "status": "ok",
+          "seconds": 1.24,
+          "n_hits": 10,
+          "top_score": 0.876,
+          "top_title": "BioBERT: a pre-trained biomedical language representation model for biomedical t"
+        }
+      }
+    }
+  },
+  "manuscript": {
+    "rag_request_ok": {
+      "mode_value": "basic",
+      "kb_names": [
+        "audit_kb",
+        "other_kb"
+      ],
+      "max_papers_default": null
+    },
+    "rag_response_error": "ValidationError: 1 validation error for SourceReference\nauthors\n  Input should be a valid string [type=string_type, input_value=['Jumper et al.'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type",
+    "rag_response_trace": "Traceback (most recent call last):\n  File \"/Users/holobiomicslab/git/Perspicacite-AI/tests/audit/run_full_pipeline_audit.py\", line 537, in audit_manuscript\n    sources = [SourceReference(\n               ~~~~~~~~~~~~~~~^\n        paper_id=\"doi:10.1038/s41586-021-03819-2\",\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<4 lines>...\n        doi=\"10.1038/s41586-021-03819-2\",\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )]\n    ^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/pydantic/main.py\", line 250, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\npydantic_core._pydantic_core.ValidationError: 1 validation error for SourceReference\nauthors\n  Input should be a valid string [type=string_type, input_value=['Jumper et al.'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type\n",
+    "stream_events": {
+      "code_event": "code_excerpt",
+      "figure_event": "figure_ref",
+      "figure_thumb_carries_payload": true
+    },
+    "lit_survey_mode_init": {
+      "status": "ok",
+      "batch_size": 20,
+      "relevance_threshold": 2.0,
+      "max_themes": 8
+    }
+  },
+  "instrumentation": {
+    "budget_error": "TypeError: BudgetTracker.__init__() got an unexpected keyword argument 'max_tokens'",
+    "bm25_router": {
+      "first_chose_biochem": false,
+      "second_chose_biochem": false,
+      "third_handled_corpus_change": true,
+      "first_top_2": [
+        "KBRouteHit(kb_name='biochem', score=1.0, reason=None, sampled_titles=0)",
+        "KBRouteHit(kb_name='ml_general', score=0.0, reason=None, sampled_titles=0)"
+      ]
+    },
+    "openalex_resolver_misses_gracefully": true,
+    "chunking_malformed_python": {
+      "did_not_raise": true,
+      "n_chunks": 1
+    },
+    "figure_refs_thumbnail": {
+      "n_refs": 1,
+      "thumbnail_loaded": true
+    }
+  }
+}
