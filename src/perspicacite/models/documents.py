@@ -39,6 +39,10 @@ class ChunkMetadata(BaseModel):
     # Sub-project A (code-aware chunking) extensions — all optional.
     symbol_name: Optional[str] = None
     symbol_kind: Optional[str] = None  # "function" | "class" | "method" | "cell" | "module"
+    parent_class: Optional[str] = Field(
+        None,
+        description="If symbol_kind is a method, the enclosing class name. None otherwise.",
+    )
     start_line: Optional[int] = None   # 1-indexed inclusive
     end_line: Optional[int] = None     # 1-indexed inclusive
     docstring: Optional[str] = None    # ≤500 chars, truncated

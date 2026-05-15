@@ -19,6 +19,12 @@ from perspicacite.models.papers import Paper
 
 _DOCSTRING_MAX = 500
 
+# When a class' source segment exceeds this many characters we additionally
+# emit one chunk per top-level method (alongside the class-level chunk) so
+# embeddings stay focused. Below the threshold the single class chunk is
+# already small enough that splitting hurts retrieval more than it helps.
+_METHOD_SUBCHUNK_THRESHOLD_CHARS = 1500
+
 
 def _chunk_python_ast(
     text: str,
@@ -56,7 +62,7 @@ def _chunk_python_ast(
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             start = node.lineno
-            end = getattr(node, "end_lineno", start)
+            end = getattr(node, "end_lineno", start) or start
             body_text = "\n".join(lines[start - 1 : end])
             kind = "class" if isinstance(node, ast.ClassDef) else "function"
             ds = ast.get_docstring(node)
@@ -70,6 +76,7 @@ def _chunk_python_ast(
                 source_file_path=file_path,
                 symbol_name=node.name,
                 symbol_kind=kind,
+                parent_class=None,
                 start_line=start,
                 end_line=end,
                 docstring=ds[:_DOCSTRING_MAX] if ds else None,
@@ -79,6 +86,47 @@ def _chunk_python_ast(
                 DocumentChunk(id=f"{base_id}_code_{idx}", text=body_text, metadata=md)
             )
             idx += 1
+
+            # For large classes, additionally emit one chunk per top-level
+            # method so embeddings stay focused on individual symbols. The
+            # class-level chunk above remains for symbol-index browsing.
+            if (
+                isinstance(node, ast.ClassDef)
+                and len(body_text) > _METHOD_SUBCHUNK_THRESHOLD_CHARS
+            ):
+                for sub in node.body:
+                    if not isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    sub_start = sub.lineno
+                    sub_end = getattr(sub, "end_lineno", sub_start) or sub_start
+                    method_text = "\n".join(lines[sub_start - 1 : sub_end])
+                    if not method_text.strip():
+                        continue
+                    sub_ds = ast.get_docstring(sub)
+                    sub_md = ChunkMetadata(
+                        paper_id=base_id,
+                        chunk_index=idx,
+                        source=paper.source,
+                        title=paper.title,
+                        content_type="code",
+                        language="python",
+                        source_file_path=file_path,
+                        symbol_name=sub.name,
+                        symbol_kind="method",
+                        parent_class=node.name,
+                        start_line=sub_start,
+                        end_line=sub_end,
+                        docstring=sub_ds[:_DOCSTRING_MAX] if sub_ds else None,
+                        imports=imports,
+                    )
+                    chunks.append(
+                        DocumentChunk(
+                            id=f"{base_id}_code_{idx}",
+                            text=method_text,
+                            metadata=sub_md,
+                        )
+                    )
+                    idx += 1
 
     if not chunks:
         return [_module_chunk(text, paper, file_path=file_path, imports=imports)]
