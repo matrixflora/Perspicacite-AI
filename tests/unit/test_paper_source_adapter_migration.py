@@ -91,3 +91,29 @@ async def test_semantic_scholar_lookup_uses_ss_enum(monkeypatch):
     paper = await lookup_paper("10.48550/arXiv.1706.03762")
     assert paper is not None
     assert paper.source is PaperSource.SEMANTIC_SCHOLAR
+
+
+@pytest.mark.asyncio
+async def test_chunking_stub_paper_uses_local(monkeypatch):
+    """AdvancedChunkerAdapter builds an internal Paper stub for the
+    chunker. That stub must carry source=LOCAL (not WEB_SEARCH) — it is
+    a transient, not a search result."""
+    from perspicacite.rag.chunking import AdvancedChunkerAdapter
+
+    captured = {}
+
+    async def fake_chunk_text(self_chunker, text, paper, llm_client=None):
+        captured["paper_source"] = paper.source
+        # Return a single DocumentChunk-like object with a .text attr
+        from types import SimpleNamespace
+        return [SimpleNamespace(text=text)]
+
+    monkeypatch.setattr(
+        "perspicacite.pipeline.chunking_advanced.AdvancedChunker.chunk_text",
+        fake_chunk_text,
+    )
+
+    adapter = AdvancedChunkerAdapter(method="semantic", chunk_size=100, overlap=20)
+    out = await adapter.chunk_text_async("hello world")
+    assert out == ["hello world"]
+    assert captured["paper_source"] is PaperSource.LOCAL
