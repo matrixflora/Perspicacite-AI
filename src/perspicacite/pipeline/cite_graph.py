@@ -19,6 +19,33 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from perspicacite.config.schema import CiteGraphConfig
+from perspicacite.pipeline.external.fetch_github import fetch_github_repo
+
+
+_GITHUB_REPO_RE = re.compile(r"github\.com/([\w.-]+/[\w.-]+)", re.IGNORECASE)
+
+
+def _github_repo_for_work(_client, oa_work: dict, *, headers: dict) -> Optional[str]:
+    """Best-effort extraction of ``owner/repo`` from an OpenAlex work record.
+
+    Scans DOI, primary_location.landing_page_url, and alternate landing-page
+    URLs for a github.com link. Returns ``owner/repo`` or None.
+    """
+    blobs: list[str] = []
+    blobs.append(str(oa_work.get("doi") or ""))
+    pl = oa_work.get("primary_location") or {}
+    if isinstance(pl, dict):
+        blobs.append(str(pl.get("landing_page_url") or ""))
+    for url_field in ("alternate_landing_page_urls", "external_ids"):
+        v = oa_work.get(url_field)
+        if isinstance(v, list):
+            for item in v:
+                blobs.append(str(item))
+    for blob in blobs:
+        m = _GITHUB_REPO_RE.search(blob)
+        if m:
+            return m.group(1).rstrip("/").removesuffix(".git")
+    return None
 
 
 @dataclass
@@ -34,6 +61,7 @@ class CiteHit:
     github_url: Optional[str] = None
     score: float = 0.0
     score_breakdown: dict = field(default_factory=dict)
+    scripts: list[dict] = field(default_factory=list)
 
 
 def _normalize_citations(citations: int) -> float:
@@ -336,10 +364,12 @@ async def enrich_kb_from_cite_graph(
             max_results=cfg.max_papers * 4,
         )
     raw_hits: list[CiteHit] = []
+    work_by_doi: dict[str, dict] = {}
     for w in works:
         h = _hit_from_oa_work(w)
         if h is not None:
             raw_hits.append(h)
+            work_by_doi[h.doi] = w
 
     filtered = apply_cite_graph_filters(
         raw_hits, config=cfg, existing_dois=existing_dois, now_year=now_year,
@@ -350,4 +380,27 @@ async def enrich_kb_from_cite_graph(
         score_cite_hit(h, synonyms, cfg, now_year=now_year)
 
     filtered.sort(key=lambda h: h.score, reverse=True)
-    return filtered[: cfg.max_papers]
+    top = filtered[: cfg.max_papers]
+
+    if cfg.include_scripts and not dry_run:
+        import tempfile
+        from pathlib import Path as _Path
+        cache_dir = _Path(tempfile.gettempdir()) / "perspicacite_cite_graph_repos"
+        for h in top:
+            oa_work = work_by_doi.get(h.doi)
+            if oa_work is None:
+                continue
+            try:
+                repo = _github_repo_for_work(None, oa_work, headers={})
+                if not repo:
+                    continue
+                blob = await fetch_github_repo(
+                    repo, cache_dir=cache_dir, ttl_seconds=30 * 86400,
+                )
+                if isinstance(blob, dict):
+                    scripts = (blob.get("scripts") or [])[:3]
+                    h.scripts = list(scripts)
+            except Exception:  # noqa: BLE001
+                continue
+
+    return top
