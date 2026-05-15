@@ -80,7 +80,7 @@ Also set `pdf_download.unpaywall_email` in `config.yml` for open-access PDF disc
 uv run perspicacite -c config.yml serve
 ```
 
-Open **http://localhost:5468** in your browser. The MCP server is at `/mcp` on the same port.
+Open **http://localhost:5468** in your browser. The dev server also hosts the MCP server at `http://localhost:5468/mcp` (streamable HTTP). MCP clients connect there to call tools like `search_knowledge_base`, `generate_report`, and `ingest_asb_run`. See [docs/MCP.md](docs/MCP.md) for the envelope contract and per-tool latency expectations.
 
 ### First knowledge base
 
