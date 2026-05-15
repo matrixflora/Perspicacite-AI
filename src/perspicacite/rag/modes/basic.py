@@ -20,6 +20,7 @@ from perspicacite.provenance.context import get_collector
 from perspicacite.config.schema import MultimodalMode
 from perspicacite.rag.code_excerpts import collect_code_excerpts
 from perspicacite.rag.figure_refs import collect_figure_refs
+from perspicacite.rag.utils import flatten_paper_results_to_chunks
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.rag.prompts import (
@@ -258,7 +259,7 @@ class BasicRAGMode(BaseRAGMode):
         _mm = getattr(self.config, "multimodal", None)
         _show_code = bool(getattr(_mm, "show_code", False)) if _mm else False
         _mode = getattr(_mm, "mode", None) if _mm else None
-        _dc_chunks = [c for c in paper_results if isinstance(c, DocumentChunk)]
+        _dc_chunks = flatten_paper_results_to_chunks(paper_results)
         _code_excerpts = collect_code_excerpts(_dc_chunks) if _show_code else []
         _figure_refs = (
             collect_figure_refs(_dc_chunks, capsule_root=Path(self.config.capsule.root))

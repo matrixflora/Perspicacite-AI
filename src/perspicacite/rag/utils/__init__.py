@@ -310,6 +310,44 @@ def deduplicate_chunk_overlaps(
     return results
 
 
+def flatten_paper_results_to_chunks(
+    paper_results: list[dict[str, Any]] | None,
+) -> list["Any"]:
+    """Walk paper-level results and project the inner chunk dicts into
+    proper :class:`DocumentChunk` objects.
+
+    ``search_two_pass`` returns paper-level dicts whose ``"chunks"`` field
+    holds per-chunk dicts ``{text, paper_id, chunk_index, metadata}``. The
+    ``metadata`` value is the original :class:`ChunkMetadata` so we can
+    reconstruct ``DocumentChunk`` losslessly.
+
+    Returns an empty list when there are no chunks or none have metadata.
+    """
+    from perspicacite.models.documents import DocumentChunk, ChunkMetadata
+
+    out: list[DocumentChunk] = []
+    for paper in paper_results or []:
+        if not isinstance(paper, dict):
+            continue
+        chunks_list = paper.get("chunks") or []
+        for ch in chunks_list:
+            if not isinstance(ch, dict):
+                continue
+            md = ch.get("metadata")
+            if md is None:
+                continue
+            if not isinstance(md, ChunkMetadata):
+                # Defensive: only operate on real ChunkMetadata; skip
+                # legacy shape silently rather than guess at fields.
+                continue
+            out.append(DocumentChunk(
+                id=f"{md.paper_id}_{md.chunk_index}",
+                text=ch.get("text", ""),
+                metadata=md,
+            ))
+    return out
+
+
 def format_paper_results_for_prompt(
     papers: list[dict[str, Any]],
     max_chars_per_paper: int = 4000,
