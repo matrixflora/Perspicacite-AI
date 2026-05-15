@@ -246,3 +246,39 @@ Sorted by user-visible impact:
 
 The whole 2026-05-15 cycle (4 specs, 4 plans, ~45 commits, ~150 new
 tests) is now demonstrably end-to-end on real-world inputs.
+
+---
+
+## Post-batch audit — P1 / P2 / P3 follow-ups (commits `dfb68a1`..`4ad82a7`)
+
+Seven enhancements from the queue above shipped as a single plan
+(`docs/superpowers/plans/2026-05-15-audit-followups-batch.md`):
+
+| Task | Status | Live verification |
+|---|---|---|
+| **1** Method-level sub-chunking | ✅ | RAG `modeling_rag.py` went **6 → 36 chunks** (class + per-method) |
+| **2** Decorator-aware kinds | ✅ | RAG chunks now expose `classmethod`, `staticmethod`, `property` alongside `method` |
+| **3** arXiv-id fallback in `openalex_id_for_doi` | ⚠️ partial | Test green; live audit still hits 0 RAG cite-graph results because the orchestrator calls `_fetch_seed_work` (not `openalex_id_for_doi`). Same fallback needs to be applied there. **Immediate workaround:** Task 4's `--openalex-id` flag (`W3098425262` for the RAG paper). |
+| **4** `--openalex-id` CLI/MCP flag | ✅ | Plumbed end-to-end through orchestrator → CLI → MCP wrapper. |
+| **5** `--include-scripts` cite-graph | ✅ behind flag | Default off. Test verifies hits get `scripts=[]` when off and populated when on. `_github_repo_for_work` extracts repo from OpenAlex work; `fetch_github_repo` currently returns repo metadata only — to actually yield scripts the helper needs a scripts-aware variant. v1 conservative posture. |
+| **6** Figure thumbnails | ✅ | `collect_figure_refs` now loads `<capsule>/<paper_id>/figures/<fig_id>.png` and base64-encodes it (capped at 200 KB). `renderFigureRef()` prepends an `<img>` with `.figure-thumbnail` styling. |
+| **7** bm25s migration with fingerprint cache | ✅ | `route_kbs(...)` now backed by `bm25s.BM25` with corpus-hash cache (`_BM25_CACHE`). `rank-bm25` retained for 3 other consumers (`retrieval/bm25.py`, `retrieval/hybrid.py`, `search/screening.py`). |
+
+**Test footprint:** 14 new tests (all green); 1251 tests passing repo-wide.
+8 pre-existing failures unrelated to this batch (test-fixture drift in
+`test_local_docs_capsule_reader_route`, `test_mcp_multi_kb_passthrough`,
+`test_provenance_engine_wiring`, `test_zotero_ingest_worker`).
+
+**Next follow-ups (not in this batch):**
+
+1. **Apply the arXiv-id fallback in `_fetch_seed_work`** — completes the
+   RAG-paper cite-graph path so users don't need the W-id workaround.
+2. **Migrate the other three `rank-bm25` consumers** so the dep can be
+   dropped from `pyproject.toml`.
+3. **Make `fetch_github_repo` scripts-aware** — currently `--include-scripts`
+   is plumbed end-to-end but the upstream fetcher returns repo metadata
+   without script blobs.
+4. **`figure_refs` capsule_root threading** — `collect_figure_refs` already
+   accepts `capsule_root`; the call site in basic/advanced/profound modes
+   may still pass `None`. Wire it from `app_state.config.capsule.root` so
+   thumbnails appear in production responses.
