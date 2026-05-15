@@ -207,34 +207,18 @@ class SciLExAdapter:
             api_config = self._build_api_config(apis)
 
             try:
-                # Phase 1: Collect — one backend at a time so a single
-                # backend failure cannot poison the aggregate.
+                # Phase 1: Collect — backends run concurrently; a single
+                # backend failure does not poison the aggregate.
                 logger.info("scilex_collection_start", query=query, apis=apis)
                 collector = CollectCollection(main_config, api_config)
 
                 queries_by_api = collector.queryCompositor()
 
-                successful_backends: list[str] = []
-                failed_backends: list[str] = []
-
-                for api_name, queries in queries_by_api.items():
-                    api_collect_list = []
-                    for idx, query_dict in enumerate(queries):
-                        query_dict["id_collect"] = idx
-                        query_dict["total_art"] = 0
-                        query_dict["last_page"] = 0
-                        query_dict["coll_art"] = 0
-                        query_dict["state"] = 0
-                        query_dict["max_articles_per_query"] = max_results * 2
-                        api_collect_list.append({"query": query_dict, "api": api_name})
-
-                    self._collect_from_backend(
-                        collector=collector,
-                        api_name=api_name,
-                        api_collect_list=api_collect_list,
-                        successful_backends=successful_backends,
-                        failed_backends=failed_backends,
-                    )
+                successful_backends, failed_backends = self._collect_all_backends(
+                    collector=collector,
+                    queries_by_api=queries_by_api,
+                    max_results=max_results,
+                )
 
                 if failed_backends:
                     logger.warning(
@@ -354,6 +338,80 @@ class SciLExAdapter:
             except Exception as e:
                 logger.error("scilex_collection_error", error=str(e))
                 raise
+
+    def _collect_all_backends(
+        self,
+        collector: Any,
+        queries_by_api: dict[str, list[dict]],
+        max_results: int,
+    ) -> tuple[list[str], list[str]]:
+        """Fan out per-backend collection concurrently via ThreadPoolExecutor.
+
+        One backend's failure (network error, rate-limit, missing API key) is
+        isolated by _collect_from_backend; this helper makes the fan-out
+        parallel so wall time equals the slowest backend, not the sum of all
+        backends.
+
+        Args:
+            collector: SciLEx CollectCollection instance.
+            queries_by_api: Mapping from capitalized backend name to the list
+                of raw query dicts as returned by collector.queryCompositor().
+            max_results: User-requested result cap; used to compute
+                max_articles_per_query (= max_results * 2) per existing pattern.
+
+        Returns:
+            (successful_backends, failed_backends) — mutable lists populated
+            during concurrent dispatch. CPython's GIL makes list.append
+            thread-safe.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        successful: list[str] = []
+        failed: list[str] = []
+
+        def build_collect_list(api_name: str, queries: list[dict]) -> list[dict]:
+            api_collect_list = []
+            for idx, query_dict in enumerate(queries):
+                # Copy to avoid mutating the caller's dicts across threads.
+                query_dict = dict(query_dict)
+                query_dict["id_collect"] = idx
+                query_dict["total_art"] = 0
+                query_dict["last_page"] = 0
+                query_dict["coll_art"] = 0
+                query_dict["state"] = 0
+                query_dict["max_articles_per_query"] = max_results * 2
+                api_collect_list.append({"query": query_dict, "api": api_name})
+            return api_collect_list
+
+        api_lists = {
+            api_name: build_collect_list(api_name, queries)
+            for api_name, queries in queries_by_api.items()
+        }
+
+        if not api_lists:
+            return successful, failed
+
+        # Concurrent fan-out — each backend runs in its own thread.
+        # _collect_from_backend swallows collector exceptions and appends to
+        # the shared lists. CPython list.append is GIL-safe.
+        with ThreadPoolExecutor(max_workers=len(api_lists)) as executor:
+            futures = [
+                executor.submit(
+                    self._collect_from_backend,
+                    collector=collector,
+                    api_name=api_name,
+                    api_collect_list=api_collect_list,
+                    successful_backends=successful,
+                    failed_backends=failed,
+                )
+                for api_name, api_collect_list in api_lists.items()
+            ]
+            for f in as_completed(futures):
+                # _collect_from_backend catches collector errors; surface any
+                # unexpected helper-level exceptions here.
+                f.result()
+
+        return successful, failed
 
     def _collect_from_backend(
         self,
