@@ -111,6 +111,9 @@ packages_to_use/
 !docs/versioned-kbs-*.md
 !docs/orcid-disambiguation-*.md
 !docs/mcp-resources-prompts-*.md
+!docs/e2e-validation-*.md
+!docs/recipe-book-*.md
+!docs/architecture-*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 

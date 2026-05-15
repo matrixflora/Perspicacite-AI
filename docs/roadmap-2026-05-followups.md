@@ -88,9 +88,9 @@ Within a wave, items are roughly ordered by dependency / leverage.
 
 | # | Item | Notes |
 |---|------|-------|
-| 6.1 | **E2E pipeline integration tests** | 3 canonical scenarios (single-paper, multi-paper + citations, cross-KB routing). Run nightly. |
-| 6.2 | **Persistence / data integrity tests** | Build KB → close → reopen → all chunks present. Concurrent writes don't corrupt SQLite. |
-| 6.3 | **Performance regression baseline** | Per-stage time / token / cost on a fixed 5-paper corpus. Drift > 30% flags. |
+| 6.1 ✅ | **E2E pipeline integration tests** | Shipped 2026-05-15 — `tests/e2e/test_{single_paper,multi_paper_citations,cross_kb_routing}.py`. |
+| 6.2 ✅ | **Persistence / data integrity tests** | Shipped 2026-05-15 — `tests/integration/test_persistence_integrity.py` (8 tests, concurrent log appends, checkpoint atomic save, llm/embedding cache survival). |
+| 6.3 ✅ | **Performance regression baseline** | Shipped 2026-05-15 — `tests/integration/test_perf_baseline.py` against fixed 5-paper corpus. 1.30× tolerance, env-var-driven baseline updates. |
 
 ## Wave 7 — Docs
 
