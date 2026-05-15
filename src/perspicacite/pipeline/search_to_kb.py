@@ -568,7 +568,7 @@ async def ingest_dois_into_kb(
                 doi=doi,
                 abstract=result.abstract or md.get("abstract"),
                 journal=md.get("journal"),
-                source=PaperSource.WEB_SEARCH,
+                source=PaperSource.OPENALEX,
             )
             if result.full_text:
                 paper.full_text = result.full_text

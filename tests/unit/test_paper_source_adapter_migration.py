@@ -174,3 +174,18 @@ def test_kb_router_uses_correct_enum_values():
     assert src.count("source=PaperSource.OPENALEX") >= 2, (
         "kb.py must use OPENALEX for both DOI-ingest paths (sync + async)"
     )
+
+
+def test_search_to_kb_ingest_dois_uses_openalex():
+    """pipeline/search_to_kb.ingest_dois_into_kb fetches via the unified
+    download pipeline; built Papers must carry source=OPENALEX."""
+    import inspect
+    from perspicacite.pipeline import search_to_kb
+
+    src = inspect.getsource(search_to_kb)
+    assert "source=PaperSource.OPENALEX" in src, (
+        "pipeline/search_to_kb.py must use PaperSource.OPENALEX"
+    )
+    assert "source=PaperSource.WEB_SEARCH" not in src, (
+        "pipeline/search_to_kb.py must not default to WEB_SEARCH"
+    )
