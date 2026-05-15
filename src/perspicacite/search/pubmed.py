@@ -204,7 +204,7 @@ class PubMedSearchAdapter:
                     doi=doi,
                     abstract=r.get("abstract"),
                     journal=r.get("journal"),
-                    source=PaperSource.WEB_SEARCH,
+                    source=PaperSource.PUBMED,
                     metadata={"pmid": pmid},
                 )
             )
