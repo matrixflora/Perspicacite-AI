@@ -718,7 +718,7 @@ async def add_papers_to_kb(
                 journal=pd.get("journal"),
                 url=pd.get("url"),
                 pdf_url=pd.get("pdf_url"),
-                source=PaperSource.WEB_SEARCH,
+                source=PaperSource.USER_UPLOAD,
                 keywords=pd.get("keywords", []),
                 metadata=pd.get("metadata", {}),
             )
@@ -1185,7 +1185,7 @@ async def add_dois_to_kb(
                     doi=doi,
                     abstract=result.abstract or md.get("abstract"),
                     journal=md.get("journal"),
-                    source=PaperSource.WEB_SEARCH,
+                    source=PaperSource.OPENALEX,
                 )
                 if result.full_text:
                     paper.full_text = result.full_text

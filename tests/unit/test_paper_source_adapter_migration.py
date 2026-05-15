@@ -117,3 +117,33 @@ async def test_chunking_stub_paper_uses_local(monkeypatch):
     out = await adapter.chunk_text_async("hello world")
     assert out == ["hello world"]
     assert captured["paper_source"] is PaperSource.LOCAL
+
+
+def test_mcp_add_papers_to_kb_uses_user_upload():
+    """The MCP add_papers_to_kb tool accepts user-supplied paper dicts —
+    these come from an external client, so the source must be
+    USER_UPLOAD (not the legacy WEB_SEARCH)."""
+    import inspect
+    from perspicacite.mcp import server
+
+    src = inspect.getsource(server)
+    assert "source=PaperSource.USER_UPLOAD" in src, (
+        "mcp/server.py add_papers_to_kb must build papers with "
+        "PaperSource.USER_UPLOAD"
+    )
+    assert "source=PaperSource.WEB_SEARCH" not in src, (
+        "mcp/server.py must not default to PaperSource.WEB_SEARCH anymore"
+    )
+
+
+def test_mcp_add_dois_to_kb_uses_openalex():
+    """The MCP add_dois_to_kb tool fetches via retrieve_paper_content
+    (unified pipeline); OpenAlex is the discovery source."""
+    import inspect
+    from perspicacite.mcp import server
+
+    src = inspect.getsource(server)
+    assert "source=PaperSource.OPENALEX" in src, (
+        "mcp/server.py add_dois_to_kb must build papers with "
+        "PaperSource.OPENALEX"
+    )
