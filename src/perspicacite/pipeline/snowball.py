@@ -65,6 +65,7 @@ class ExpansionHit:
     abstract: str | None = None
     authors: list[str] = field(default_factory=list)
     journal: str | None = None
+    provenance: str = "openalex"  # "openalex" | "semantic_scholar" | "both"
 
 
 @dataclass
