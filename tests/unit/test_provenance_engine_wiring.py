@@ -99,9 +99,15 @@ async def test_mcp_generate_report_wires_provenance_and_message_id(
     from perspicacite.provenance.store import ProvenanceStore
 
     # Build a minimal MCPState
+    # state.config uses MagicMock so mode-handler __init__ calls like
+    # config.knowledge_base.default_top_k auto-create rather than raising
+    # AttributeError. The llm fields are set to real strings because
+    # RAGRequest validates provider / model as str (pydantic v2).
     state = MCPState()
     state.initialized = True
     state.config = MagicMock()
+    state.config.llm.default_provider = "deepseek"
+    state.config.llm.default_model = "deepseek-chat"
     state.llm_client = MagicMock()
     state.embedding_provider = MagicMock()
     state.vector_store = MagicMock()
