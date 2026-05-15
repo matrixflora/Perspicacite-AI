@@ -89,6 +89,17 @@ class KBRouteHit:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def __iter__(self):
+        """Allow ``for name, score in route_kbs(...)`` destructuring.
+
+        Audit 2026-05-15 finding #7: the harness naturally tried to
+        unpack hits and silently got wrong answers. Yielding only the
+        two most-commonly-needed fields keeps the cheap-tuple ergonomics
+        without removing access to the richer attributes.
+        """
+        yield self.kb_name
+        yield self.score
+
 
 # Cap how many paper titles we sample per KB when building the context
 # string. Higher = better routing on KBs with weak descriptions but more
