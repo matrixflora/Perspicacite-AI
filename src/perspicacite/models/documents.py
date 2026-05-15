@@ -44,6 +44,10 @@ class ChunkMetadata(BaseModel):
     docstring: Optional[str] = None    # ≤500 chars, truncated
     imports: list[str] = Field(default_factory=list)
 
+    # Sub-project B (per-type embedding routing) — records which embedder
+    # actually produced the chunk's vector. None when not yet embedded.
+    embedding_model: Optional[str] = None
+
     def __repr__(self) -> str:
         return (
             f"ChunkMetadata(paper_id='{self.paper_id}', "
