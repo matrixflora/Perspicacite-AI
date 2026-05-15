@@ -15,7 +15,7 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from perspicacite.models.rag import RAGMode
 from perspicacite.provenance.collector import ProvenanceCollector
@@ -46,9 +46,23 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Request for chat endpoint - NOW WITH CONVERSATION SUPPORT."""
+    """Request for chat endpoint - NOW WITH CONVERSATION SUPPORT.
+
+    Accepts ``query`` (canonical) or ``message`` (Scriptorium-compat alias).
+    When both are supplied, ``query`` wins.
+    """
 
     query: str = Field(..., description="Current research question")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_message_alias(cls, data):
+        """Backward-compat with the legacy OpenAPI schema name ``message``.
+        If ``query`` is absent but ``message`` is supplied, promote it.
+        ``query`` always wins when both are present."""
+        if isinstance(data, dict) and "query" not in data and "message" in data:
+            data = {**data, "query": data["message"]}
+        return data
     messages: List[ChatMessage] = Field(default_factory=list, description="Conversation history")
     session_id: Optional[str] = Field(default=None, description="Session ID for persistence")
     conversation_id: Optional[str] = Field(
