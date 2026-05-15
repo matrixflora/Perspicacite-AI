@@ -419,6 +419,78 @@ async def audit_cite_graph(findings: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 4b — Multi-chunk path on real long-form text
+# (Round-1 audit reported "chunks=1" everywhere because OpenAlex abstracts
+# are < chunk_size. This leg exercises the multi-chunk path on a real
+# 35-KB README so we don't ship blind on it.)
+# ---------------------------------------------------------------------------
+
+_MULTI_CHUNK_FIXTURES = [
+    {
+        "id": "alphafold_readme",
+        "url": "https://raw.githubusercontent.com/google-deepmind/alphafold/main/README.md",
+        "doi": "10.1038/s41586-021-03819-2",  # for capsule path naming only
+    },
+    {
+        "id": "transformers_root_readme",
+        "url": "https://raw.githubusercontent.com/huggingface/transformers/main/README.md",
+        "doi": "10.48550/arXiv.2005.11401",
+    },
+]
+
+
+async def audit_multi_chunk(findings: dict[str, Any]) -> None:
+    section("Phase 4b: Multi-chunk path on real long-form text")
+    import httpx
+    from types import SimpleNamespace
+    from perspicacite.models.papers import Paper, PaperSource
+    from perspicacite.pipeline.chunking_dispatch import chunk_document
+
+    out: dict[str, Any] = {}
+    findings["multi_chunk"] = out
+
+    chunk_config = SimpleNamespace(
+        knowledge_base=SimpleNamespace(
+            chunk_size=512, chunk_overlap=64,
+            embedding_model="text-embedding-3-small",
+            use_two_pass=True, default_top_k=10,
+        ),
+    )
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        for fix in _MULTI_CHUNK_FIXTURES:
+            fix_out: dict[str, Any] = {}
+            out[fix["id"]] = fix_out
+            try:
+                resp = await client.get(fix["url"], timeout=20.0)
+            except httpx.HTTPError as exc:
+                fix_out["status"] = f"fetch_error:{exc}"
+                report(f"[{fix['id']}] fetch error: {exc}")
+                continue
+            if resp.status_code != 200:
+                fix_out["status"] = f"http_{resp.status_code}"
+                report(f"[{fix['id']}] HTTP {resp.status_code}")
+                continue
+            body = resp.text
+            fix_out["body_len"] = len(body)
+            paper = Paper(
+                id=f"doi:{fix['doi']}", title=fix["id"], abstract="",
+                source=PaperSource.OPENALEX, doi=fix["doi"],
+            )
+            chunks = await chunk_document(
+                body, paper, content_type="text",
+                language=None, config=chunk_config,
+            )
+            fix_out["chunk_count"] = len(chunks)
+            fix_out["status"] = "ok" if len(chunks) > 1 else "ONE_CHUNK_UNEXPECTED"
+            fix_out["first_chunk_preview"] = chunks[0].text[:80] if chunks else ""
+            report(
+                f"[{fix['id']:>24}] body={len(body):>6} → {len(chunks)} chunks "
+                f"({fix_out['status']})"
+            )
+
+
+# ---------------------------------------------------------------------------
 # Phase 5 — RAGResponse assembly + StreamEvent factories
 # ---------------------------------------------------------------------------
 
@@ -511,6 +583,11 @@ async def main() -> int:
     except Exception as exc:
         findings["cite_graph_error"] = traceback.format_exc()
         report(f"PHASE 4 ERROR: {exc}")
+    try:
+        await audit_multi_chunk(findings)
+    except Exception as exc:
+        findings["multi_chunk_error"] = traceback.format_exc()
+        report(f"PHASE 4b ERROR: {exc}")
     try:
         audit_response_assembly(findings)
     except Exception as exc:
