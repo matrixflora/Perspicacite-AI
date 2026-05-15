@@ -1437,6 +1437,52 @@ def expand_kb_cmd(
     asyncio.run(_run())
 
 
+@cli.command("enrich-cite-graph")
+@click.argument("kb_name")
+@click.option("--tool", default=None, help="Library/tool name to resolve.")
+@click.option("--doi", default=None, help="Skip resolver and use this DOI as seed.")
+@click.option("--max-papers", default=None, type=int, help="Override max_papers cap.")
+@click.option("--dry-run/--no-dry-run", default=True, help="Preview only (default).")
+@click.pass_context
+def cli_enrich_cite_graph(
+    ctx: click.Context,
+    kb_name: str,
+    tool: str | None,
+    doi: str | None,
+    max_papers: int | None,
+    dry_run: bool,
+) -> None:
+    """Enrich a KB from the cite-graph of a library's canonical paper.
+
+    v1 supports dry-run only; ingest is a follow-up.
+
+    Examples:
+        perspicacite enrich-cite-graph my-kb --tool rdkit --max-papers 20
+        perspicacite enrich-cite-graph my-kb --doi 10.1021/acs.jcim.1c00203
+    """
+    import asyncio
+    from perspicacite.pipeline.cite_graph import enrich_kb_from_cite_graph
+
+    if not tool and not doi:
+        raise click.UsageError("Provide --tool or --doi.")
+
+    config = ctx.obj["config"]
+    kb_cfg = config.knowledge_base
+    if max_papers is not None:
+        kb_cfg.cite_graph.max_papers = max_papers
+
+    hits = asyncio.run(enrich_kb_from_cite_graph(
+        tool=tool, doi=doi, kb_config=kb_cfg,
+        existing_dois=set(), dry_run=dry_run,
+    ))
+    click.echo(f"[dry-run={dry_run}] {len(hits)} ranked hits for {tool or doi}:")
+    for i, h in enumerate(hits, 1):
+        click.echo(
+            f"  {i:2d}. score={h.score:.3f}  cit={h.citation_count}  "
+            f"year={h.year}  DOI={h.doi}  {h.title[:80]}"
+        )
+
+
 @cli.command("export-kb")
 @click.option("--kb", "-k", "kb_name", required=True, help="KB to export.")
 @click.option("--out", "-o", "out_dir", required=True,
