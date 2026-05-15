@@ -1,6 +1,6 @@
 """Document chunk models."""
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +47,11 @@ class ChunkMetadata(BaseModel):
     # Sub-project B (per-type embedding routing) — records which embedder
     # actually produced the chunk's vector. None when not yet embedded.
     embedding_model: Optional[str] = None
+
+    # Cite-graph enrichment fields (2026-05-15 spec).
+    source_via: Optional[Literal["bundle", "enrichment", "cite_graph", "cite_graph_script"]] = None
+    cited_tool: Optional[str] = None
+    discovery_score: Optional[float] = None
 
     def __repr__(self) -> str:
         return (
