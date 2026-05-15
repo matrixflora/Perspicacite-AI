@@ -161,3 +161,70 @@ def _chunk_r_regex(text: str, paper: Paper, *, file_path: str) -> list[DocumentC
         )
         chunks.append(DocumentChunk(id=f"{paper.id}_code_{i}", text=body, metadata=md))
     return chunks
+
+
+def _chunk_notebook(text: str, paper: Paper, *, file_path: str) -> list[DocumentChunk]:
+    """Chunk a Jupyter notebook by code cell.
+
+    Each code cell becomes a chunk. Cells containing function/class defs
+    are sub-split via ``_chunk_python_ast`` so individual functions are
+    addressable. Cell outputs are stripped before parse (this is what
+    the chunker sees — the disk-side stripping happens at fetch time in
+    AgenticScienceBuilder's enrichment.py:_strip_notebook_outputs).
+
+    Falls back to a single module chunk on JSON error or no code cells.
+    """
+    try:
+        nb = json.loads(text)
+    except (ValueError, json.JSONDecodeError):
+        md = ChunkMetadata(
+            paper_id=paper.id, chunk_index=0, source=paper.source, title=paper.title,
+            content_type="code", language="python", source_file_path=file_path,
+            symbol_name=file_path or "module", symbol_kind="module",
+            start_line=1, end_line=max(text.count("\n") + 1, 1),
+            docstring=None, imports=[],
+        )
+        return [DocumentChunk(id=f"{paper.id}_code_0", text=text, metadata=md)]
+
+    cells = nb.get("cells", []) if isinstance(nb, dict) else []
+    code_cells = [c for c in cells if c.get("cell_type") == "code"]
+    if not code_cells:
+        md = ChunkMetadata(
+            paper_id=paper.id, chunk_index=0, source=paper.source, title=paper.title,
+            content_type="code", language="python", source_file_path=file_path,
+            symbol_name=file_path or "module", symbol_kind="module",
+            start_line=1, end_line=1, docstring=None, imports=[],
+        )
+        return [DocumentChunk(id=f"{paper.id}_code_0", text="", metadata=md)]
+
+    chunks: list[DocumentChunk] = []
+    out_idx = 0
+    for i, cell in enumerate(code_cells, start=1):
+        src_lines = cell.get("source", [])
+        cell_text = "".join(src_lines) if isinstance(src_lines, list) else str(src_lines)
+        cell_name = f"{file_path}::cell_{i}"
+
+        # Sub-chunk via AST if it has function/class defs.
+        sub = _chunk_python_ast(cell_text, paper, file_path=cell_name,
+                                chunk_size=1000, chunk_overlap=200)
+        has_defs = any(c.metadata.symbol_kind in ("function", "class") for c in sub)
+        if has_defs:
+            # Re-index the sub-chunks so the parent paper's chunk_index is sequential.
+            for s in sub:
+                md = s.metadata.model_copy(update={"chunk_index": out_idx})
+                chunks.append(DocumentChunk(id=f"{paper.id}_code_{out_idx}",
+                                            text=s.text, metadata=md))
+                out_idx += 1
+        else:
+            line_count = cell_text.count("\n") + 1
+            md = ChunkMetadata(
+                paper_id=paper.id, chunk_index=out_idx, source=paper.source,
+                title=paper.title, content_type="code", language="python",
+                source_file_path=file_path,
+                symbol_name=cell_name, symbol_kind="cell",
+                start_line=1, end_line=line_count, docstring=None, imports=[],
+            )
+            chunks.append(DocumentChunk(id=f"{paper.id}_code_{out_idx}",
+                                        text=cell_text, metadata=md))
+            out_idx += 1
+    return chunks
