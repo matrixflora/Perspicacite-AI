@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class PaperSource(str, Enum):
-    """Source of a paper."""
+    """Source of a paper.
+
+    Legacy values (BIBTEX, SCILEX, WEB_SEARCH, USER_UPLOAD,
+    CITATION_FOLLOW, LOCAL) are kept for backward compat.
+    Audit 2026-05-15 finding #5 added explicit database sources.
+    """
 
     BIBTEX = "bibtex"
     SCILEX = "scilex"
@@ -16,6 +21,10 @@ class PaperSource(str, Enum):
     USER_UPLOAD = "user_upload"
     CITATION_FOLLOW = "citation_follow"
     LOCAL = "local"
+    OPENALEX = "openalex"
+    PUBMED = "pubmed"
+    ARXIV = "arxiv"
+    CROSSREF = "crossref"
 
 
 class Author(BaseModel):
