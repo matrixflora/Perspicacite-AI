@@ -459,7 +459,7 @@ def _papers_from_hits(hits: list[ExpansionHit]) -> list[Paper]:
             abstract=h.abstract,
             journal=h.journal,
             citation_count=h.citation_count,
-            source=PaperSource.WEB_SEARCH,
+            source=PaperSource.CITATION_FOLLOW,
         ))
     return out
 

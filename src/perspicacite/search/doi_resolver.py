@@ -57,7 +57,7 @@ async def resolve_doi(doi: str, http_client: httpx.AsyncClient | None = None) ->
             doi=doi,
             url=data.get("URL"),
             citation_count=data.get("is-referenced-by-count"),
-            source=PaperSource.WEB_SEARCH,
+            source=PaperSource.CROSSREF,
         )
 
     except Exception as e:
