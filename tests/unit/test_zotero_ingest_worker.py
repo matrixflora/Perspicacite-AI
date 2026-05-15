@@ -72,7 +72,10 @@ async def test_worker_dedups_by_doi_and_attaches_notes(monkeypatch):
     )
 
     fake_state = SimpleNamespace(
-        config=SimpleNamespace(pdf_download=None),
+        config=SimpleNamespace(
+            pdf_download=None,
+            capsule=SimpleNamespace(auto_build_on_ingest=False),
+        ),
         pdf_parser=SimpleNamespace(parse=AsyncMock()),
         vector_store=SimpleNamespace(paper_exists=AsyncMock(return_value=False)),
         embedding_provider=None,
@@ -123,7 +126,10 @@ async def test_worker_skips_existing_doi(monkeypatch):
     )
 
     fake_state = SimpleNamespace(
-        config=SimpleNamespace(pdf_download=None),
+        config=SimpleNamespace(
+            pdf_download=None,
+            capsule=SimpleNamespace(auto_build_on_ingest=False),
+        ),
         pdf_parser=SimpleNamespace(parse=AsyncMock()),
         vector_store=SimpleNamespace(paper_exists=AsyncMock(return_value=True)),  # all exist
         embedding_provider=None,
