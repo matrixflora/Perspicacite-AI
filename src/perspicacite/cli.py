@@ -1442,6 +1442,11 @@ def expand_kb_cmd(
 @click.option("--tool", default=None, help="Library/tool name to resolve.")
 @click.option("--doi", default=None, help="Skip resolver and use this DOI as seed.")
 @click.option("--max-papers", default=None, type=int, help="Override max_papers cap.")
+@click.option(
+    "--openalex-id",
+    default=None,
+    help="Skip resolver and use this OpenAlex Work id (e.g. W3177828909).",
+)
 @click.option("--dry-run/--no-dry-run", default=True, help="Preview only (default).")
 @click.pass_context
 def cli_enrich_cite_graph(
@@ -1450,6 +1455,7 @@ def cli_enrich_cite_graph(
     tool: str | None,
     doi: str | None,
     max_papers: int | None,
+    openalex_id: str | None,
     dry_run: bool,
 ) -> None:
     """Enrich a KB from the cite-graph of a library's canonical paper.
@@ -1459,12 +1465,13 @@ def cli_enrich_cite_graph(
     Examples:
         perspicacite enrich-cite-graph my-kb --tool rdkit --max-papers 20
         perspicacite enrich-cite-graph my-kb --doi 10.1021/acs.jcim.1c00203
+        perspicacite enrich-cite-graph my-kb --openalex-id W3177828909
     """
     import asyncio
     from perspicacite.pipeline.cite_graph import enrich_kb_from_cite_graph
 
-    if not tool and not doi:
-        raise click.UsageError("Provide --tool or --doi.")
+    if not tool and not doi and not openalex_id:
+        raise click.UsageError("Provide --tool, --doi, or --openalex-id.")
 
     config = ctx.obj["config"]
     kb_cfg = config.knowledge_base
@@ -1472,10 +1479,10 @@ def cli_enrich_cite_graph(
         kb_cfg.cite_graph.max_papers = max_papers
 
     hits = asyncio.run(enrich_kb_from_cite_graph(
-        tool=tool, doi=doi, kb_config=kb_cfg,
+        tool=tool, doi=doi, openalex_id=openalex_id, kb_config=kb_cfg,
         existing_dois=set(), dry_run=dry_run,
     ))
-    click.echo(f"[dry-run={dry_run}] {len(hits)} ranked hits for {tool or doi}:")
+    click.echo(f"[dry-run={dry_run}] {len(hits)} ranked hits for {tool or doi or openalex_id}:")
     for i, h in enumerate(hits, 1):
         click.echo(
             f"  {i:2d}. score={h.score:.3f}  cit={h.citation_count}  "

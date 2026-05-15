@@ -182,44 +182,69 @@ def apply_cite_graph_filters(
 
 from typing import Optional as _Optional
 
+import httpx
+
+from perspicacite.pipeline.library_doi import resolve_library_paper
+from perspicacite.pipeline.snowball import (
+    OPENALEX_BASE,
+    _fetch_seed_work,
+    fetch_cited_by_works,
+    openalex_id_for_doi,
+)
+
 
 async def _resolve_and_fetch(
-    *, tool: _Optional[str], doi: _Optional[str], kb_config,
+    *,
+    tool: _Optional[str],
+    doi: _Optional[str],
+    openalex_id: _Optional[str],
+    headers: dict[str, str],
+    client: httpx.AsyncClient,
+    max_results: int,
 ) -> tuple[list[dict], _Optional[str]]:
-    """Resolve the library to a seed DOI, then fetch OpenAlex citing works.
+    """Resolve the library to a seed work, then fetch OpenAlex citing works.
 
     Returns a (citing_works, seed_title) tuple. The title — when known —
     is used by the orchestrator to expand tool_synonyms for topic-aware
     scoring.
+
+    When ``openalex_id`` is supplied, the resolver and DOI lookup are
+    skipped entirely; the OpenAlex Work id is used as the seed directly.
     """
-    import httpx
-    from perspicacite.pipeline.library_doi import resolve_library_paper
-    from perspicacite.pipeline.snowball import fetch_cited_by_works, _fetch_seed_work
+    if openalex_id:
+        seed_url = f"{OPENALEX_BASE}/works/{openalex_id}"
+        try:
+            resp = await client.get(seed_url, headers=headers, timeout=20.0)
+            if resp.status_code == 200:
+                seed_work = resp.json() or {"id": f"https://openalex.org/{openalex_id}"}
+            else:
+                seed_work = {"id": f"https://openalex.org/{openalex_id}"}
+        except httpx.HTTPError:
+            seed_work = {"id": f"https://openalex.org/{openalex_id}"}
+        seed_title = (
+            (seed_work.get("title") or seed_work.get("display_name"))
+            if isinstance(seed_work, dict) else None
+        )
+        works = await fetch_cited_by_works(
+            client, seed_work=seed_work, max_results=max_results, headers=headers,
+        )
+        return works, seed_title
 
     seed_doi: _Optional[str] = doi
     if seed_doi is None:
         if not tool:
             return ([], None)
-        paper = await resolve_library_paper(
-            tool,
-            bundle=None, github_repo=None,
-            config_map=dict(kb_config.library_paper_map),
-            readme_text=None,
-        )
-        if paper is None:
-            return ([], None)
-        seed_doi = paper.doi
+        return ([], None)
 
-    async with httpx.AsyncClient() as client:
-        seed_work = await _fetch_seed_work(client, seed_doi, {})
-        if seed_work is None:
-            return ([], None)
-        seed_title = seed_work.get("title")
-        works = await fetch_cited_by_works(
-            client, seed_work=seed_work,
-            max_results=kb_config.cite_graph.max_papers * 4,
-        )
-        return (works, seed_title)
+    seed_work = await _fetch_seed_work(client, seed_doi, headers)
+    if seed_work is None:
+        return ([], None)
+    seed_title = seed_work.get("title")
+    works = await fetch_cited_by_works(
+        client, seed_work=seed_work,
+        max_results=max_results, headers=headers,
+    )
+    return (works, seed_title)
 
 
 def _hit_from_oa_work(work: dict) -> _Optional["CiteHit"]:
@@ -258,16 +283,21 @@ async def enrich_kb_from_cite_graph(
     *,
     tool: _Optional[str] = None,
     doi: _Optional[str] = None,
+    openalex_id: _Optional[str] = None,
     kb_config,
     existing_dois: set[str],
     dry_run: bool = False,
     now_year: _Optional[int] = None,
 ) -> list[CiteHit]:
-    """Resolve library/DOI → fetch citing works → filter+score → top-N.
+    """Resolve library/DOI/OpenAlex-id → fetch citing works → filter+score → top-N.
 
     Returns the ranked CiteHit list (top max_papers). Synonyms for the
     abstract-match signal are expanded with content-word tokens from
     the seed paper's title via :func:`tool_synonyms_from_seed`.
+
+    Pass exactly one of ``tool`` / ``doi`` / ``openalex_id`` (or both
+    ``tool`` and ``doi`` — DOI wins). When ``openalex_id`` is supplied,
+    DOI resolution is bypassed entirely.
 
     The ``dry_run`` parameter is reserved for future ingest plumbing —
     currently it has no effect on behaviour.
@@ -276,8 +306,35 @@ async def enrich_kb_from_cite_graph(
     if now_year is None:
         now_year = _dt.datetime.now(_dt.UTC).year
 
+    if not tool and not doi and not openalex_id:
+        raise ValueError("must supply tool, doi, or openalex_id")
+
     cfg = kb_config.cite_graph
-    works, seed_title = await _resolve_and_fetch(tool=tool, doi=doi, kb_config=kb_config)
+
+    # When only a tool name is given, resolve it to a DOI here so
+    # ``_resolve_and_fetch`` can stay narrowly focused on the OpenAlex
+    # round-trip (and easy to mock in tests).
+    seed_doi: _Optional[str] = doi
+    if openalex_id is None and seed_doi is None and tool:
+        paper = await resolve_library_paper(
+            tool,
+            bundle=None, github_repo=None,
+            config_map=dict(kb_config.library_paper_map),
+            readme_text=None,
+        )
+        if paper is None:
+            return []
+        seed_doi = paper.doi
+
+    async with httpx.AsyncClient() as client:
+        works, seed_title = await _resolve_and_fetch(
+            tool=tool,
+            doi=seed_doi,
+            openalex_id=openalex_id,
+            headers={},
+            client=client,
+            max_results=cfg.max_papers * 4,
+        )
     raw_hits: list[CiteHit] = []
     for w in works:
         h = _hit_from_oa_work(w)
