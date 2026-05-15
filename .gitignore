@@ -155,3 +155,6 @@ old_tools/
 # Local Claude Code MCP config (server must be running; not for CI)
 .mcp.json
 coverage.xml
+!tests/audit/**/*.py
+!tests/audit/**/*.json
+!tests/audit/**/*.md
