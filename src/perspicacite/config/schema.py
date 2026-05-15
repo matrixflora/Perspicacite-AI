@@ -331,6 +331,33 @@ class LLMProviderConfig(BaseModel):
             "usage_input_tokens_path."
         ),
     )
+    cost_usd_path: str | None = Field(
+        default=None,
+        description=(
+            "F4 (audit 2026-05-15): dotted JSON path to a pre-computed "
+            "total cost in USD (e.g. 'total_cost_usd' for Claude Code). "
+            "When set, the agent_cli adapter feeds this number directly "
+            "to BudgetTracker, bypassing the (provider, model) PRICING_TABLE "
+            "lookup. Recommended for subscription-mode CLIs whose effective "
+            "cost the CLI computes itself."
+        ),
+    )
+    cache_read_tokens_path: str | None = Field(
+        default=None,
+        description=(
+            "F4 (audit 2026-05-15): dotted JSON path to "
+            "`cache_read_input_tokens` (Anthropic prompt-cache hits). "
+            "Recorded into provenance for cache-hit-rate analysis. "
+            "None → not recorded."
+        ),
+    )
+    cache_creation_tokens_path: str | None = Field(
+        default=None,
+        description=(
+            "F4 (audit 2026-05-15): dotted JSON path to "
+            "`cache_creation_input_tokens` (cache writes)."
+        ),
+    )
     cwd: str | None = Field(
         default=None,
         description="Working directory for the subprocess. ``None`` = inherit.",

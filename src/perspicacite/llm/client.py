@@ -348,6 +348,13 @@ class AsyncLLMClient:
                 kw["usage_input_tokens_path"] = cli_cfg.usage_input_tokens_path
             if getattr(cli_cfg, "usage_output_tokens_path", None):
                 kw["usage_output_tokens_path"] = cli_cfg.usage_output_tokens_path
+            # F4 (audit 2026-05-15): forward rich result fields.
+            if getattr(cli_cfg, "cost_usd_path", None):
+                kw["cost_usd_path"] = cli_cfg.cost_usd_path
+            if getattr(cli_cfg, "cache_read_tokens_path", None):
+                kw["cache_read_tokens_path"] = cli_cfg.cache_read_tokens_path
+            if getattr(cli_cfg, "cache_creation_tokens_path", None):
+                kw["cache_creation_tokens_path"] = cli_cfg.cache_creation_tokens_path
             client = ClaudeCLIClient(**kw)
         else:
             from perspicacite.llm.agent_cli import AgentCLIClient
@@ -372,6 +379,9 @@ class AsyncLLMClient:
                 output_file_flag=cli_cfg.output_file_flag,
                 usage_input_tokens_path=cli_cfg.usage_input_tokens_path,
                 usage_output_tokens_path=cli_cfg.usage_output_tokens_path,
+                cost_usd_path=cli_cfg.cost_usd_path,
+                cache_read_tokens_path=cli_cfg.cache_read_tokens_path,
+                cache_creation_tokens_path=cli_cfg.cache_creation_tokens_path,
                 timeout=float(cli_cfg.timeout),
                 cwd=cli_cfg.cwd,
                 env_extra=dict(cli_cfg.env_extra),

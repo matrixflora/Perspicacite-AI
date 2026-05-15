@@ -56,6 +56,9 @@ def ClaudeCLIClient(
     env_extra: dict[str, str] | None = None,
     usage_input_tokens_path: str | None = None,
     usage_output_tokens_path: str | None = None,
+    cost_usd_path: str | None = None,
+    cache_read_tokens_path: str | None = None,
+    cache_creation_tokens_path: str | None = None,
 ) -> AgentCLIClient:  # noqa: N802 — preserve the legacy class-shaped name
     """Backwards-compatible factory returning an :class:`AgentCLIClient`
     pre-configured for Claude Code.
@@ -78,6 +81,13 @@ def ClaudeCLIClient(
         kw["usage_input_tokens_path"] = usage_input_tokens_path
     if usage_output_tokens_path is not None:
         kw["usage_output_tokens_path"] = usage_output_tokens_path
+    # F4 (audit 2026-05-15): forward rich result fields.
+    if cost_usd_path is not None:
+        kw["cost_usd_path"] = cost_usd_path
+    if cache_read_tokens_path is not None:
+        kw["cache_read_tokens_path"] = cache_read_tokens_path
+    if cache_creation_tokens_path is not None:
+        kw["cache_creation_tokens_path"] = cache_creation_tokens_path
     return AgentCLIClient(**kw)
 
 

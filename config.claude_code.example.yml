@@ -66,3 +66,9 @@ llm:
       # Code surfaces these in its `--output-format json` payload.
       usage_input_tokens_path:  "usage.input_tokens"
       usage_output_tokens_path: "usage.output_tokens"
+      # F4 (audit 2026-05-15): plumb cost + prompt-cache hits through
+      # to BudgetTracker. The CLI already computes total_cost_usd
+      # exactly (net of cache / quota), so we trust it directly.
+      cost_usd_path:                "total_cost_usd"
+      cache_read_tokens_path:       "usage.cache_read_input_tokens"
+      cache_creation_tokens_path:   "usage.cache_creation_input_tokens"

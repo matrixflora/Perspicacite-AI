@@ -1,0 +1,45 @@
+{
+  "provider": "claude_cli_sonnet",
+  "timestamp": 1778821085,
+  "embedding_smoke": {
+    "provider": "claude_cli_sonnet",
+    "ok": true,
+    "model_name": "all-MiniLM-L6-v2",
+    "dimension": 384
+  },
+  "budget_summary": {
+    "tokens_in": 6,
+    "tokens_out": 1318,
+    "usd": 0.079793,
+    "has_unknown_costs": false,
+    "breaches": []
+  },
+  "results": [
+    {
+      "example_id": "ex_a",
+      "example_name": "Retrieval-Augmented Generation",
+      "query": "How does retrieval-augmented generation reduce the need for parametric memory in language models, and what are the main architectural variants?",
+      "provider": "claude_cli_sonnet",
+      "n_context_papers": 3,
+      "ok": true,
+      "error": null,
+      "elapsed_s": 20.984,
+      "output": "Retrieval-augmented generation (RAG) fundamentally reduces the reliance on parametric memory in language models by offloading factual knowledge storage to an external, non-parametric retrieval system. Traditional large pre-trained models encode knowledge implicitly within their parameters, but their capacity to access and manipulate this knowledge remains limited [10.0001/lewis2020rag]. By introducing a hybrid architecture that combines a parametric component (typically a seq2seq or autoregressive model) with a non-parametric memory (such as a dense vector index over large corpora), RAG systems can query external knowledge stores dynamically at inference time, thereby achieving more specific, diverse, and factual outputs without proportionally scaling model size [10.0001/lewis2020rag].\n\nThe architectural approach to retrieval-augmented models varies primarily in *how* and *when* retrieval is integrated into the generation process. The original RAG framework employs a dense vector index (e.g., Wikipedia embeddings) paired with a seq2seq model, enabling the generator to condition on retrieved passages during decoding [10.0001/lewis2020rag]. In contrast, RETRO (Retrieval-Enhanced Transformer) integrates retrieval at the token level by conditioning the autoregressive model on document chunks retrieved based on local similarity with preceding tokens, drawing from a massive 2 trillion token database [10.0001/borgeaud2022retro]. This chunked-retrieval strategy allows RETRO to match the performance of models like GPT-3 using 25\u00d7 fewer parameters, demonstrating that architectural efficiency can be gained by externalizing memory [10.0001/borgeaud2022retro].\n\nA further architectural refinement is the end-to-end joint training of both the retriever and the generator. Atlas exemplifies this approach by coupling a sequence-to-sequence model with a *learned* retriever that is fine-tuned jointly, enabling the system to adapt retrieval strategies to task-specific needs [10.0001/izacard2022atlas]. This design proves especially effective in few-shot and knowledge-intensive scenarios, where Atlas achieves state-of-the-art results on benchmarks like KILT with significantly fewer parameters than parametric-only competitors [10.0001/izacard2022atlas]. The key distinction here is that the retriever itself becomes part of the learned model rather than a fixed indexing pipeline.\n\nAcross these variants, the common principle is the decomposition of knowledge into a modular, updatable retrieval component, which alleviates the burden on the model's internal parameters to memorize and recall vast amounts of factual information. This modularity not only improves factual accuracy and diversity [10.0001/lewis2020rag] but also enables dramatic reductions in model size without sacrificing performance [10.0001/borgeaud2022retro] [10.0001/izacard2022atlas]. The main architectural dimensions along which RAG systems differ include the granularity of retrieval (passage-level vs. token-level), the integration point in the generation pipeline, and whether the retriever is trained end-to-end with the generator or remains fixed.",
+      "output_chars": 3141,
+      "system_prompt": "You are a careful research synthesizer. Given a question and a set of paper abstracts, produce a 4-6 paragraph synthesis that answers the question. Cite every claim by DOI in square brackets, e.g. [10.0001/foo]. If the abstracts are insufficient to answer, say so explicitly."
+    },
+    {
+      "example_id": "ex_b",
+      "example_name": "Protein structure prediction",
+      "query": "Compare AlphaFold-2, RoseTTAFold, and ESMFold along the axes of speed, accuracy, and reliance on multiple sequence alignments.",
+      "provider": "claude_cli_sonnet",
+      "n_context_papers": 3,
+      "ok": true,
+      "error": null,
+      "elapsed_s": 14.513,
+      "output": "I'll synthesize a comparison of these three protein structure prediction methods based on the provided abstracts.\n\n## Comparison of AlphaFold-2, RoseTTAFold, and ESMFold\n\nThe three methods represent significant advances in computational protein structure prediction, but differ substantially in their computational requirements and reliance on evolutionary information. AlphaFold-2 established a new standard by predicting protein structures with atomic accuracy matching experimental data, using a neural network architecture trained on evolutionary, physical, and geometric constraints [10.0002/jumper2021alphafold2]. However, this high accuracy comes with substantial computational cost and, critically, a dependence on multiple sequence alignments (MSAs) derived from homologous protein sequences.\n\nRoseTTAFold offers a compelling alternative that balances accuracy with computational efficiency. Its three-track neural network architecture processes sequence, distance, and coordinate information simultaneously, achieving accurate structure predictions while requiring fewer compute cycles than AlphaFold-2 [10.0002/baek2021rosettafold]. This speed advantage makes RoseTTAFold more practical for certain applications, particularly when computational resources are limited. Additionally, RoseTTAFold demonstrated the capability to accurately predict protein-protein complexes directly from sequence, extending its utility beyond single-chain structure prediction [10.0002/baek2021rosettafold].\n\nESMFold represents a paradigm shift by eliminating the MSA requirement entirely. By leveraging a language model trained on the evolutionary record of protein sequences, ESMFold can predict three-dimensional structures directly from a single sequence [10.0002/lin2023esmfold]. This approach delivers dramatic speed improvements\u2014up to 60-fold faster than AlphaFold-2\u2014while maintaining comparable accuracy for short sequences [10.0002/lin2023esmfold]. The removal of the MSA generation step is particularly valuable for orphan proteins or newly discovered sequences with limited homologs, where traditional MSA-based methods struggle.\n\nIn summary, the three methods occupy different points in the accuracy-speed-dependency trade-off space. AlphaFold-2 prioritizes maximum accuracy through intensive computation and MSA-based evolutionary information [10.0002/jumper2021alphafold2]. RoseTTAFold offers a middle ground with reduced computational requirements while retaining MSA dependence and adding complex prediction capabilities [10.0002/baek2021rosettafold]. ESMFold sacrifices some accuracy on longer sequences but achieves remarkable speed and eliminates MSA requirements by encoding evolutionary information directly in its language model [10.0002/lin2023esmfold]. The choice among these methods depends on the specific application requirements, available computational resources, and characteristics of the target proteins.",
+      "output_chars": 2927,
+      "system_prompt": "You are a careful research synthesizer. Given a question and a set of paper abstracts, produce a 4-6 paragraph synthesis that answers the question. Cite every claim by DOI in square brackets, e.g. [10.0001/foo]. If the abstracts are insufficient to answer, say so explicitly."
+    }
+  ]
+}
