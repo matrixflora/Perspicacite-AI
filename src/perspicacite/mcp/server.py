@@ -127,8 +127,18 @@ mcp_state = MCPState()
 
 
 def _json_ok(data: dict[str, Any]) -> str:
-    """Build a success JSON response."""
-    return json.dumps({"success": True, **data}, ensure_ascii=False, default=str)
+    """Emit a successful MCP envelope.
+
+    Carries both ``success: true`` (canonical, will remain) and
+    ``ok: true`` (deprecated alias for backwards compat with
+    pre-v3.x downstream clients). Plan to drop ``ok`` after the
+    Scriptorium-v0.13 migration completes — see docs/MCP.md.
+    """
+    return json.dumps(
+        {"success": True, "ok": True, **data},
+        ensure_ascii=False,
+        default=str,
+    )
 
 
 def _normalize_paper_id(paper_id: str) -> str:
@@ -139,8 +149,11 @@ def _normalize_paper_id(paper_id: str) -> str:
 
 
 def _json_error(message: str, **extra: Any) -> str:
-    """Build an error JSON response."""
-    return json.dumps({"success": False, "error": message, **extra}, default=str)
+    """Emit an error MCP envelope. See _json_ok for the dual-key rationale."""
+    return json.dumps(
+        {"success": False, "ok": False, "error": message, **extra},
+        default=str,
+    )
 
 
 def _require_state() -> MCPState | str:
