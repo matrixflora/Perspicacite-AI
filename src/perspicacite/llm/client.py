@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -16,6 +16,21 @@ from perspicacite.llm.cache import LLMResponseCache, build_cache_key
 from perspicacite.logging import get_logger
 
 logger = get_logger("perspicacite.llm")
+
+# F9 (audit 2026-05-15): LiteLLM prints a "Give Feedback / Get Help"
+# banner to stderr on every error, plus an "If you need to debug…" info
+# line. These pollute our structured logs and operator terminals. Silence
+# them at module load. The banner is gated on ``litellm.suppress_debug_info``
+# (see litellm/utils.py and litellm/router.py).
+import logging as _stdlib_logging  # noqa: E402
+
+try:
+    import litellm as _litellm  # noqa: E402
+    _litellm.suppress_debug_info = True
+except Exception:  # pragma: no cover — litellm is a hard dep
+    pass
+_stdlib_logging.getLogger("LiteLLM").setLevel(_stdlib_logging.ERROR)
+_stdlib_logging.getLogger("litellm").setLevel(_stdlib_logging.ERROR)
 
 
 def _maybe_wrap_error(exc: Exception, provider: str) -> Exception:
@@ -44,10 +59,56 @@ def _maybe_wrap_error(exc: Exception, provider: str) -> Exception:
         )
     if cls_name in ("AuthenticationError", "PermissionDeniedError") or detect_auth_error(msg):
         return AuthError(
-            f"{provider}: auth failed. {suggested_action(provider)}",
+            f"{provider}: auth failed. {suggested_action(provider, hint=_auth_hint(msg))}",
             provider=provider,
         )
     return exc
+
+
+def _auth_hint(msg: str) -> str:
+    """F3 (audit 2026-05-15): distinguish invalid-key from quota-exceeded.
+
+    The Anthropic API returns ``invalid x-api-key`` for revoked/missing keys
+    and ``rate_limit_error`` / ``billing`` for quota breaches. Today both
+    end up in the same ``suggested_action`` string telling the user to
+    "wait for quota reset" — confusing for first-time users with a typo'd key.
+    """
+    lower = (msg or "").lower()
+    if any(
+        k in lower
+        for k in ("invalid x-api-key", "invalid api key", "no api key", "unauthorized", "api key not found", "missing api key")
+    ):
+        return "missing_or_invalid_key"
+    if any(k in lower for k in ("quota", "billing", "credit balance", "usage limit")):
+        return "quota_exceeded"
+    return "unknown"
+
+
+def _is_deterministic_fail(exc: Exception) -> bool:
+    """F1 (audit 2026-05-15): tenacity predicate for "do not retry".
+
+    Re-raises immediately if the wrapped form of ``exc`` is an ``AuthError``
+    or ``BudgetExceededError`` — neither will resolve on its own.
+    """
+    from perspicacite.llm.errors import AuthError
+
+    if isinstance(exc, AuthError):
+        return True
+    # Late import — BudgetExceededError lives in the budget module.
+    try:
+        from perspicacite.llm.budget import BudgetExceededError
+        if isinstance(exc, BudgetExceededError):
+            return True
+    except Exception:  # pragma: no cover — module always importable
+        pass
+    # Detect the wrapped class without invoking _maybe_wrap_error
+    # (avoids circular logic with the retry decorator).
+    cls_name = type(exc).__name__
+    if cls_name in ("AuthenticationError", "PermissionDeniedError"):
+        return True
+    msg = str(exc).lower()
+    from perspicacite.llm.errors import detect_auth_error
+    return bool(detect_auth_error(msg))
 
 
 def resolve_stage_model(
@@ -357,9 +418,10 @@ class AsyncLLMClient:
         return f"{provider}/{model}"
 
     @retry(
-        retry=retry_if_exception_type((
-            Exception,  # LiteLLM raises generic exceptions for API errors
-        )),
+        # F1 (audit 2026-05-15): never retry on deterministic-fail errors
+        # — auth errors won't suddenly become valid; budget breaches won't
+        # heal. Retry every OTHER exception.
+        retry=retry_if_exception(lambda e: not _is_deterministic_fail(e)),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,

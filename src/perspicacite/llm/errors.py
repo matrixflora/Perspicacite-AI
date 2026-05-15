@@ -155,8 +155,24 @@ _SUGGESTED_ACTIONS: dict[str, str] = {
 }
 
 
-def suggested_action(provider: str) -> str:
-    """Return a human-readable next-step message for a rate-limited call."""
+def suggested_action(provider: str, *, hint: str | None = None) -> str:
+    """Return a human-readable next-step message.
+
+    ``hint`` lets callers distinguish auth-failure sub-modes (F3, audit
+    2026-05-15) so the message is accurate:
+
+    - ``"missing_or_invalid_key"`` → the user's API key is missing /
+      typo'd / revoked. "Wait for quota reset" is wrong.
+    - ``"quota_exceeded"`` / ``"unknown"`` / ``None`` → keep the
+      rate-limit / quota wording.
+    """
+    if hint == "missing_or_invalid_key":
+        return (
+            "API key is missing or invalid. Set the appropriate "
+            "`*_API_KEY` env var (or use the matching `config.<provider>.example.yml` "
+            "preset), or switch this stage to `claude_cli` / another provider "
+            "via `llm.providers_per_stage`."
+        )
     return _SUGGESTED_ACTIONS.get(
         provider,
         "Wait for the quota reset or configure a fallback provider via "
