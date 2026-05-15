@@ -737,9 +737,16 @@ function renderFigureRef(payload) {
     const list = document.getElementById('figures-list');
     if (!panel || !list) return;
     panel.style.display = '';
-
     const card = document.createElement('div');
     card.className = 'figure-card';
+
+    if (payload.thumbnail_b64) {
+        const img = document.createElement('img');
+        img.src = `data:image/png;base64,${payload.thumbnail_b64}`;
+        img.alt = payload.label || 'Figure thumbnail';
+        img.className = 'figure-thumbnail';
+        card.appendChild(img);
+    }
 
     if (payload.label) {
         const lbl = document.createElement('div');
