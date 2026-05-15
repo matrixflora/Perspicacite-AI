@@ -207,3 +207,169 @@ async def lookup_paper(
     finally:
         if should_close:
             await client.aclose()
+
+
+def _ss_record_to_oa_like_work(record: dict, *, key: str) -> dict | None:
+    """Map an S2 references/citations record to an OpenAlex-like work dict.
+
+    ``key`` is ``citedPaper`` for /references or ``citingPaper`` for /citations.
+    Returns None for malformed records.
+    """
+    paper = record.get(key) or {}
+    if not paper:
+        return None
+    ext_ids = paper.get("externalIds") or {}
+    doi = ext_ids.get("DOI")
+    arxiv_id = ext_ids.get("ArXiv")
+
+    # Authors → OpenAlex authorships shape so _paper_from_oa_work picks them up
+    authorships = []
+    for a in paper.get("authors") or []:
+        name = (a or {}).get("name", "").strip()
+        if name:
+            authorships.append({"author": {"display_name": name}})
+
+    # Journal: _paper_from_oa_work reads primary_location.source.display_name
+    venue = paper.get("venue") or None
+    primary_location: dict = {}
+    if venue:
+        primary_location = {"source": {"display_name": venue}}
+
+    # NOTE: abstract_inverted_index is None — S2 gives us a plain
+    # abstract string, but _paper_from_oa_work's _reconstruct_abstract
+    # only consumes inverted indexes. The plain abstract is preserved
+    # under "abstract" as a fallback for downstream readers; ExpansionHit
+    # tolerates abstract being None from this path (OpenAlex sometimes
+    # also returns null inverted indexes).
+
+    return {
+        # Stable OA-shaped id from S2 paperId when there's no DOI
+        "id": f"https://openalex.org/W_S2_{paper.get('paperId', '')}",
+        "doi": (f"https://doi.org/{doi}" if doi else None),
+        "title": paper.get("title") or "Untitled",
+        "display_name": paper.get("title") or "Untitled",
+        "publication_year": paper.get("year"),
+        "cited_by_count": paper.get("citationCount"),
+        "abstract_inverted_index": None,
+        "abstract": paper.get("abstract"),
+        "authorships": authorships,
+        "primary_location": primary_location,
+        # Diagnostic / future-use payload (not consumed by _paper_from_oa_work):
+        "metadata": {
+            "arxiv_id": arxiv_id,
+            "s2_paper_id": paper.get("paperId"),
+            "s2_corpus_id": paper.get("corpusId"),
+            "ss_is_influential": record.get("isInfluential", False),
+        },
+    }
+
+
+_SS_GRAPH_BASE = "https://api.semanticscholar.org/graph/v1/paper"
+_SS_REF_CIT_FIELDS = (
+    "title,abstract,authors,year,externalIds,citationCount,venue"
+)
+
+
+async def _ss_fetch_graph(
+    paper_id: str,
+    endpoint: str,           # "references" or "citations"
+    *,
+    limit: int,
+    http_client: httpx.AsyncClient | None,
+) -> list[dict]:
+    """Shared HTTP path for /references and /citations.
+
+    Returns adapted records (OpenAlex-like dicts). On 4xx / 5xx / network
+    error, logs and returns [] — the caller (snowball_expand) treats SS
+    failure as a no-op enrichment, not an error.
+    """
+    normalized = normalize_paper_id(paper_id)
+    if not normalized:
+        return []
+
+    clamped_limit = max(1, min(int(limit), 1000))
+
+    client = http_client or httpx.AsyncClient(timeout=15.0)
+    should_close = http_client is None
+    try:
+        url = f"{_SS_GRAPH_BASE}/{normalized}/{endpoint}"
+        headers: dict[str, str] = {}
+        api_key = _get_api_key()
+        if api_key:
+            headers["x-api-key"] = api_key
+
+        response = await client.get(
+            url,
+            params={"fields": _SS_REF_CIT_FIELDS, "limit": clamped_limit},
+            headers=headers,
+        )
+
+        if response.status_code == 404:
+            logger.info("snowball_ss_paper_not_found", paper_id=normalized, endpoint=endpoint)
+            return []
+        if response.status_code == 429:
+            logger.warning("snowball_ss_rate_limited", paper_id=normalized, endpoint=endpoint)
+            return []
+        if response.status_code >= 400:
+            logger.warning(
+                "snowball_ss_error",
+                paper_id=normalized,
+                endpoint=endpoint,
+                status=response.status_code,
+            )
+            return []
+
+        body = response.json() or {}
+        records = body.get("data") or []
+        key = "citedPaper" if endpoint == "references" else "citingPaper"
+        out: list[dict] = []
+        for rec in records:
+            mapped = _ss_record_to_oa_like_work(rec, key=key)
+            if mapped is not None:
+                out.append(mapped)
+        return out
+
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning(
+            "snowball_ss_error",
+            paper_id=normalized,
+            endpoint=endpoint,
+            error=str(exc),
+        )
+        return []
+
+    finally:
+        if should_close:
+            await client.aclose()
+
+
+async def fetch_ss_references(
+    paper_id: str,
+    *,
+    limit: int = 100,
+    http_client: httpx.AsyncClient | None = None,
+) -> list[dict]:
+    """Papers that ``paper_id`` cites (backward direction).
+
+    Returns OpenAlex-like work dicts consumed by
+    ``perspicacite.pipeline.snowball._paper_from_oa_work``. Returns [] on
+    any SS-side failure (404 / 429 / 5xx / network).
+    """
+    return await _ss_fetch_graph(
+        paper_id, "references", limit=limit, http_client=http_client,
+    )
+
+
+async def fetch_ss_citations(
+    paper_id: str,
+    *,
+    limit: int = 100,
+    http_client: httpx.AsyncClient | None = None,
+) -> list[dict]:
+    """Papers that cite ``paper_id`` (forward direction).
+
+    Same shape and failure semantics as ``fetch_ss_references``.
+    """
+    return await _ss_fetch_graph(
+        paper_id, "citations", limit=limit, http_client=http_client,
+    )
