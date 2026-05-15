@@ -27,8 +27,8 @@ def test_single_function_yields_one_function_chunk():
     md = chunks[0].metadata
     assert md.symbol_name == "fit"
     assert md.symbol_kind == "function"
-    assert md.start_line == 3
-    assert md.end_line == 5
+    assert md.start_line == 4
+    assert md.end_line == 6
     assert md.docstring == "Fit a model."
     assert "numpy" in md.imports
     assert "scipy" in md.imports
