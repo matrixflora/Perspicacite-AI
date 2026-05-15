@@ -231,16 +231,40 @@ Cross-references that make cards retrieval-valuable:
 
 ### `workflow_dag.json`
 
-Top-level DAG:
+Top-level DAG. **Two schema variants observed; the parser handles both:**
 
 ```json
+// 2026-05-15 schema — list-of-pairs
 {
-  "nodes": ["task_001", "task_002", "task_003", "task_004", "task_005", "task_006"],
-  "edges": [["task_001", "task_002"], ["task_002", "task_003"], "..."]
+  "nodes": ["task_001", "task_002", "..."],
+  "edges": [["task_001", "task_002"], ["task_002", "task_003"]]
+}
+
+// 2026-05-16 schema — list-of-dicts with port labels
+{
+  "nodes": ["task_001", "task_002", "..."],
+  "edges": [
+    {"from": "task_001", "port": "cleaned_library", "to": "task_002"},
+    {"from": "task_001", "port": "cleaned_library", "to": "task_003"}
+  ]
 }
 ```
 
-Treated as **bundle-level metadata**: the DAG is stored on the KB description and surfaced via the auto-KB-routing response so a calling agent can see how cards relate (task_001 → task_002 → … ). v1 does not index the DAG itself as chunks; relationships are kept as structured metadata.
+Treated as **bundle-level metadata**: the DAG is stored on the KB description and surfaced via the auto-KB-routing response so a calling agent can see how cards relate (task_001 → task_002 → … ). v1 does not index the DAG itself as chunks; relationships are kept as structured metadata. The port label (when present) is preserved on the edge — agents can use it to match a downstream task's input port against an upstream task's output port (the same `port_id` appears in each card's `task_inputs[]` / `task_outputs[]`).
+
+### Schema-version notes (2026-05-16 ASB update)
+
+The 2026-05-16 ASB run (`audit_2026-05-16_workflow_validation/article_878_v4/`) introduced new card fields the parser should preserve so they pass through to chunk metadata. These all use `extra="allow"` on the pydantic model — no schema bump is required, just lift the fields onto chunk metadata when present:
+
+- `executable: dict` — structured run payload, **not a boolean** (template `cmd[]` with placeholders like `{inputs.0}`, `env`, etc.). Lift to `workflow_metadata.executable` in the response payload so calling agents can decide whether to dispatch the task to an ASB MCP server.
+- `task_inputs[]`, `task_outputs[]` — structured port records with `port_id`, `label`, `edam_format_uri`, `evidence_id`. The `port_id` matches DAG edges' `port` field.
+- `task_objective: str` — single-sentence summary; preferred title source when present.
+- `execution_profile: dict` — `compute_tier`, `commercial_software[]`, `open_source_alternatives[]`.
+- `run_timeout_seconds: float`, `reproducibility_tier: str`, `expected_artifact_name: str`, `linked_result_ids[]`, `provenance_source: str`, `source_package: str`, `scenario_id: str`.
+- `github_name` (replaces `github`; parser falls back to either).
+- `scenarios/` — new top-level dir alongside `skills/` and `cards/`. Out of scope for v1 ingest; parser tolerates its presence.
+
+Schema version on cards is still `0.17.0` despite the new fields, so version-string gating is unreliable; the parser uses field-presence checks instead.
 
 ## Wiring: ASB output → Perspicacité primitives
 
@@ -374,7 +398,14 @@ When the auto-KB-routing returns hits from a skill-bundle KB, the response gains
       "paper_doi": "10.1021/acs.jproteome.4c01051",
       "paper_github": "ncats/MetLinkR",
       "downstream_tasks": ["task_002"],   // derived from workflow_dag.json edges
-      "upstream_tasks": []                // derived from workflow_dag.json edges
+      "upstream_tasks": [],               // derived from workflow_dag.json edges
+      "executable": {                     // present iff card.executable is set (2026-05-16+)
+        "cmd": ["python", "-m", "matchms.scripts.clean_library", "{inputs.0}", "..."],
+        "env": null,
+        "run_timeout_seconds": 60.0,
+        "expected_artifact_name": "cleaned_gnps_library.mgf"
+      },
+      "execution_profile": {"compute_tier": "medium", "...": "..."}
     }
   ]
 }
