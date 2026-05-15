@@ -159,3 +159,7 @@ coverage.xml
 !tests/audit/**/*.py
 !tests/audit/**/*.json
 !tests/audit/**/*.md
+# Audit harnesses write transient KB sidecars (symbols.jsonl etc) under
+# tests/audit/results/audit_kb/. These are run-specific and shouldn't be
+# tracked (the symbol_index gets re-derived from live code on every run).
+tests/audit/results/audit_kb/
