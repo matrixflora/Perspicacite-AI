@@ -10,6 +10,18 @@
     <link rel="stylesheet" href="/static/css/chat.css">
     <link rel="stylesheet" href="/static/css/kb.css">
     <link rel="stylesheet" href="/static/css/survey.css">
+    <!-- Sub-project C (2026-05-15): Prism.js for code-excerpt syntax highlighting -->
+    <!-- TODO(plan-c-task-7): compute SRI hashes for prismjs@1.29.0 assets. -->
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css"
+          integrity=""
+          crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"
+            integrity=""
+            crossorigin="anonymous" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"
+            integrity=""
+            crossorigin="anonymous" defer></script>
 </head>
 <body>
     <div class="container">
@@ -192,6 +204,18 @@
                 </div>
             </div>
             
+            <!-- Sub-project C (2026-05-15): code-excerpt display channel -->
+            <div id="code-excerpts-panel" class="attachments-panel" style="display: none;">
+                <h3 class="attachments-heading">📜 Code excerpts</h3>
+                <div id="code-excerpts-list" class="attachments-list"></div>
+            </div>
+
+            <!-- Sub-project C (2026-05-15): figure-reference display channel -->
+            <div id="figures-panel" class="attachments-panel" style="display: none;">
+                <h3 class="attachments-heading">🖼️ Figures</h3>
+                <div id="figures-list" class="attachments-list"></div>
+            </div>
+
             <div class="input-area">
                 <div class="chat-input-wrapper">
                     <textarea

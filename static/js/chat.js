@@ -78,6 +78,9 @@ async function sendQuery() {
     activeAssistantDiv = null;
     activeAssistantText = "";
 
+    // Sub-project C (2026-05-15): clear attachment panels from previous turn
+    clearAttachmentsPanels();
+
     // Add user message
     addMessage('user', query);
     messages.push({role: 'user', content: query});
@@ -258,6 +261,14 @@ async function sendQuery() {
                         // Regular status message - show as thinking step
                         addThinkingStep(data.message, 'analyzing');
                     }
+                } else if (data.type === 'code_excerpt') {
+                    // Sub-project C (2026-05-15): render code-excerpt attachment
+                    try { renderCodeExcerpt(data); }
+                    catch (e) { console.error('renderCodeExcerpt failed:', e); }
+                } else if (data.type === 'figure_ref') {
+                    // Sub-project C (2026-05-15): render figure-ref attachment
+                    try { renderFigureRef(data); }
+                    catch (e) { console.error('renderFigureRef failed:', e); }
                 }
                 if (data.details && data.details.includes('Intent:')) {
                     const intentMatch = data.details.match(/Intent: (\\w+)/);
@@ -658,4 +669,100 @@ function openFigureLightbox(ev) {
     lightbox.appendChild(full);
     lightbox.addEventListener("click", () => lightbox.remove());
     document.body.appendChild(lightbox);
+}
+
+// Sub-project C (2026-05-15) — render hooks for code excerpts and figure refs.
+function renderCodeExcerpt(payload) {
+    const panel = document.getElementById('code-excerpts-panel');
+    const list = document.getElementById('code-excerpts-list');
+    if (!panel || !list) return;
+    panel.style.display = '';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'code-excerpt';
+
+    const header = document.createElement('div');
+    header.className = 'code-excerpt-header';
+
+    const meta = document.createElement('div');
+    meta.className = 'code-excerpt-meta';
+
+    const file = document.createElement('span');
+    file.className = 'file-path';
+    file.textContent = payload.file_path || '';
+    meta.appendChild(file);
+
+    if (payload.symbol_name) {
+        const sym = document.createElement('span');
+        sym.className = 'symbol-name';
+        sym.textContent = '· ' + payload.symbol_name;
+        meta.appendChild(sym);
+    }
+
+    const lines = document.createElement('span');
+    lines.className = 'line-range';
+    lines.textContent = '· L' + payload.start_line + '-L' + payload.end_line;
+    meta.appendChild(lines);
+
+    header.appendChild(meta);
+
+    if (payload.source_url) {
+        const link = document.createElement('a');
+        link.className = 'code-excerpt-source-link';
+        link.href = payload.source_url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'View source →';
+        header.appendChild(link);
+    }
+
+    wrap.appendChild(header);
+
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.className = 'language-' + (payload.language || 'plain');
+    code.textContent = payload.text || '';
+    pre.appendChild(code);
+    wrap.appendChild(pre);
+
+    list.appendChild(wrap);
+
+    if (window.Prism && window.Prism.highlightElement) {
+        window.Prism.highlightElement(code);
+    }
+}
+
+function renderFigureRef(payload) {
+    const panel = document.getElementById('figures-panel');
+    const list = document.getElementById('figures-list');
+    if (!panel || !list) return;
+    panel.style.display = '';
+
+    const card = document.createElement('div');
+    card.className = 'figure-card';
+
+    if (payload.label) {
+        const lbl = document.createElement('div');
+        lbl.className = 'figure-label';
+        lbl.textContent = payload.label;
+        card.appendChild(lbl);
+    }
+    if (payload.caption) {
+        const cap = document.createElement('div');
+        cap.className = 'figure-caption';
+        cap.textContent = payload.caption;
+        card.appendChild(cap);
+    }
+    list.appendChild(card);
+}
+
+function clearAttachmentsPanels() {
+    const codeList = document.getElementById('code-excerpts-list');
+    const figList = document.getElementById('figures-list');
+    if (codeList) codeList.innerHTML = '';
+    if (figList) figList.innerHTML = '';
+    const codePanel = document.getElementById('code-excerpts-panel');
+    const figPanel = document.getElementById('figures-panel');
+    if (codePanel) codePanel.style.display = 'none';
+    if (figPanel) figPanel.style.display = 'none';
 }

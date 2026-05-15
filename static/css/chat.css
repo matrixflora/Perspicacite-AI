@@ -918,3 +918,88 @@ details[open] .advanced-options-summary::before { content: '▼ '; }
     max-height: 90vh;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
+
+/* Sub-project C — code excerpt + figure attachment panels (2026-05-15) */
+.attachments-panel {
+    margin-top: 16px;
+    padding: 12px;
+    background: var(--surface, #1e1e1e);
+    border-radius: 8px;
+    border: 1px solid var(--border, #333);
+}
+
+.attachments-heading {
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.attachments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.code-excerpt {
+    background: #161616;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    overflow: hidden;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+}
+
+.code-excerpt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    background: #1a1a1a;
+    border-bottom: 1px solid #2a2a2a;
+    font-size: 11px;
+    color: #999;
+}
+
+.code-excerpt-meta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.code-excerpt-meta .file-path { color: #ddd; }
+.code-excerpt-meta .symbol-name { color: #6cb6ff; }
+.code-excerpt-meta .line-range { color: #888; }
+
+.code-excerpt-source-link {
+    color: #6cb6ff;
+    text-decoration: none;
+    font-size: 11px;
+}
+
+.code-excerpt-source-link:hover { text-decoration: underline; }
+
+.code-excerpt pre {
+    margin: 0;
+    padding: 10px;
+    overflow-x: auto;
+    background: transparent;
+}
+
+.figure-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+}
+
+.figure-card .figure-label {
+    font-weight: 600;
+    font-size: 12px;
+}
+
+.figure-card .figure-caption {
+    font-size: 11px;
+    color: #aaa;
+}
