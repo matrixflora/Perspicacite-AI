@@ -105,3 +105,59 @@ def _module_chunk(
         imports=imports,
     )
     return DocumentChunk(id=f"{paper.id}_code_0", text=text, metadata=md)
+
+
+_R_FUNCTION_RE = re.compile(
+    r"^(?P<name>[A-Za-z_.][A-Za-z0-9_.]*)\s*<-\s*function\s*\(",
+    re.MULTILINE,
+)
+
+
+def _chunk_r_regex(text: str, paper: Paper, *, file_path: str) -> list[DocumentChunk]:
+    """Chunk R/Rmd source by ``name <- function(`` pattern.
+
+    Each match starts a chunk that runs until the next match or EOF.
+    Falls back to a single module chunk when no functions are found.
+    """
+    matches = list(_R_FUNCTION_RE.finditer(text))
+    if not matches:
+        md = ChunkMetadata(
+            paper_id=paper.id,
+            chunk_index=0,
+            source=paper.source,
+            title=paper.title,
+            content_type="code",
+            language="r",
+            source_file_path=file_path,
+            symbol_name=file_path or "module",
+            symbol_kind="module",
+            start_line=1,
+            end_line=max(text.count("\n") + 1, 1),
+            docstring=None,
+            imports=[],
+        )
+        return [DocumentChunk(id=f"{paper.id}_code_0", text=text, metadata=md)]
+
+    chunks: list[DocumentChunk] = []
+    for i, m in enumerate(matches):
+        start_line = text[: m.start()].count("\n") + 1
+        end_char = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        end_line = text[:end_char].count("\n") + 1
+        body = text[m.start() : end_char].rstrip()
+        md = ChunkMetadata(
+            paper_id=paper.id,
+            chunk_index=i,
+            source=paper.source,
+            title=paper.title,
+            content_type="code",
+            language="r",
+            source_file_path=file_path,
+            symbol_name=m.group("name"),
+            symbol_kind="function",
+            start_line=start_line,
+            end_line=end_line,
+            docstring=None,
+            imports=[],
+        )
+        chunks.append(DocumentChunk(id=f"{paper.id}_code_{i}", text=body, metadata=md))
+    return chunks
