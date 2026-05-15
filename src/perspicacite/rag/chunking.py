@@ -76,7 +76,7 @@ class AdvancedChunkerAdapter:
             id="chunk",
             title="",
             authors=[],
-            source=PaperSource.WEB_SEARCH,
+            source=PaperSource.LOCAL,
         )
 
         doc_chunks = await chunker.chunk_text(text, paper, llm_client=self.llm_client)
