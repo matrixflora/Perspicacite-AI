@@ -279,6 +279,12 @@ Abstract:
                     paper_id=paper.id, error=str(exc),
                 )
 
+        # Sub-project B: stamp each chunk with the model that will produce its
+        # vector so downstream code can route queries through the matching
+        # embedder.  stamp_embedding_models_on_chunks returns new (frozen)
+        # chunks — the original list is not mutated.
+        chunks = stamp_embedding_models_on_chunks(chunks, embedder=self.embedding_service)
+
         # Add to vector store (embeddings generated internally)
         await self.vector_store.add_documents(
             collection=self.collection_name,
@@ -508,6 +514,52 @@ Abstract:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.cleanup()
+
+
+def stamp_embedding_models_on_chunks(
+    chunks: list["DocumentChunk"],
+    *,
+    embedder: object,  # EmbeddingProvider or TypedEmbeddingProvider — kept untyped to avoid circular imports
+) -> list["DocumentChunk"]:
+    """Return new chunks with ``metadata.embedding_model`` set to the
+    actual model that would handle each chunk's content type.
+
+    For a :class:`TypedEmbeddingProvider`, this reads the routing map
+    and picks the right inner provider's ``model_name`` per chunk.
+    For any other provider, every chunk gets ``embedder.model_name``.
+
+    The original chunks are NOT mutated (``ChunkMetadata`` is frozen);
+    new chunks are returned via ``model_copy``.
+
+    Sub-project B (2026-05-15 design): records the embedder identity
+    on each chunk so the KB can later route queries through the
+    matching model.
+    """
+    from perspicacite.llm.embeddings import TypedEmbeddingProvider
+    from perspicacite.models.documents import DocumentChunk as _DocumentChunk
+
+    if isinstance(embedder, TypedEmbeddingProvider):
+        by_type = embedder._by_type            # type: ignore[attr-defined]
+        default = embedder._default            # type: ignore[attr-defined]
+
+        def _model_for(ctype: str | None) -> str:
+            if ctype and ctype in by_type:
+                return by_type[ctype].model_name
+            return default.model_name
+    else:
+        single_name = embedder.model_name  # type: ignore[attr-defined]
+
+        def _model_for(ctype: str | None) -> str:
+            del ctype
+            return single_name
+
+    out: list[_DocumentChunk] = []
+    for c in chunks:
+        md_updated = c.metadata.model_copy(
+            update={"embedding_model": _model_for(c.metadata.content_type)}
+        )
+        out.append(_DocumentChunk(id=c.id, text=c.text, metadata=md_updated))
+    return out
 
 
 class DynamicKBFactory:
