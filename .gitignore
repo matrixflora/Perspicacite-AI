@@ -114,6 +114,7 @@ packages_to_use/
 !docs/e2e-validation-*.md
 !docs/recipe-book-*.md
 !docs/architecture-*.md
+!docs/upstream-prompts/**/*.md
 !MANUAL_QA.md
 agenticRAG_improvement_plan.txt
 
