@@ -42,6 +42,7 @@ import httpx
 
 from perspicacite.logging import get_logger
 from perspicacite.models.papers import Author, Paper, PaperSource
+from perspicacite.pipeline.arxiv_ids import parse_arxiv_doi
 
 logger = get_logger("perspicacite.pipeline.snowball")
 
@@ -154,14 +155,57 @@ async def _fetch_seed_work(
 async def openalex_id_for_doi(
     client: httpx.AsyncClient, doi: str, *, headers: dict[str, str] | None = None,
 ) -> str | None:
-    """Resolve a DOI to an OpenAlex work id (W12345...). Returns None on miss."""
+    """Resolve a DOI to an OpenAlex Work id (e.g. ``W3098425262``).
+
+    Tries ``/works/doi:<doi>`` first; if that misses and the DOI is an arXiv
+    DOI (``10.48550/arXiv.<id>``), retries via the ``ids.arxiv`` filter on
+    ``/works``. Returns None if neither path resolves.
+    """
     if headers is None:
         headers = {}
-    work = await _fetch_seed_work(client, doi, headers)
-    if not work:
+    # Primary: /works/doi:<doi>
+    url = f"{OPENALEX_BASE}/works/doi:{doi}"
+    resp: httpx.Response | None
+    try:
+        resp = await client.get(url, headers=headers, timeout=20.0)
+    except httpx.HTTPError as exc:
+        logger.warning("snowball_oa_seed_error", doi=doi, error=str(exc))
+        resp = None
+    if resp is not None and resp.status_code == 200:
+        data = resp.json() or {}
+        oa_url = data.get("id")
+        if isinstance(oa_url, str) and "/W" in oa_url:
+            return oa_url.rsplit("/", 1)[-1]
+    elif resp is not None:
+        logger.info("snowball_oa_seed_miss", doi=doi, status=resp.status_code)
+
+    # Fallback: arXiv-id filter for arXiv DOIs.
+    arxiv_id = parse_arxiv_doi(doi)
+    if arxiv_id is None:
         return None
-    full_id = work.get("id", "")
-    return full_id.rsplit("/", 1)[-1] if full_id else None
+    list_url = f"{OPENALEX_BASE}/works"
+    try:
+        resp = await client.get(
+            list_url,
+            params={"filter": f"ids.arxiv:{arxiv_id}", "per-page": "1"},
+            headers=headers,
+            timeout=20.0,
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("snowball_oa_arxiv_fallback_error", doi=doi, error=str(exc))
+        return None
+    if resp.status_code != 200:
+        logger.info(
+            "snowball_oa_arxiv_fallback_miss", doi=doi, status=resp.status_code,
+        )
+        return None
+    results = (resp.json() or {}).get("results") or []
+    if not results:
+        return None
+    oa_url = results[0].get("id")
+    if not isinstance(oa_url, str) or "/W" not in oa_url:
+        return None
+    return oa_url.rsplit("/", 1)[-1]
 
 
 async def _batch_get_works(
