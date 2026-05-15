@@ -37,6 +37,7 @@ from perspicacite.config.schema import (
     LLMProviderConfig,
     KnowledgeBaseConfig,
 )
+from perspicacite.llm.budget import BudgetTracker, set_budget_tracker
 from perspicacite.llm.client import AsyncLLMClient
 from perspicacite.llm.embeddings import create_embedding_provider
 
@@ -237,6 +238,10 @@ def make_cli_config() -> Config:
                 output_text_path="result",
                 usage_input_tokens_path="usage.input_tokens",
                 usage_output_tokens_path="usage.output_tokens",
+                # F4 (audit 2026-05-15): rich result fields.
+                cost_usd_path="total_cost_usd",
+                cache_read_tokens_path="usage.cache_read_input_tokens",
+                cache_creation_tokens_path="usage.cache_creation_input_tokens",
             ),
         },
     )
@@ -323,6 +328,11 @@ async def main_async(provider_choice: str) -> None:
 
     client = AsyncLLMClient(cfg.llm)
 
+    # F2 (audit 2026-05-15): install a budget tracker so cost data
+    # from agent_cli's total_cost_usd lands somewhere visible.
+    tracker = BudgetTracker(action="warn")
+    set_budget_tracker(tracker)
+
     print(f"=== E2E audit run: provider={provider_label} ===")
     emb = _embedding_smoke(provider_label)
     print(f"  embedding smoke: {emb}")
@@ -346,10 +356,12 @@ async def main_async(provider_choice: str) -> None:
         "provider": provider_label,
         "timestamp": ts,
         "embedding_smoke": emb,
+        "budget_summary": tracker.summary(),
         "results": results,
     }
     artefact_path.write_text(json.dumps(artefact, indent=2))
     print(f"=> wrote {artefact_path}")
+    print(f"=> budget summary: {tracker.summary()}")
 
 
 def main() -> None:

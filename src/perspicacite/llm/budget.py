@@ -116,6 +116,28 @@ class BudgetTracker:
 
         self._enforce()
 
+    def record_cost(
+        self,
+        *,
+        provider: str,
+        model: str,
+        cost_usd: float,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        """F4 (audit 2026-05-15): record a call whose USD cost is already
+        known to the caller (e.g. ``agent_cli`` reading ``total_cost_usd``
+        from the Claude CLI's JSON output).
+
+        Tokens are recorded for visibility but not used to estimate cost
+        — ``cost_usd`` is the source of truth.
+        """
+        del provider, model  # parity with .record(); unused here
+        self.tokens_in += int(input_tokens or 0)
+        self.tokens_out += int(output_tokens or 0)
+        self.usd += float(cost_usd or 0.0)
+        self._enforce()
+
     def check(self) -> None:
         """Raise if any cap is already breached. Idempotent."""
         self._enforce(checking=True)

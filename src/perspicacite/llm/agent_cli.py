@@ -168,6 +168,9 @@ class AgentCLIClient:
         output_file_flag: str | None = None,
         usage_input_tokens_path: str | None = None,
         usage_output_tokens_path: str | None = None,
+        cost_usd_path: str | None = None,
+        cache_read_tokens_path: str | None = None,
+        cache_creation_tokens_path: str | None = None,
         timeout: float = 180.0,
         cwd: str | None = None,
         env_extra: dict[str, str] | None = None,
@@ -190,6 +193,10 @@ class AgentCLIClient:
         self.output_file_flag = output_file_flag
         self.usage_input_tokens_path = usage_input_tokens_path
         self.usage_output_tokens_path = usage_output_tokens_path
+        # F4 (audit 2026-05-15): rich result fields.
+        self.cost_usd_path = cost_usd_path
+        self.cache_read_tokens_path = cache_read_tokens_path
+        self.cache_creation_tokens_path = cache_creation_tokens_path
         self.timeout = timeout
         self.cwd = cwd
         self.env_extra = dict(env_extra or {})
@@ -345,7 +352,10 @@ class AgentCLIClient:
                     pass
         else:
             raw = stdout.decode("utf-8", errors="replace").strip()
-        text, in_tokens, out_tokens = self._parse_output_with_usage(raw)
+        text, in_tokens, out_tokens, details = self._parse_output_full(raw)
+        cost_usd = details.get("cost_usd")
+        cache_read = details.get("cache_read_tokens", 0)
+        cache_create = details.get("cache_creation_tokens", 0)
 
         logger.info(
             "agent_cli_call_done",
@@ -353,6 +363,11 @@ class AgentCLIClient:
             stage=stage,
             latency_ms=int(latency_ms),
             output_len=len(text),
+            input_tokens=in_tokens,
+            output_tokens=out_tokens,
+            cost_usd=cost_usd,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_create,
         )
         # Provenance — log even though cost is $0 from the user's
         # perspective, so ``perspicacite report cost`` accounts for
@@ -373,6 +388,33 @@ class AgentCLIClient:
                 )
         except Exception:
             pass
+
+        # F2 (audit 2026-05-15): budget tracker — push usage even when
+        # no provenance collector is active. Prefer the CLI-reported
+        # exact cost (F4); fall back to PRICING_TABLE lookup keyed on
+        # (provider, model).
+        try:
+            from perspicacite.llm.budget import get_budget_tracker
+            tracker = get_budget_tracker()
+            if tracker is not None:
+                if cost_usd is not None:
+                    tracker.record_cost(
+                        provider=self.provider_label,
+                        model=resolved_model or "default",
+                        cost_usd=cost_usd,
+                        input_tokens=in_tokens,
+                        output_tokens=out_tokens,
+                    )
+                else:
+                    tracker.record(
+                        provider=self.provider_label,
+                        model=resolved_model or "default",
+                        input_tokens=in_tokens,
+                        output_tokens=out_tokens,
+                    )
+        except Exception as e:  # never break a call on bookkeeping
+            logger.debug("agent_cli_budget_record_failed", error=str(e))
+
         return text
 
     def _parse_output(self, raw: str) -> str:
@@ -428,28 +470,67 @@ class AgentCLIClient:
         - The JSON is malformed.
         - A path resolves to a non-int value.
         """
+        text, in_t, out_t, _details = self._parse_output_full(raw)
+        return text, in_t, out_t
+
+    def _parse_output_full(
+        self, raw: str
+    ) -> tuple[str, int, int, dict[str, Any]]:
+        """F4 (audit 2026-05-15): richer parse that also extracts
+        ``total_cost_usd`` and the two Anthropic cache-token paths.
+
+        Returns ``(assistant_text, input_tokens, output_tokens, details)``
+        where ``details`` is a dict with optional keys:
+
+        - ``cost_usd``  — float, if ``cost_usd_path`` resolved
+        - ``cache_read_tokens`` — int
+        - ``cache_creation_tokens`` — int
+
+        Callers that don't care can keep using ``_parse_output_with_usage``.
+        """
         text = self._parse_output(raw)
+        details: dict[str, Any] = {}
+
         if self.output_format != "json":
-            return text, 0, 0
-        if not (self.usage_input_tokens_path or self.usage_output_tokens_path):
-            return text, 0, 0
+            return text, 0, 0, details
+
+        # Even if no usage paths are configured, we might still have
+        # cost_usd / cache paths set — so don't early-return on that
+        # alone.
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
-            return text, 0, 0
+            return text, 0, 0, details
 
         def _walk_int(path: str | None) -> int:
             if not path:
                 return 0
             v = _walk_json_path(payload, path)
-            if isinstance(v, bool):  # bools are ints in Python — exclude
+            if isinstance(v, bool):
                 return 0
             if isinstance(v, int):
                 return v
             return 0
 
-        return (
-            text,
-            _walk_int(self.usage_input_tokens_path),
-            _walk_int(self.usage_output_tokens_path),
-        )
+        def _walk_float(path: str | None) -> float | None:
+            if not path:
+                return None
+            v = _walk_json_path(payload, path)
+            if isinstance(v, bool):
+                return None
+            if isinstance(v, (int, float)):
+                return float(v)
+            return None
+
+        in_t = _walk_int(self.usage_input_tokens_path)
+        out_t = _walk_int(self.usage_output_tokens_path)
+        cost = _walk_float(self.cost_usd_path)
+        if cost is not None:
+            details["cost_usd"] = cost
+        cr = _walk_int(self.cache_read_tokens_path) if self.cache_read_tokens_path else 0
+        cc = _walk_int(self.cache_creation_tokens_path) if self.cache_creation_tokens_path else 0
+        if cr:
+            details["cache_read_tokens"] = cr
+        if cc:
+            details["cache_creation_tokens"] = cc
+        return text, in_t, out_t, details
