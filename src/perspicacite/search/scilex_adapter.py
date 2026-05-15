@@ -56,11 +56,64 @@ class SciLExAdapter:
         apis: list[str] | None = None,
         article_type: str | None = None,
     ) -> list[Paper]:
-        """Search academic databases via SciLEx.
+        """Public search entry point. Retries once with normalised title
+        when a title-like query returns zero results.
 
         Returns an empty list when the optional SciLEx package isn't
         installed. Callers should check ``self.available`` first to
         distinguish "SciLEx missing" from "search returned zero hits".
+        """
+        out = await self._search_once(
+            query=query,
+            max_results=max_results,
+            year_min=year_min,
+            year_max=year_max,
+            apis=apis,
+            article_type=article_type,
+        )
+        if out:
+            return out
+
+        from perspicacite.search.title_normalize import normalize_title, is_titlelike
+        if not is_titlelike(query):
+            return out
+        normalised = normalize_title(query)
+        if normalised == query or len(normalised) < 4:
+            return out
+
+        logger.info(
+            "scilex_normalize_retry",
+            original=query,
+            normalized=normalised,
+        )
+        retried = await self._search_once(
+            query=normalised,
+            max_results=max_results,
+            year_min=year_min,
+            year_max=year_max,
+            apis=apis,
+            article_type=article_type,
+        )
+        for p in retried:
+            if p.metadata is None:
+                p.metadata = {}
+            p.metadata["search_normalized_from"] = query
+        return retried
+
+    async def _search_once(
+        self,
+        *,
+        query: str,
+        max_results: int = 20,
+        year_min: int | None = None,
+        year_max: int | None = None,
+        apis: list[str] | None = None,
+        article_type: str | None = None,
+    ) -> list[Paper]:
+        """Internal: do one actual search pass without normalize-retry.
+
+        Returns an empty list when the optional SciLEx package isn't
+        installed.
         """
         if not self._scilex_available:
             logger.warning("scilex_not_available_fallback")
