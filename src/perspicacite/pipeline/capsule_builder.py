@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from perspicacite.logging import get_logger
 from perspicacite.models.documents import ChunkMetadata
 from perspicacite.models.papers import Author, Paper, PaperSource
 from perspicacite.pipeline.chunking_dispatch import chunk_document
@@ -26,6 +27,8 @@ from perspicacite.pipeline.external.resources import (
 )
 from perspicacite.pipeline.parsers.figures import RawFigure, extract_figures
 from perspicacite.pipeline.parsers.section_splitter import split_sections
+
+logger = get_logger("perspicacite.pipeline.capsule_builder")
 
 CAPSULE_VERSION = "0.1"
 
@@ -413,10 +416,7 @@ async def _ingest_chunks(
             from perspicacite.pipeline.symbol_index import write_chunks_symbols
             write_chunks_symbols(kb_dir=_kb_dir, chunks=chunks)
         except Exception as _sym_exc:  # never break ingest on sidecar failure
-            import logging as _logging
-            _logging.getLogger("perspicacite.pipeline.capsule_builder").warning(
-                "symbol_index_write_failed: %s", str(_sym_exc)[:200],
-            )
+            logger.warning("symbol_index_write_failed", error=str(_sym_exc)[:200])
         for c in chunks:
             md = c.metadata.model_dump()
             md.update({
