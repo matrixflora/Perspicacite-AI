@@ -301,6 +301,91 @@ class FallbackEmbeddingProvider:
             return out
 
 
+class TypedEmbeddingProvider:
+    """Routes ``embed`` calls to different inner providers by content type.
+
+    Sub-project B (2026-05-15 design). When the caller passes a parallel
+    ``content_types`` list, the texts are partitioned per-type and each
+    partition is routed through the matching inner provider (or the
+    ``default`` when no specific provider is registered for that type).
+    Vectors are stitched back into the original input order.
+
+    When ``content_types`` is ``None`` the call collapses to a single
+    invocation of the default provider — identical to today's behaviour
+    for callers that don't know about per-type routing.
+
+    Cost shape: at most ``1 + len(by_content_type)`` underlying API
+    calls per ``embed`` invocation (one per inner provider that has
+    any texts assigned to it).
+    """
+
+    def __init__(
+        self,
+        *,
+        default: EmbeddingProvider,
+        by_content_type: dict[str, EmbeddingProvider],
+    ) -> None:
+        self._default = default
+        self._by_type = dict(by_content_type)
+
+    @property
+    def model_name(self) -> str:
+        # Default first, then sorted-key inner providers as "type:model".
+        suffix = "+".join(
+            f"{k}:{self._by_type[k].model_name}"
+            for k in sorted(self._by_type)
+        )
+        return self._default.model_name + (f"+{suffix}" if suffix else "")
+
+    @property
+    def dimension(self) -> int | None:
+        """Returns the common dimension when all inner providers agree,
+        else None so callers know they must split per-type at write time."""
+        dims = {self._default.dimension}
+        for p in self._by_type.values():
+            dims.add(p.dimension)
+        if len(dims) == 1:
+            return next(iter(dims))
+        return None
+
+    async def embed(
+        self,
+        texts: list[str],
+        *,
+        content_types: list[str] | None = None,
+    ) -> list[list[float]]:
+        if not texts:
+            return []
+        if content_types is None:
+            return await self._default.embed(texts)
+        if len(content_types) != len(texts):
+            raise ValueError(
+                "content_types length must match texts length: "
+                f"got {len(content_types)} vs {len(texts)}"
+            )
+
+        # Partition input by routed provider; preserve original index.
+        buckets: dict[int, tuple[EmbeddingProvider, list[int], list[str]]] = {}
+        for i, (t, ctype) in enumerate(zip(texts, content_types)):
+            prov = self._by_type.get(ctype, self._default)
+            key = id(prov)
+            if key not in buckets:
+                buckets[key] = (prov, [], [])
+            buckets[key][1].append(i)
+            buckets[key][2].append(t)
+
+        # Run each bucket through its provider.
+        out: list[list[float] | None] = [None] * len(texts)
+        for prov, indices, batch_texts in buckets.values():
+            vecs = await prov.embed(batch_texts)
+            for idx, v in zip(indices, vecs):
+                out[idx] = v
+
+        if any(v is None for v in out):
+            raise RuntimeError("internal: TypedEmbeddingProvider left a None slot")
+        return out  # type: ignore[return-value]
+
+
 class CachedEmbeddingProvider:
     """Wraps an :class:`EmbeddingProvider`, consulting an on-disk cache
     before forwarding uncached texts to the inner provider.
