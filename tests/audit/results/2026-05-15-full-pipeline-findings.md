@@ -293,3 +293,27 @@ Sorted by impact-per-effort:
 - The `SourceReference.authors: str` schema mismatch is a five-minute
   Pydantic change that pays for itself the first time someone tries to
   count authors on a result.
+
+---
+
+## Update — 2026-05-15 evening: bug-fix batch landed
+
+All six items from the priority queue (findings #1–#5, #7) shipped on
+`main` via the subagent-driven plan
+`docs/superpowers/plans/2026-05-15-audit-bug-fixes-batch.md`.
+
+| Commit | Finding | Outcome |
+|---|---|---|
+| `c0743ab` | #1 ProvenanceStore.init_db | Standalone init works; `save()` now escalates `OperationalError`. Confirmed in re-run: audit harness now logs `provenance_save_schema_error` at error level instead of silently dropping. |
+| `ddb5335` | #2 SourceReference.authors → list[str] | Field is `list[str]`; validator coerces None / list / str / "and"-separated. 9 new tests + 24 existing pass. |
+| `ddf4d4a` | #3 `_fetch_seed_work` arXiv-id fallback | Code wired (audit log shows `snowball_oa_arxiv_fallback_miss` — fallback is now attempted). **Follow-up:** OpenAlex returns 400 on `filter=ids.arxiv:<id>` in production, despite the unit test mocks; the same syntax bug also exists in the prior batch's `openalex_id_for_doi`. Needs a small investigation of the right OpenAlex filter syntax for arXiv. |
+| `775ba14` | #5 PaperSource enum | OPENALEX / PUBMED / ARXIV / CROSSREF added; PubMed ingest migrated. |
+| `6fee4bc` | #4 BudgetTracker kwargs | `max_tokens` (combined cap) + `max_cost_usd` (alias) added without breaking existing fields. |
+| `48def77` | #7 KBRouteHit.__iter__ | Destructuring `for name, score in route_kbs(...)` works. |
+
+**Test totals after batch:** 27 new unit tests, 27/27 passing. 6 + 1 = 7 pre-existing failures (`test_local_docs_capsule_reader_route`, `test_mcp_multi_kb_passthrough`, `test_provenance_engine_wiring`, `test_zotero_ingest_worker`) are unchanged — confirmed identical before/after via stash diff.
+
+**Remaining queue:**
+- 🟡 **OpenAlex `ids.arxiv` filter syntax** (surfaced by the audit re-run, not in the original queue). Investigate the correct filter shape for arXiv preprints — `openalex_id_for_doi` also misses in production for the same reason.
+- ⏭ **P3 — Semantic Scholar API as cite-graph alternative for arXiv papers** (separate spec, larger work — out of scope).
+- ⏭ **Threading explicit PaperSource through every ingest adapter** (deliberate scope reduction in this batch).
