@@ -189,3 +189,26 @@ def test_search_to_kb_ingest_dois_uses_openalex():
     assert "source=PaperSource.WEB_SEARCH" not in src, (
         "pipeline/search_to_kb.py must not default to WEB_SEARCH"
     )
+
+
+def test_orchestrator_url_prefetch_uses_correct_enums():
+    """rag/agentic/orchestrator._try_resolve_url has two Paper-source
+    sites:
+
+    - Unified-pipeline branch (line ~1142) → OPENALEX
+    - S2 fallback branch (line ~1174) → SEMANTIC_SCHOLAR
+
+    Source scan keeps both pinned."""
+    import inspect
+    from perspicacite.rag.agentic import orchestrator
+
+    src = inspect.getsource(orchestrator)
+    assert "source=PaperSource.OPENALEX" in src, (
+        "orchestrator URL prefetch via unified pipeline must use OPENALEX"
+    )
+    assert "source=PaperSource.SEMANTIC_SCHOLAR" in src, (
+        "orchestrator URL prefetch S2 fallback must use SEMANTIC_SCHOLAR"
+    )
+    assert "source=PaperSource.WEB_SEARCH" not in src, (
+        "orchestrator must not default to WEB_SEARCH"
+    )

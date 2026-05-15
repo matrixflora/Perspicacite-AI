@@ -188,7 +188,7 @@ class TestTryResolveUrl:
         result = await orch._try_resolve_url("https://arxiv.org/html/2604.06788v1")
         assert captured["doi"] == "10.48550/arXiv.2604.06788"
         assert result is not None
-        assert result["source"] == PaperSource.WEB_SEARCH
+        assert result["source"] == PaperSource.OPENALEX
         assert result["relevance_score"] == 5
         assert result["title"] == "Test Paper Title"
         assert result["doi"] == "10.48550/arXiv.2604.06788"
@@ -236,7 +236,7 @@ class TestTryResolveUrl:
         result = await orch._try_resolve_url("https://doi.org/10.1038/s41586-023-12345")
         assert captured["doi"] == "10.1038/s41586-023-12345"
         assert result is not None
-        assert result["source"] == PaperSource.WEB_SEARCH
+        assert result["source"] == PaperSource.OPENALEX
         assert result["doi"] == "10.1038/s41586-023-12345"
         assert result["title"] == "DOI Paper Title"
         assert result["full_text"] == "Full text from DOI paper."
