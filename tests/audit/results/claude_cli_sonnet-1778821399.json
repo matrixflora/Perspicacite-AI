@@ -1,0 +1,47 @@
+{
+  "provider": "claude_cli_sonnet",
+  "timestamp": 1778821399,
+  "embedding_smoke": {
+    "provider": "claude_cli_sonnet",
+    "ok": true,
+    "model_name": "all-MiniLM-L6-v2",
+    "dimension": 384
+  },
+  "budget_summary": {
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "usd": 0.0,
+    "has_unknown_costs": false,
+    "breaches": []
+  },
+  "results": [
+    {
+      "example_id": "ex_a",
+      "example_name": "Retrieval-Augmented Generation",
+      "query": "How does retrieval-augmented generation reduce the need for parametric memory in language models, and what are the main architectural variants?",
+      "provider": "claude_cli_sonnet",
+      "n_context_papers": 3,
+      "ok": false,
+      "error": "RuntimeError: claude_cli: CLI exited 1: ",
+      "elapsed_s": 8.232,
+      "output": null,
+      "output_chars": 0,
+      "system_prompt": "You are a careful research synthesizer. Given a question and a set of paper abstracts, produce a 4-6 paragraph synthesis that answers the question. Cite every claim by DOI in square brackets, e.g. [10.0001/foo]. If the abstracts are insufficient to answer, say so explicitly.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/holobiomicslab/git/Perspicacite-AI/tests/audit/run_e2e_audit.py\", line 281, in run_example\n    out = await client.complete(\n          ^^^^^^^^^^^^^^^^^^^^^^\n    ...<8 lines>...\n    )\n    ^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/asyncio/__init__.py\", line 193, in async_wrapped\n    return await copy(fn, *args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/asyncio/__init__.py\", line 112, in __call__\n    do = await self.iter(retry_state=retry_state)\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/asyncio/__init__.py\", line 157, in iter\n    result = await action(retry_state)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/_utils.py\", line 111, in inner\n    return call(*args, **kwargs)\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/__init__.py\", line 413, in exc_check\n    raise retry_exc.reraise()\n          ~~~~~~~~~~~~~~~~~^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/__init__.py\", line 184, in reraise\n    raise self.last_attempt.result()\n          ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/concurrent/futures/_base.py\", line 449, in result\n    return self.__get_result()\n           ~~~~~~~~~~~~~~~~~^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/concurrent/futures/_base.py\", line 401, in __get_result\n    raise self._exception\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/asyncio/__init__.py\", line 116, in __call__\n    result = await fn(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/git/Perspicacite-AI/src/perspicacite/llm/client.py\", line 541, in complete\n    content = await cli.complete(\n              ^^^^^^^^^^^^^^^^^^^\n    ...<3 lines>...\n    )\n    ^\n  File \"/Users/holobiomicslab/git/Perspicacite-AI/src/perspicacite/llm/agent_cli.py\", line 337, in complete\n    raise RuntimeError(\n        f\"{self.provider_label}: CLI exited {proc.returncode}: {err}\"\n    )\nRuntimeError: claude_cli: CLI exited 1: \n"
+    },
+    {
+      "example_id": "ex_b",
+      "example_name": "Protein structure prediction",
+      "query": "Compare AlphaFold-2, RoseTTAFold, and ESMFold along the axes of speed, accuracy, and reliance on multiple sequence alignments.",
+      "provider": "claude_cli_sonnet",
+      "n_context_papers": 3,
+      "ok": false,
+      "error": "RuntimeError: claude_cli: CLI exited 1: ",
+      "elapsed_s": 8.452,
+      "output": null,
+      "output_chars": 0,
+      "system_prompt": "You are a careful research synthesizer. Given a question and a set of paper abstracts, produce a 4-6 paragraph synthesis that answers the question. Cite every claim by DOI in square brackets, e.g. [10.0001/foo]. If the abstracts are insufficient to answer, say so explicitly.",
+      "traceback": "Traceback (most recent call last):\n  File \"/Users/holobiomicslab/git/Perspicacite-AI/tests/audit/run_e2e_audit.py\", line 281, in run_example\n    out = await client.complete(\n          ^^^^^^^^^^^^^^^^^^^^^^\n    ...<8 lines>...\n    )\n    ^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/asyncio/__init__.py\", line 193, in async_wrapped\n    return await copy(fn, *args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/asyncio/__init__.py\", line 112, in __call__\n    do = await self.iter(retry_state=retry_state)\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/asyncio/__init__.py\", line 157, in iter\n    result = await action(retry_state)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/_utils.py\", line 111, in inner\n    return call(*args, **kwargs)\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/__init__.py\", line 413, in exc_check\n    raise retry_exc.reraise()\n          ~~~~~~~~~~~~~~~~~^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/__init__.py\", line 184, in reraise\n    raise self.last_attempt.result()\n          ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/concurrent/futures/_base.py\", line 449, in result\n    return self.__get_result()\n           ~~~~~~~~~~~~~~~~~^^\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/concurrent/futures/_base.py\", line 401, in __get_result\n    raise self._exception\n  File \"/Users/holobiomicslab/miniconda3/lib/python3.13/site-packages/tenacity/asyncio/__init__.py\", line 116, in __call__\n    result = await fn(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/holobiomicslab/git/Perspicacite-AI/src/perspicacite/llm/client.py\", line 541, in complete\n    content = await cli.complete(\n              ^^^^^^^^^^^^^^^^^^^\n    ...<3 lines>...\n    )\n    ^\n  File \"/Users/holobiomicslab/git/Perspicacite-AI/src/perspicacite/llm/agent_cli.py\", line 337, in complete\n    raise RuntimeError(\n        f\"{self.provider_label}: CLI exited {proc.returncode}: {err}\"\n    )\nRuntimeError: claude_cli: CLI exited 1: \n"
+    }
+  ]
+}
