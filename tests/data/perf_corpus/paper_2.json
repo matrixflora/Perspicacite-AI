@@ -1,0 +1,9 @@
+{
+  "id": "doi:10.5555/perf-002",
+  "doi": "10.5555/perf-002",
+  "title": "Retrieval-augmented generation under noisy citation graphs",
+  "authors": [{"name": "B. Cite", "family": "Cite"}],
+  "year": 2024,
+  "abstract": "We study retrieval-augmented generation pipelines where the citation graph used to expand candidate context is itself noisy: stale, partially deleted, or contaminated by retracted papers. Across three benchmarks we observe that BM25 hybridised with dense retrieval recovers most of the loss, but that citation-expansion adds 8-12 percentage points of factuality on multi-hop questions when filtered against a recent retraction list. We propose a lightweight provenance audit step that drops candidate references contributed by retracted seeds.",
+  "full_text": "Section 1: Introduction. RAG systems lean heavily on the citation graph for context expansion, but the graph is dirty in practice. Section 2: Setup. Three benchmarks: HotpotQA, MuSiQue, and a custom biomedical multi-hop set. Section 3: Methods. Dense retrievers use a 768-dim BGE encoder; sparse uses BM25 with k1=1.2. We hybridise via reciprocal rank fusion. Section 4: Results. Hybrid retrieval lifts answer-exact-match by 4 points over dense alone. Citation expansion adds another 8-12 points on multi-hop, but only when retracted seeds are filtered. Section 5: Provenance audit. We describe a 20-line filter step against Retraction Watch. Section 6: Discussion. Retracted seeds contribute a long tail of contaminated context that propagates through 2-hop neighbourhoods. Section 7: Limitations. Our filter relies on Retraction Watch coverage which is patchy outside biomedicine. Section 8: Conclusion. Citation-expansion is worth it once seeds are audited. Appendix A: Hyperparameter sweep. Appendix B: Filter source. Appendix C: Error analysis."
+}

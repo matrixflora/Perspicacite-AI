@@ -1,0 +1,9 @@
+{
+  "id": "doi:10.5555/perf-005",
+  "doi": "10.5555/perf-005",
+  "title": "Reproducibility crisis in benchmark-driven NLP: a meta-analysis of 312 papers",
+  "authors": [{"name": "E. Meta", "family": "Meta"}],
+  "year": 2024,
+  "abstract": "We meta-analyse 312 NLP papers published at ACL, EMNLP, and NAACL in 2022-2023 that report headline numbers on at least one standard benchmark. 41% of attempted re-runs deviate by more than 0.5 absolute points from the published number; 12% deviate by more than 2 points. We trace the deviations to four root causes: undocumented data filtering, undisclosed hyperparameter sweeps, mismatched evaluation scripts, and silent dependency updates. We release a reproducibility-tier rubric.",
+  "full_text": "Section 1: Motivation. Benchmark numbers drive citations and grants, but their reproducibility is rarely audited at scale. Section 2: Methodology. We sampled 312 papers stratified by venue, then attempted full re-runs from the released artifacts. Each re-run was triple-checked for environment hygiene. Section 3: Findings. 41% deviation >0.5 abs; 12% deviation >2 abs; 4 root causes traced. The largest contributor is data-filtering steps documented only in unreleased preprocessing scripts. Section 4: Recommendations. Authors should publish (a) the exact filter scripts, (b) the seed grid, (c) the evaluation script hash, (d) the dependency lock file. Section 5: A reproducibility rubric. We propose three tiers: bronze (re-runs within 0.5pt), silver (within 0.2pt), gold (bit-exact). Section 6: Limitations. We could not re-run 47 papers due to missing model weights. Section 7: Related work. Earlier crises in psychology and biomedicine. Section 8: Future work. A continuous-integration service to badge reproducible artifacts. Appendix A: Per-paper deviation table. Appendix B: Tier rubric spec. Appendix C: Re-run failure modes."
+}

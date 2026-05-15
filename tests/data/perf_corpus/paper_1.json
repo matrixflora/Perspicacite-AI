@@ -1,0 +1,9 @@
+{
+  "id": "doi:10.5555/perf-001",
+  "doi": "10.5555/perf-001",
+  "title": "Energy-efficient transformer inference on consumer GPUs",
+  "authors": [{"name": "A. Hardware", "family": "Hardware"}],
+  "year": 2024,
+  "abstract": "We benchmark inference latency and energy use across mixed-precision attention kernels on consumer GPUs. Our analysis covers FP16, BF16, and INT8 paths, focusing on the cost of softmax stability tricks and KV-cache reuse. Across seven model sizes we find that the dominant energy term is HBM traffic and that fused-kernel attention reduces total joules per generated token by 28-41% with no measurable quality loss on standard benchmarks.",
+  "full_text": "Section 1: Introduction. Large-language-model inference on consumer hardware is bottlenecked by memory bandwidth, not arithmetic. We catalogue ten attention-kernel variants and measure each at three sequence lengths. Section 2: Methods. We instrument inference using NVIDIA's nsight-compute and a custom power-sampling harness sampled at 1 kHz. Section 3: Results. Fused softmax with online normalisation reduces HBM traffic 1.8x. KV-cache eviction policies dominate latency at sequence length >4k. Section 4: Discussion. The energy gap between FP16 and INT8 narrows once weights are streamed from disk rather than resident in VRAM. Section 5: Related work. Prior measurements focused on data-centre GPUs; consumer cards exhibit different thermal-throttle curves. Section 6: Future work. We plan to extend this to mixed CPU/GPU pipelines and to quantify the carbon footprint per query under realistic geographic mixes. Section 7: Conclusion. Inference efficiency on consumer GPUs is dominated by memory traffic and kernel fusion; arithmetic precision is a secondary lever. Appendix A: Hyperparameter grid. Appendix B: Raw timing tables. Appendix C: Reproducibility checklist."
+}

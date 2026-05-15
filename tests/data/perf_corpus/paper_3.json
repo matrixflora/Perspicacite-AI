@@ -1,0 +1,9 @@
+{
+  "id": "doi:10.5555/perf-003",
+  "doi": "10.5555/perf-003",
+  "title": "Differential privacy in vector databases for clinical text retrieval",
+  "authors": [{"name": "C. Privacy", "family": "Privacy"}],
+  "year": 2023,
+  "abstract": "Vector databases storing embeddings of clinical notes leak sensitive information through nearest-neighbour membership inference. We quantify the leakage on the MIMIC-III discharge summaries corpus, show that the leakage rate scales with embedding dimensionality, and propose a Gaussian-mechanism perturbation applied at index time that yields (epsilon=1.0) DP with under 6% recall loss at top-10.",
+  "full_text": "Section 1: Background. Clinical NLP increasingly relies on vector search over de-identified notes. Section 2: Threat model. We assume an adversary with query access to the index and partial knowledge of the corpus. Section 3: Methods. We attack a BGE-large index over 50k MIMIC discharge summaries with a membership-inference probe. Section 4: Results. Membership inference reaches AUC 0.71 on the unperturbed index. Adding Gaussian noise at index time with epsilon=1.0 brings AUC to 0.55 (near random) while keeping recall@10 within 6% of baseline. Section 5: Compute cost. The noise application adds 2.1% wall time at index construction. Section 6: Related work. Prior DP-RAG work focused on query-time mechanisms; we argue index-time is the correct intervention point. Section 7: Limitations. Embedding choice still matters; encoder model itself can leak. Section 8: Future work. Combine index-time noise with encoder fine-tuning under DP-SGD. Appendix A: Membership-inference attack code. Appendix B: Privacy accounting derivation."
+}
