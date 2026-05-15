@@ -88,9 +88,17 @@ def _chunk_by_tokens(
             chunks.append(chunk)
             chunk_index += 1
 
+        # Once a chunk reaches the end of the text, we're done — no
+        # need to emit redundant trailing chunks via overlap math.
+        if end >= len(text):
+            break
+
         next_start = end - overlap_chars
-        # Ensure forward progress: start must strictly advance.
-        start = max(next_start, start + 1) if next_start <= start else next_start
+        # Ensure forward progress: advance by at least half a chunk so
+        # that pathological configs (overlap >= chunk_size) don't produce
+        # hundreds of 1-char-step near-duplicate chunks.
+        min_step = max(char_per_chunk // 2, 1)
+        start = max(next_start, start + min_step)
 
     return chunks
 
