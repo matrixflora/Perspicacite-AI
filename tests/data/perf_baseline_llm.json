@@ -1,0 +1,9 @@
+{
+  "provider": "claude_cli",
+  "synthesis_seconds_avg": 3.807,
+  "synthesis_seconds_min": 3.27,
+  "synthesis_seconds_max": 4.344,
+  "output_chars_avg": 993,
+  "git_sha": "74283bc",
+  "timestamp": 1778821317.788678
+}

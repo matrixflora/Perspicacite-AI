@@ -251,6 +251,14 @@ class FallbackEmbeddingProvider:
         self.primary = primary
         self.fallback = fallback
         self._dimension = primary.dimension
+        # F8 (audit 2026-05-15): track which inner provider actually
+        # served the latest embed() call. KB-metadata writers should
+        # use ``last_used_model`` rather than the legacy "A|B" tag —
+        # vectors from the primary path are dimension/topology-
+        # incompatible with vectors from the fallback, so recording
+        # both as a single string is a latent footgun.
+        self._last_used_model: str = primary.model_name
+        self._fallback_triggered_count: int = 0
 
     @property
     def dimension(self) -> int:
@@ -260,18 +268,37 @@ class FallbackEmbeddingProvider:
     def model_name(self) -> str:
         return f"{self.primary.model_name}|{self.fallback.model_name}"
 
+    @property
+    def last_used_model(self) -> str:
+        """F8: actual model that served the most-recent embed() call.
+
+        Use this for KB-metadata storage. ``model_name`` keeps the
+        legacy "A|B" syntax for back-compat with existing rows.
+        """
+        return self._last_used_model
+
+    @property
+    def fallback_triggered_count(self) -> int:
+        return self._fallback_triggered_count
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed with fallback."""
         try:
-            return await self.primary.embed(texts)
+            out = await self.primary.embed(texts)
+            self._last_used_model = self.primary.model_name
+            return out
         except Exception as e:
+            self._fallback_triggered_count += 1
             logger.warning(
                 "primary_embedding_failed",
                 primary=self.primary.model_name,
                 fallback=self.fallback.model_name,
                 error=str(e),
+                fallback_triggered_count=self._fallback_triggered_count,
             )
-            return await self.fallback.embed(texts)
+            out = await self.fallback.embed(texts)
+            self._last_used_model = self.fallback.model_name
+            return out
 
 
 class CachedEmbeddingProvider:
