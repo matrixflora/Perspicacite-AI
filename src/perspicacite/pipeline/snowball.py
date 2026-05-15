@@ -42,7 +42,7 @@ import httpx
 
 from perspicacite.logging import get_logger
 from perspicacite.models.papers import Author, Paper, PaperSource
-from perspicacite.pipeline.arxiv_ids import parse_arxiv_doi
+from perspicacite.pipeline.arxiv_ids import parse_arxiv_doi, resolve_arxiv_title
 
 logger = get_logger("perspicacite.pipeline.snowball")
 
@@ -136,34 +136,34 @@ def _paper_from_oa_work(work: dict[str, Any]) -> tuple[str | None, dict[str, Any
     return doi, fields
 
 
-async def _fetch_seed_work(
+async def _arxiv_doi_to_seed_work(
     client: httpx.AsyncClient, doi: str, headers: dict[str, str],
 ) -> dict[str, Any] | None:
-    """One OpenAlex work record for a single DOI, or None on miss.
+    """arXiv-DOI fallback: resolve the arxiv id to a title, then query
+    OpenAlex ``filter=title.search:"<title>"`` for the Work.
 
-    Falls back to the ``ids.arxiv`` filter when /works/doi:... 404s on
-    an arXiv DOI — mirrors :func:`openalex_id_for_doi` (audit
-    2026-05-15 finding #3).
+    OpenAlex has no ``ids.arxiv`` filter (the originally-shipped fix
+    used that; it returns HTTP 400 — confirmed in the 2026-05-15 audit
+    re-run). The arXiv API gives us a clean title; OpenAlex's exact-
+    phrase title search returns a single high-confidence hit for arXiv
+    preprints. Returns ``None`` on any miss in the chain.
     """
-    url = f"{OPENALEX_BASE}/works/doi:{doi}"
-    try:
-        r = await client.get(url, headers=headers, timeout=20.0)
-        if r.status_code == 200:
-            return r.json()
-        logger.info("snowball_oa_seed_miss", doi=doi, status=r.status_code)
-    except httpx.HTTPError as exc:
-        logger.warning("snowball_oa_seed_error", doi=doi, error=str(exc))
-        return None
-
-    # Fallback: arXiv-id filter for arXiv DOIs.
     arxiv_id = parse_arxiv_doi(doi)
     if arxiv_id is None:
         return None
+    title = await resolve_arxiv_title(arxiv_id, client)
+    if not title:
+        logger.info("snowball_oa_arxiv_no_title", doi=doi, arxiv_id=arxiv_id)
+        return None
     list_url = f"{OPENALEX_BASE}/works"
+    # Quote the title so OpenAlex performs an exact-phrase search
+    # (otherwise "Attention Is All You Need" matches 93+ derivative
+    # titles).
+    quoted = f'"{title}"'
     try:
         r = await client.get(
             list_url,
-            params={"filter": f"ids.arxiv:{arxiv_id}", "per-page": "1"},
+            params={"filter": f"title.search:{quoted}", "per-page": "1"},
             headers=headers,
             timeout=20.0,
         )
@@ -179,57 +179,62 @@ async def _fetch_seed_work(
     return results[0]
 
 
+async def _fetch_seed_work(
+    client: httpx.AsyncClient, doi: str, headers: dict[str, str],
+) -> dict[str, Any] | None:
+    """One OpenAlex work record for a single DOI, or None on miss.
+
+    Falls back to the arXiv-title.search chain when ``/works/doi:...``
+    404s on an arXiv DOI (audit 2026-05-15 finding #3 + 2026-05-15
+    re-run discovery: OpenAlex has no ``ids.arxiv`` filter; title.search
+    on the arXiv-API-resolved title is the working chain).
+    """
+    url = f"{OPENALEX_BASE}/works/doi:{doi}"
+    try:
+        r = await client.get(url, headers=headers, timeout=20.0)
+        if r.status_code == 200:
+            return r.json()
+        logger.info("snowball_oa_seed_miss", doi=doi, status=r.status_code)
+    except httpx.HTTPError as exc:
+        logger.warning("snowball_oa_seed_error", doi=doi, error=str(exc))
+        return None
+
+    return await _arxiv_doi_to_seed_work(client, doi, headers)
+
+
 async def openalex_id_for_doi(
     client: httpx.AsyncClient, doi: str, *, headers: dict[str, str] | None = None,
 ) -> str | None:
     """Resolve a DOI to an OpenAlex Work id (e.g. ``W3098425262``).
 
-    Tries ``/works/doi:<doi>`` first; if that misses and the DOI is an arXiv
-    DOI (``10.48550/arXiv.<id>``), retries via the ``ids.arxiv`` filter on
-    ``/works``. Returns None if neither path resolves.
+    Tries ``/works/doi:<doi>`` first; if that misses and the DOI is an
+    arXiv DOI (``10.48550/arXiv.<id>``), uses the arXiv-API-resolved
+    title to query OpenAlex ``filter=title.search:"<title>"`` (audit
+    2026-05-15 re-run discovery: OpenAlex has no ``ids.arxiv`` filter).
+    Returns None if neither path resolves.
     """
     if headers is None:
         headers = {}
     # Primary: /works/doi:<doi>
     url = f"{OPENALEX_BASE}/works/doi:{doi}"
-    resp: httpx.Response | None
     try:
         resp = await client.get(url, headers=headers, timeout=20.0)
     except httpx.HTTPError as exc:
         logger.warning("snowball_oa_seed_error", doi=doi, error=str(exc))
-        resp = None
-    if resp is not None and resp.status_code == 200:
+        return None
+    if resp.status_code == 200:
         data = resp.json() or {}
         oa_url = data.get("id")
         if isinstance(oa_url, str) and "/W" in oa_url:
             return oa_url.rsplit("/", 1)[-1]
-    elif resp is not None:
+    else:
         logger.info("snowball_oa_seed_miss", doi=doi, status=resp.status_code)
 
-    # Fallback: arXiv-id filter for arXiv DOIs.
-    arxiv_id = parse_arxiv_doi(doi)
-    if arxiv_id is None:
+    # Fallback: arXiv title.search chain.
+    seed_work = await _arxiv_doi_to_seed_work(client, doi, headers)
+    if seed_work is None:
         return None
-    list_url = f"{OPENALEX_BASE}/works"
-    try:
-        resp = await client.get(
-            list_url,
-            params={"filter": f"ids.arxiv:{arxiv_id}", "per-page": "1"},
-            headers=headers,
-            timeout=20.0,
-        )
-    except httpx.HTTPError as exc:
-        logger.warning("snowball_oa_arxiv_fallback_error", doi=doi, error=str(exc))
-        return None
-    if resp.status_code != 200:
-        logger.info(
-            "snowball_oa_arxiv_fallback_miss", doi=doi, status=resp.status_code,
-        )
-        return None
-    results = (resp.json() or {}).get("results") or []
-    if not results:
-        return None
-    oa_url = results[0].get("id")
+    oa_url = seed_work.get("id")
     if not isinstance(oa_url, str) or "/W" not in oa_url:
         return None
     return oa_url.rsplit("/", 1)[-1]
