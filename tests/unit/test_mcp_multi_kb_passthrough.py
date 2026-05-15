@@ -20,6 +20,20 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+
+def _real_config() -> MagicMock:
+    """Config mock with real string fields that pass RAGRequest validation.
+
+    Uses MagicMock (not SimpleNamespace) so that mode-handler __init__ calls
+    like ``config.knowledge_base.default_top_k`` auto-create attrs rather than
+    raising AttributeError. Only the llm fields are set to real strings because
+    those are the only ones RAGRequest validates as ``str``.
+    """
+    cfg = MagicMock()
+    cfg.llm.default_provider = "deepseek"
+    cfg.llm.default_model = "deepseek-chat"
+    return cfg
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -43,7 +57,7 @@ async def test_generate_report_passes_kb_names_to_rag_request() -> None:
 
     state = MCPState()
     state.initialized = True
-    state.config = MagicMock()
+    state.config = _real_config()
     state.llm_client = MagicMock()
     state.embedding_provider = MagicMock()
     state.vector_store = MagicMock()
@@ -129,7 +143,7 @@ async def test_generate_report_single_kb_names_collapses_to_kb_name() -> None:
 
     state = MCPState()
     state.initialized = True
-    state.config = MagicMock()
+    state.config = _real_config()
     state.llm_client = MagicMock()
     state.embedding_provider = MagicMock()
     state.vector_store = MagicMock()
@@ -330,7 +344,7 @@ async def test_search_knowledge_base_single_kb_names_uses_single_kb_path() -> No
             self.collection_name = None
             self._initialized = False
 
-        async def search(self, query: str, top_k: int = 5):
+        async def search(self, query: str, top_k: int = 5, filters=None):
             captured_collection["collection_name"] = self.collection_name
             return []
 
