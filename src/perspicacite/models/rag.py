@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from perspicacite.models.search import SearchFilters
 
@@ -31,7 +31,7 @@ class SourceReference(BaseModel):
     """Reference to a source paper."""
 
     title: str
-    authors: Optional[str] = None
+    authors: list[str] = Field(default_factory=list)
     year: Optional[int] = None
     doi: Optional[str] = None
     url: Optional[str] = None
@@ -39,15 +39,42 @@ class SourceReference(BaseModel):
     chunk_text: Optional[str] = None
     kb_name: Optional[str] = None
 
+    @field_validator("authors", mode="before")
+    @classmethod
+    def _coerce_authors(cls, v):
+        """Accept str (legacy), None, or list — always store list[str].
+
+        Audit 2026-05-15 finding #2: the field was previously
+        ``Optional[str]`` which broke construction from upstream
+        ``normalize_paper_dict`` (returns ``list[str]``). This validator
+        keeps backward compat for the comma-joined-string call sites
+        that pre-dated the fix.
+        """
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(a).strip() for a in v if str(a).strip()]
+        if isinstance(v, str):
+            # Split on " and " (BibTeX-style) then commas.
+            parts: list[str] = []
+            for chunk in v.replace(" and ", ",").split(","):
+                chunk = chunk.strip()
+                if chunk:
+                    parts.append(chunk)
+            return parts
+        return [str(v)]
+
     def __repr__(self) -> str:
         return f"SourceReference(title='{self.title[:40]}...', score={self.relevance_score:.2f})"
 
     def to_citation(self, style: str = "nature") -> str:
         """Format as citation string."""
-        author_part = self.authors or "Unknown"
-        if "," in author_part:
-            # Multiple authors, use et al.
-            author_part = author_part.split(",")[0].strip() + " et al."
+        if not self.authors:
+            author_part = "Unknown"
+        elif len(self.authors) == 1:
+            author_part = self.authors[0]
+        else:
+            author_part = f"{self.authors[0]} et al."
         year_part = f", {self.year}" if self.year else ""
         return f"[{author_part}{year_part}]"
 
