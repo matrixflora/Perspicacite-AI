@@ -30,13 +30,53 @@ references.bib" get scored on real content.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, asdict
 from typing import Any
 
+import bm25s
+
 from perspicacite.logging import get_logger
 
 logger = get_logger("perspicacite.rag.kb_router")
+
+
+# (KB-router-scope BM25 index cache. Keys: corpus fingerprint.)
+# Rebuilding a Lucene-style BM25 index on every call is wasteful when the
+# corpus (per-KB context strings) only changes when a KB is created or
+# edited. We cache by a stable sha1 over the sorted (name, text) pairs so
+# any in-place mutation invalidates automatically.
+_BM25_CACHE: dict[str, tuple[bm25s.BM25, list[str], list[list[str]]]] = {}
+
+
+def _corpus_fingerprint(kb_contexts: dict[str, str]) -> str:
+    """Stable fingerprint of (name, text) pairs — invalidates cache on edits."""
+    h = hashlib.sha1()
+    for name in sorted(kb_contexts):
+        h.update(name.encode("utf-8"))
+        h.update(b"\x00")
+        h.update(kb_contexts[name].encode("utf-8"))
+        h.update(b"\x01")
+    return h.hexdigest()
+
+
+def _bm25_cache_clear() -> None:
+    """Clear the in-memory KB-router BM25 cache (used by tests)."""
+    _BM25_CACHE.clear()
+
+
+def _build_bm25_index(corpus_tokens: list[list[str]], *, fingerprint: str) -> bm25s.BM25:
+    """Build a Lucene-style BM25 index over already-tokenised corpus docs.
+
+    ``fingerprint`` is accepted for symmetry with the cache layer and to
+    let tests monkey-patch this builder while keeping the call shape stable.
+    """
+    # ``show_progress=False`` silences bm25s' tqdm bars — they're noise in
+    # CLI/MCP output and useless on 2–20-doc KB-routing corpora.
+    retriever = bm25s.BM25(method="lucene")
+    retriever.index(corpus_tokens, show_progress=False)
+    return retriever
 
 
 @dataclass
@@ -112,38 +152,70 @@ def _tokenize(text: str) -> list[str]:
     return [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z\-]+", text) if len(w) > 1]
 
 
+def _bm25_score_corpus(
+    *,
+    kb_names: list[str],
+    corpus_tokens: list[list[str]],
+    query_tokens: list[str],
+    fingerprint: str,
+) -> list[float]:
+    """Run a single-query bm25s retrieval and return per-doc normalised scores.
+
+    The returned list is aligned with ``kb_names`` and normalised to [0, 1]
+    by dividing by the per-batch max, with a unique-token-overlap fallback
+    when every BM25 score is 0 (small-corpus IDF collapse). Looks up — and
+    populates on miss — the ``_BM25_CACHE``.
+    """
+    # Guard: bm25s also misbehaves on empty docs.
+    corpus_tokens = [t or ["__empty__"] for t in corpus_tokens]
+    cached = _BM25_CACHE.get(fingerprint)
+    if cached is None:
+        retriever = _build_bm25_index(corpus_tokens, fingerprint=fingerprint)
+        _BM25_CACHE[fingerprint] = (retriever, list(kb_names), corpus_tokens)
+    else:
+        retriever, _cached_names, corpus_tokens = cached
+
+    q_tokens = query_tokens or ["__empty__"]
+    n_docs = len(kb_names)
+    k = max(1, n_docs)
+    # bm25s.retrieve returns (results_2d, scores_2d). results_2d[0] is the row
+    # of top-k document indices for our single query; scores_2d[0] are the
+    # matching scores. We re-key them back to the original kb_names order.
+    results, scores_2d = retriever.retrieve([q_tokens], k=k, show_progress=False)
+    raw_by_idx = [0.0] * n_docs
+    for idx, s in zip(results[0], scores_2d[0]):
+        raw_by_idx[int(idx)] = float(s)
+
+    max_s = max(raw_by_idx) if raw_by_idx else 0.0
+    if max_s > 0:
+        return [s / max_s for s in raw_by_idx]
+    # Small-N IDF-collapse fallback: identical motivation to the rank-bm25
+    # version (e.g. N=2 with a term in exactly one doc → all-zero scores).
+    q_unique = set(q_tokens)
+    overlaps = [
+        len(q_unique.intersection(doc_toks))
+        for doc_toks in corpus_tokens
+    ]
+    max_o = max(overlaps) if overlaps else 0
+    if max_o > 0:
+        return [o / max_o for o in overlaps]
+    return [0.0] * n_docs
+
+
 async def _route_bm25(
     *, query: str, kb_contexts: list[tuple[str, str, int]], top_k: int,
     score_threshold: float,
 ) -> list[KBRouteHit]:
     """BM25 routing. ``kb_contexts`` is [(kb_name, context_string, num_titles), ...]."""
-    from rank_bm25 import BM25Okapi
+    kb_names = [c[0] for c in kb_contexts]
     corpus_tokens = [_tokenize(c[1]) for c in kb_contexts]
-    # Guard: BM25Okapi crashes on empty docs
-    corpus_tokens = [t or ["__empty__"] for t in corpus_tokens]
-    bm = BM25Okapi(corpus_tokens)
-    q_tokens = _tokenize(query) or ["__empty__"]
-    scores = bm.get_scores(q_tokens)
-    # Normalize to [0, 1] for cross-method comparability
-    max_s = max(scores) if len(scores) else 0.0
-    if max_s > 0:
-        normalized = [s / max_s for s in scores]
-    else:
-        # BM25Okapi corner case: with very few KBs (N=2) and a term that
-        # appears in exactly one doc, the IDF collapses to log(1) = 0 so
-        # *every* score is 0 and routing silently returns nothing. Fall
-        # back to a unique-token-overlap heuristic so small-N corpora
-        # still route correctly.
-        q_unique = set(q_tokens)
-        overlaps = [
-            len(q_unique.intersection(doc_toks))
-            for doc_toks in corpus_tokens
-        ]
-        max_o = max(overlaps) if overlaps else 0
-        if max_o > 0:
-            normalized = [o / max_o for o in overlaps]
-        else:
-            normalized = [0.0] * len(scores)
+    fingerprint = _corpus_fingerprint({c[0]: c[1] for c in kb_contexts})
+    normalized = _bm25_score_corpus(
+        kb_names=kb_names,
+        corpus_tokens=corpus_tokens,
+        query_tokens=_tokenize(query),
+        fingerprint=fingerprint,
+    )
     hits = [
         KBRouteHit(
             kb_name=name,
@@ -152,6 +224,39 @@ async def _route_bm25(
             sampled_titles=ntitles,
         )
         for (name, _ctx, ntitles), norm in zip(kb_contexts, normalized)
+    ]
+    hits.sort(key=lambda h: -h.score)
+    return [h for h in hits if h.score >= score_threshold][:top_k]
+
+
+def route_kbs(
+    *,
+    query: str,
+    kb_contexts: dict[str, str],
+    top_k: int = 3,
+    score_threshold: float = 0.0,
+) -> list[KBRouteHit]:
+    """Synchronous BM25 routing over a pre-built ``{kb_name: context}`` map.
+
+    Thin wrapper around the same scoring path used by :func:`auto_route_kbs`
+    for callers that already have plain context strings in hand (tests, the
+    capsule-cycle plan's bm25s migration). Shares the corpus-fingerprint
+    cache so repeated calls over the same KB set skip re-indexing.
+    """
+    if not kb_contexts:
+        return []
+    kb_names = list(kb_contexts.keys())
+    corpus_tokens = [_tokenize(kb_contexts[n]) for n in kb_names]
+    fingerprint = _corpus_fingerprint(kb_contexts)
+    normalized = _bm25_score_corpus(
+        kb_names=kb_names,
+        corpus_tokens=corpus_tokens,
+        query_tokens=_tokenize(query),
+        fingerprint=fingerprint,
+    )
+    hits = [
+        KBRouteHit(kb_name=name, score=float(score), reason=None, sampled_titles=0)
+        for name, score in zip(kb_names, normalized)
     ]
     hits.sort(key=lambda h: -h.score)
     return [h for h in hits if h.score >= score_threshold][:top_k]
