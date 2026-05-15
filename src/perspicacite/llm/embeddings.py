@@ -475,6 +475,7 @@ def create_embedding_provider(
     cache_enabled: bool = False,
     cache_path: "Path | str | None" = None,
     cache_ttl_days: int = 0,
+    embedding_models_per_type: dict[str, str] | None = None,
 ) -> EmbeddingProvider:
     """
     Factory function to create an embedding provider.
@@ -491,20 +492,37 @@ def create_embedding_provider(
         cache_ttl_days: Days until a cached vector expires. 0 (default) =
             keep forever. Embeddings are deterministic per (model, text),
             so this is safe.
+        embedding_models_per_type: Optional content-type → model string
+            map (sub-project B). When non-empty, the returned provider
+            is a :class:`TypedEmbeddingProvider` that dispatches by
+            ``content_type`` and uses ``model`` as its default. When
+            empty or None, behaviour is identical to today (single
+            provider).
 
     Returns:
-        EmbeddingProvider instance (possibly wrapped in caching).
+        EmbeddingProvider (or TypedEmbeddingProvider when per-type
+        routing is configured). Caching wraps the outer object so the
+        cache key reflects the routed model.
     """
-    # Inner-provider selection (unchanged logic)
-    if model.startswith("all-") or "/" not in model and "embedding" not in model:
-        inner: EmbeddingProvider = SentenceTransformerEmbeddingProvider(model=model)
-    else:
-        primary = LiteLLMEmbeddingProvider(model=model)
+    def _build_single(m: str) -> EmbeddingProvider:
+        # Inner-provider selection rule retained from the legacy factory:
+        # sentence-transformers for local model names ("all-...") or
+        # bare names without a slash/embedding marker; otherwise
+        # LiteLLM-backed with optional local fallback.
+        if m.startswith("all-") or ("/" not in m and "embedding" not in m):
+            return SentenceTransformerEmbeddingProvider(model=m)
+        primary = LiteLLMEmbeddingProvider(model=m)
         if use_local_fallback:
-            fallback = SentenceTransformerEmbeddingProvider()
-            inner = FallbackEmbeddingProvider(primary, fallback)
-        else:
-            inner = primary
+            return FallbackEmbeddingProvider(primary, SentenceTransformerEmbeddingProvider())
+        return primary
+
+    inner: EmbeddingProvider = _build_single(model)
+
+    if embedding_models_per_type:
+        by_type: dict[str, EmbeddingProvider] = {}
+        for ctype, ctype_model in embedding_models_per_type.items():
+            by_type[ctype] = _build_single(ctype_model)
+        inner = TypedEmbeddingProvider(default=inner, by_content_type=by_type)
 
     if not cache_enabled:
         return inner
