@@ -139,17 +139,44 @@ def _paper_from_oa_work(work: dict[str, Any]) -> tuple[str | None, dict[str, Any
 async def _fetch_seed_work(
     client: httpx.AsyncClient, doi: str, headers: dict[str, str],
 ) -> dict[str, Any] | None:
-    """One OpenAlex work record for a single DOI, or None on miss."""
+    """One OpenAlex work record for a single DOI, or None on miss.
+
+    Falls back to the ``ids.arxiv`` filter when /works/doi:... 404s on
+    an arXiv DOI — mirrors :func:`openalex_id_for_doi` (audit
+    2026-05-15 finding #3).
+    """
     url = f"{OPENALEX_BASE}/works/doi:{doi}"
     try:
         r = await client.get(url, headers=headers, timeout=20.0)
-        if r.status_code != 200:
-            logger.info("snowball_oa_seed_miss", doi=doi, status=r.status_code)
-            return None
-        return r.json()
+        if r.status_code == 200:
+            return r.json()
+        logger.info("snowball_oa_seed_miss", doi=doi, status=r.status_code)
     except httpx.HTTPError as exc:
         logger.warning("snowball_oa_seed_error", doi=doi, error=str(exc))
         return None
+
+    # Fallback: arXiv-id filter for arXiv DOIs.
+    arxiv_id = parse_arxiv_doi(doi)
+    if arxiv_id is None:
+        return None
+    list_url = f"{OPENALEX_BASE}/works"
+    try:
+        r = await client.get(
+            list_url,
+            params={"filter": f"ids.arxiv:{arxiv_id}", "per-page": "1"},
+            headers=headers,
+            timeout=20.0,
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("snowball_oa_arxiv_fallback_error", doi=doi, error=str(exc))
+        return None
+    if r.status_code != 200:
+        logger.info("snowball_oa_arxiv_fallback_miss", doi=doi, status=r.status_code)
+        return None
+    results = (r.json() or {}).get("results") or []
+    if not results:
+        return None
+    return results[0]
 
 
 async def openalex_id_for_doi(
