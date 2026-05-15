@@ -61,6 +61,7 @@ data/papers/
 data/capsules/
 data/provenance/
 data/contextual_cache/
+data/kb_logs/
 data/*.db
 data/*.db-shm
 data/*.db-wal
