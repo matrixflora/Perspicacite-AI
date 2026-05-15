@@ -52,6 +52,21 @@ llm:
     synthesis_basic:  "sonnet"
     synthesis_heavy:  "sonnet"          # set to "opus" if your plan includes it
 
+  # Optional: route different content types through different embedders
+  # (sub-project B of the 2026-05-15 design). When this block is omitted
+  # or empty, every chunk uses the single KnowledgeBaseConfig.embedding_model
+  # (today's behaviour). When set, the named keys override the default
+  # for chunks whose ChunkMetadata.content_type matches.
+  #
+  # The example below uses Mistral's codestral-embed for code and a
+  # smaller OpenAI text model for everything else. Requires a Mistral
+  # API key (MISTRAL_API_KEY env var); when missing, the call falls
+  # back to the default embedder with a structured warning.
+  #
+  # embedding_models_per_type:
+  #   code: "mistral/codestral-embed"
+  #   text: "text-embedding-3-small"
+
   providers:
     claude_cli:
       # Claude Code's flag set is baked into the ClaudeCLIClient
