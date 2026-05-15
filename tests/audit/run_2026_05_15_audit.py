@@ -201,12 +201,13 @@ async def audit_article(article: dict[str, Any], findings: dict[str, Any]) -> No
               f"{with_docstring} w/docstring, {len(imports)} imports")
 
         # --- Symbol index sidecar ------------------------------------
-        kb_dir = RESULTS_DIR / "audit_kb" / article["id"]
-        kb_dir.mkdir(parents=True, exist_ok=True)
-        # Clear prior runs to avoid duplicate appends
+        # 2026-05-15: write to a per-run tempdir instead of
+        # tests/audit/results/audit_kb/ so the audit harness doesn't
+        # churn tracked files. The sidecar is consumed read-back below;
+        # there's no need to persist it across runs.
+        import tempfile
+        kb_dir = Path(tempfile.mkdtemp(prefix=f"audit_kb_{article['id']}_"))
         sidecar = kb_dir / "symbols.jsonl"
-        if sidecar.exists():
-            sidecar.unlink()
         n_written = write_chunks_symbols(kb_dir=kb_dir, chunks=chunks)
         n_read = sum(1 for _ in iter_symbols(kb_dir))
         art_findings["symbol_index"] = {
