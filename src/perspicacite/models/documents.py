@@ -36,6 +36,13 @@ class ChunkMetadata(BaseModel):
     resource_refs: list[str] = Field(default_factory=list)
     parent_paper_id: Optional[str] = None
     is_external: bool = False
+    # Sub-project A (code-aware chunking) extensions — all optional.
+    symbol_name: Optional[str] = None
+    symbol_kind: Optional[str] = None  # "function" | "class" | "method" | "cell" | "module"
+    start_line: Optional[int] = None   # 1-indexed inclusive
+    end_line: Optional[int] = None     # 1-indexed inclusive
+    docstring: Optional[str] = None    # ≤500 chars, truncated
+    imports: list[str] = Field(default_factory=list)
 
     def __repr__(self) -> str:
         return (
