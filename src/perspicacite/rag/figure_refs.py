@@ -11,6 +11,7 @@ capsule resource path to render thumbnails on demand.
 """
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Iterable
@@ -20,6 +21,24 @@ from perspicacite.models.documents import DocumentChunk
 from perspicacite.models.rag import FigureRef
 
 logger = get_logger("perspicacite.rag.figure_refs")
+
+_THUMBNAIL_MAX_BYTES = 200_000
+
+
+def _load_thumbnail_b64(capsule_root, paper_id: str, fig_id: str):
+    """Return base64-encoded PNG bytes from ``<capsule_root>/<paper_id>/figures/<fig_id>.png``, or None."""
+    if not capsule_root or not paper_id or not fig_id:
+        return None
+    candidate = Path(capsule_root) / paper_id / "figures" / f"{fig_id}.png"
+    try:
+        if not candidate.exists():
+            return None
+        data = candidate.read_bytes()
+    except OSError:
+        return None
+    if len(data) > _THUMBNAIL_MAX_BYTES:
+        return None
+    return base64.b64encode(data).decode("ascii")
 
 
 def _capsule_dir_for_paper_id(paper_id: str, *, capsule_root: Path) -> Path:
@@ -79,5 +98,6 @@ def collect_figure_refs(
                 paper_id=md.paper_id,
                 label=label,
                 caption=caption,
+                thumbnail_b64=_load_thumbnail_b64(capsule_root, md.paper_id, fid),
             ))
     return out

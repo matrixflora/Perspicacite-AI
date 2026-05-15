@@ -994,6 +994,16 @@ details[open] .advanced-options-summary::before { content: '▼ '; }
     border-radius: 6px;
 }
 
+.figure-card .figure-thumbnail {
+    max-width: 100%;
+    max-height: 240px;
+    display: block;
+    margin-bottom: 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color, #ddd);
+    object-fit: contain;
+}
+
 .figure-card .figure-label {
     font-weight: 600;
     font-size: 12px;
