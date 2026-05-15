@@ -13,6 +13,7 @@ from typing import Any
 import aiosqlite
 
 from perspicacite.logging import get_logger
+from perspicacite.provenance.schema import PROVENANCE_TABLE_SQL
 
 logger = get_logger("perspicacite.provenance.store")
 
@@ -22,6 +23,16 @@ class ProvenanceStore:
         self.db_path = Path(db_path)
         self.sidecar_dir = Path(sidecar_dir)
         self.sidecar_dir.mkdir(parents=True, exist_ok=True)
+
+    async def init_db(self) -> None:
+        """Create the ``provenance`` table + index if absent.
+
+        Idempotent. Safe to call alongside ``SessionStore.init_db()`` —
+        both use ``CREATE TABLE IF NOT EXISTS``.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.executescript(PROVENANCE_TABLE_SQL)
+            await db.commit()
 
     async def save(self, record: dict[str, Any]) -> None:
         message_id = record.get("message_id")
@@ -81,8 +92,19 @@ class ProvenanceStore:
                     ),
                 )
                 await db.commit()
-        except Exception as exc:  # best-effort
-            logger.warning("provenance_save_failed", error=str(exc), message_id=message_id)
+        except aiosqlite.OperationalError:
+            # Schema missing or DB locked — surface to caller so silent
+            # data loss can't happen (2026-05-15 audit finding #1).
+            logger.error(
+                "provenance_save_schema_error",
+                message_id=message_id,
+                hint="call ProvenanceStore.init_db() before save()",
+            )
+            raise
+        except Exception as exc:  # other failures stay best-effort
+            logger.warning(
+                "provenance_save_failed", error=str(exc), message_id=message_id,
+            )
 
     async def get_for_message(self, message_id: str) -> dict[str, Any] | None:
         async with aiosqlite.connect(self.db_path) as db:
