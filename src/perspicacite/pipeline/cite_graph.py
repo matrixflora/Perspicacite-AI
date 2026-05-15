@@ -132,3 +132,116 @@ def apply_cite_graph_filters(
             continue
         out.append(h)
     return out
+
+
+# --- Orchestrator (Task 6) -----------------------------------------
+
+from typing import Optional as _Optional
+
+
+async def _resolve_and_fetch(
+    *, tool: _Optional[str], doi: _Optional[str], kb_config,
+) -> list[dict]:
+    """Resolve the library to a seed DOI, then fetch OpenAlex citing works.
+
+    Returns a list of raw OpenAlex work dicts. This is the only network
+    surface; tests patch this function.
+    """
+    import httpx
+    from perspicacite.pipeline.library_doi import resolve_library_paper
+    from perspicacite.pipeline.snowball import fetch_cited_by_works, _fetch_seed_work
+
+    seed_doi: _Optional[str] = doi
+    if seed_doi is None:
+        if not tool:
+            return []
+        paper = await resolve_library_paper(
+            tool,
+            bundle=None, github_repo=None,
+            config_map=dict(kb_config.library_paper_map),
+            readme_text=None,
+        )
+        if paper is None:
+            return []
+        seed_doi = paper.doi
+
+    async with httpx.AsyncClient() as client:
+        seed_work = await _fetch_seed_work(client, seed_doi, {})
+        if seed_work is None:
+            return []
+        return await fetch_cited_by_works(
+            client, seed_work=seed_work,
+            max_results=kb_config.cite_graph.max_papers * 4,
+        )
+
+
+def _hit_from_oa_work(work: dict) -> _Optional["CiteHit"]:
+    """Project an OpenAlex work dict into a CiteHit. Returns None when
+    the work has no DOI."""
+    doi = (work.get("doi") or "").replace("https://doi.org/", "")
+    if not doi:
+        doi = (work.get("ids") or {}).get("doi", "").replace("https://doi.org/", "")
+    if not doi:
+        return None
+    title = work.get("title") or ""
+    year = int(work.get("publication_year") or 0)
+    cit = int(work.get("cited_by_count") or 0)
+    oa = bool((work.get("open_access") or {}).get("is_oa"))
+    venue = ((work.get("primary_location") or {}).get("source") or {}).get("display_name")
+    # Reconstruct abstract from inverted index (best-effort).
+    inv = work.get("abstract_inverted_index") or None
+    abstract = None
+    if isinstance(inv, dict) and inv:
+        try:
+            positions: list[tuple[int, str]] = []
+            for word, idxs in inv.items():
+                for i in idxs:
+                    positions.append((i, word))
+            positions.sort()
+            abstract = " ".join(w for _, w in positions)
+        except Exception:
+            abstract = None
+    return CiteHit(
+        doi=doi, title=title, year=year, venue=venue,
+        citation_count=cit, is_oa=oa, abstract=abstract,
+    )
+
+
+async def enrich_kb_from_cite_graph(
+    *,
+    tool: _Optional[str] = None,
+    doi: _Optional[str] = None,
+    kb_config,
+    existing_dois: set[str],
+    dry_run: bool = False,
+    now_year: _Optional[int] = None,
+) -> list[CiteHit]:
+    """Resolve library/DOI → fetch citing works → filter+score → top-N.
+
+    v1 returns the ranked CiteHit list (top max_papers). The
+    ``dry_run`` parameter is reserved for future ingest plumbing —
+    currently it has no effect on behaviour (no ingest is implemented
+    in v1).
+    """
+    import datetime as _dt
+    if now_year is None:
+        now_year = _dt.datetime.now(_dt.UTC).year
+
+    cfg = kb_config.cite_graph
+    works = await _resolve_and_fetch(tool=tool, doi=doi, kb_config=kb_config)
+    raw_hits: list[CiteHit] = []
+    for w in works:
+        h = _hit_from_oa_work(w)
+        if h is not None:
+            raw_hits.append(h)
+
+    filtered = apply_cite_graph_filters(
+        raw_hits, config=cfg, existing_dois=existing_dois, now_year=now_year,
+    )
+
+    synonyms = [tool] if tool else []
+    for h in filtered:
+        score_cite_hit(h, synonyms, cfg, now_year=now_year)
+
+    filtered.sort(key=lambda h: h.score, reverse=True)
+    return filtered[: cfg.max_papers]
