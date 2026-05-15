@@ -96,8 +96,8 @@ Within a wave, items are roughly ordered by dependency / leverage.
 
 | # | Item | Notes |
 |---|------|-------|
-| 7.1 | **Recipe book** | Task-oriented "how to do X" pages. Currently README is reference-style. |
-| 7.2 | **Architecture diagram** | One-pager dataflow: query → router → KB → retrieval → synthesis. |
+| 7.1 ✅ | **Recipe book** | Shipped 2026-05-15 — 15 task-oriented recipes in `docs/recipe-book-2026-05-15.md`. |
+| 7.2 ✅ | **Architecture diagram** | Shipped 2026-05-15 — `docs/architecture-2026-05-15.md` (Mermaid dataflow + 5 layers + storage map). |
 
 ---
 
