@@ -640,6 +640,22 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
                 yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
                 return
 
+            elif event.event == "code_excerpt":
+                # Sub-project C: forward code-excerpt attachment to UI.
+                try:
+                    payload = json.loads(event.data)
+                    yield f"data: {json.dumps({'type': 'code_excerpt', **payload})}\n\n"
+                except Exception as _exc:
+                    logger.warning(f"code_excerpt_forward_failed: {_exc}")
+
+            elif event.event == "figure_ref":
+                # Sub-project C: forward figure-ref attachment to UI.
+                try:
+                    payload = json.loads(event.data)
+                    yield f"data: {json.dumps({'type': 'figure_ref', **payload})}\n\n"
+                except Exception as _exc:
+                    logger.warning(f"figure_ref_forward_failed: {_exc}")
+
             elif event.event == "error":
                 yield f"data: {json.dumps({'type': 'error', 'message': event.data})}\n\n"
                 return
