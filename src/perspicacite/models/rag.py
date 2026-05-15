@@ -96,6 +96,31 @@ class RAGRequest(BaseModel):
         )
 
 
+class FigureRef(BaseModel):
+    """A figure attached to a RAG response for display in the GUI / MCP."""
+    id: str
+    paper_id: str
+    label: Optional[str] = None      # e.g. "Figure 3"
+    caption: Optional[str] = None
+    source_url: Optional[str] = None  # paper DOI / page URL
+    page: Optional[int] = None
+    thumbnail_b64: Optional[str] = None  # small base64 PNG for inline display
+
+
+class CodeExcerpt(BaseModel):
+    """A code-chunk excerpt attached to a RAG response (sub-project C)."""
+    id: str                            # e.g. "github:owner/repo@SHA:path#Lstart-Lend"
+    paper_id: str
+    file_path: str
+    symbol_name: Optional[str] = None  # None for module chunks
+    symbol_kind: str                   # "function" | "class" | "method" | "cell" | "module"
+    language: str                      # "python" | "r" | etc.
+    start_line: int
+    end_line: int
+    text: str
+    source_url: str                    # e.g. GitHub blob URL with #L<s>-L<e>
+
+
 class RAGResponse(BaseModel):
     """Response from RAG query."""
 
@@ -107,6 +132,8 @@ class RAGResponse(BaseModel):
     research_plan: Optional[list[str]] = None
     web_search_used: bool = False
     tokens_used: Optional[int] = None
+    figures: list[FigureRef] = Field(default_factory=list)
+    code_excerpts: list[CodeExcerpt] = Field(default_factory=list)
 
     def __repr__(self) -> str:
         return (
