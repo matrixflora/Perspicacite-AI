@@ -12,6 +12,13 @@ from perspicacite import __version__
 from perspicacite.config import load_config
 from perspicacite.logging import get_logger, setup_logging
 from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
+from perspicacite.pipeline.github.bundle import ContentSpec
+from perspicacite.pipeline.github_kb import (
+    IngestSummary,
+    ingest_github_repo as _ingest_github_repo,
+    ingest_skill_bundle as _ingest_skill_bundle,
+    ingest_skill_bundles_batch as _ingest_skill_bundles_batch,
+)
 
 logger = get_logger("perspicacite.cli")
 
@@ -1762,6 +1769,245 @@ def ingest_asb_run(
     if result.get("workflow_dag"):
         dag = result["workflow_dag"]
         click.echo(f"  workflow:  {len(dag['nodes'])} nodes, {len(dag['edges'])} edges")
+
+
+def _print_github_repo_summary(summary: IngestSummary) -> None:
+    """Human-readable summary line for the raw-repo path."""
+    coords = ""
+    if summary.repo_org and summary.repo_name:
+        coords = f" ({summary.repo_org}/{summary.repo_name}"
+        if summary.commit_sha:
+            coords += f"@{summary.commit_sha}"
+        coords += ")"
+    click.echo(f"GitHub repo ingested into KB: {summary.kb_name}{coords}")
+    click.echo(f"  files:  {summary.files_added}")
+    click.echo(f"  chunks: {summary.chunks_added}")
+
+
+def _print_skill_bundle_summary(summary: IngestSummary) -> None:
+    """Human-readable summary line for a single bundle ingest."""
+    suffix = ""
+    if summary.bundle_name:
+        suffix = f" (bundle: {summary.bundle_name})"
+    click.echo(f"Skill bundle ingested into KB: {summary.kb_name}{suffix}")
+    click.echo(f"  files:         {summary.files_added}")
+    click.echo(f"  chunks:        {summary.chunks_added}")
+    click.echo(f"  linked papers: {summary.linked_papers_added}")
+    if summary.linked_papers_skipped_non_doi:
+        kinds = ", ".join(
+            f"{kind}={value}"
+            for kind, value in summary.linked_papers_skipped_non_doi[:5]
+        )
+        click.echo(
+            f"  skipped (non-DOI): {len(summary.linked_papers_skipped_non_doi)} ({kinds})"
+        )
+
+
+@cli.command("ingest-github-repo")
+@click.argument("url", type=str)
+@click.option("--kb-name", required=True, help="Target KB name.")
+@click.option(
+    "--include",
+    multiple=True,
+    help="Include glob (repeatable). Defaults to bundle defaults when omitted.",
+)
+@click.option(
+    "--exclude",
+    multiple=True,
+    help="Exclude glob (repeatable). Defaults to bundle defaults when omitted.",
+)
+@click.pass_context
+def ingest_github_repo_cmd(
+    ctx: click.Context,
+    url: str,
+    kb_name: str,
+    include: tuple[str, ...],
+    exclude: tuple[str, ...],
+) -> None:
+    """Fetch a GitHub repo, walk + chunk it, write Papers into a KB.
+
+    Raw-repo mode (no bundle.yml); linked-paper auto-routing is bundle-only.
+    See ``docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md``.
+    """
+    import asyncio
+
+    content: ContentSpec | None
+    if include or exclude:
+        content = ContentSpec(
+            include=list(include) if include else list(ContentSpec().include),
+            exclude=list(exclude) if exclude else list(ContentSpec().exclude),
+        )
+    else:
+        content = None
+
+    async def _run() -> IngestSummary:
+        app_state = await _build_app_state_for_cli(ctx.obj.get("config"))
+        try:
+            return await _ingest_github_repo(
+                url=url,
+                kb_name=kb_name,
+                config=ctx.obj.get("config"),
+                vector_store=getattr(app_state, "vector_store", None),
+                embedding_service=getattr(app_state, "embedding_service", None),
+                session_store=getattr(app_state, "session_store", None),
+                content=content,
+            )
+        finally:
+            shutdown = getattr(app_state, "shutdown", None)
+            if shutdown is not None:
+                if asyncio.iscoroutinefunction(shutdown):
+                    await shutdown()
+                else:
+                    shutdown()
+
+    summary = asyncio.run(_run())
+    _print_github_repo_summary(summary)
+
+
+@cli.command("ingest-skill-bundle")
+@click.argument("source", type=str)
+@click.option(
+    "--kb-name",
+    default=None,
+    help="Target KB name. Defaults to bundle.name via the config template.",
+)
+@click.option(
+    "--no-linked-papers",
+    is_flag=True,
+    default=False,
+    help="Skip ingesting linked papers from manifest/README DOIs.",
+)
+@click.pass_context
+def ingest_skill_bundle_cmd(
+    ctx: click.Context,
+    source: str,
+    kb_name: str | None,
+    no_linked_papers: bool,
+) -> None:
+    """Ingest one skill bundle (local dir or GitHub URL) into a KB.
+
+    Parses ``bundle.yml`` (or falls back to README-only), chunks the
+    bundle, and OPTIONALLY routes the manifest's DOIs through the
+    existing DOI-ingest pipeline. See ``docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md``.
+    """
+    import asyncio
+
+    # If `source` is an existing local path, pass a Path; else pass the
+    # raw string (the orchestrator parses URLs).
+    source_arg: Path | str
+    candidate = Path(source)
+    if candidate.exists():
+        source_arg = candidate
+    else:
+        source_arg = source
+
+    async def _run() -> IngestSummary:
+        app_state = await _build_app_state_for_cli(ctx.obj.get("config"))
+        try:
+            return await _ingest_skill_bundle(
+                source=source_arg,
+                kb_name=kb_name,
+                config=ctx.obj.get("config"),
+                vector_store=getattr(app_state, "vector_store", None),
+                embedding_service=getattr(app_state, "embedding_service", None),
+                session_store=getattr(app_state, "session_store", None),
+                ingest_linked_papers=not no_linked_papers,
+                app_state_for_doi_ingest=(
+                    None if no_linked_papers else app_state
+                ),
+            )
+        finally:
+            shutdown = getattr(app_state, "shutdown", None)
+            if shutdown is not None:
+                if asyncio.iscoroutinefunction(shutdown):
+                    await shutdown()
+                else:
+                    shutdown()
+
+    summary = asyncio.run(_run())
+    _print_skill_bundle_summary(summary)
+
+
+@cli.command("ingest-skill-bundles")
+@click.argument(
+    "source_dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, resolve_path=True),
+)
+@click.option(
+    "--into",
+    "composite_kb",
+    default=None,
+    help="Composite KB name. If unset, runs in per-skill mode (one KB per bundle).",
+)
+@click.option(
+    "--no-linked-papers",
+    is_flag=True,
+    default=False,
+    help="Skip ingesting linked papers for every bundle in the batch.",
+)
+@click.pass_context
+def ingest_skill_bundles_cmd(
+    ctx: click.Context,
+    source_dir: str,
+    composite_kb: str | None,
+    no_linked_papers: bool,
+) -> None:
+    """Batch-ingest every immediate subdir of SOURCE_DIR as a skill bundle.
+
+    Without ``--into``, produces one KB per bundle (per-skill). With
+    ``--into <kb>``, routes every bundle into the same composite KB.
+    See ``docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md``.
+    """
+    import asyncio
+
+    async def _run() -> list[IngestSummary]:
+        app_state = await _build_app_state_for_cli(ctx.obj.get("config"))
+        try:
+            return await _ingest_skill_bundles_batch(
+                root=Path(source_dir),
+                config=ctx.obj.get("config"),
+                vector_store=getattr(app_state, "vector_store", None),
+                embedding_service=getattr(app_state, "embedding_service", None),
+                session_store=getattr(app_state, "session_store", None),
+                composite_kb=composite_kb,
+                ingest_linked_papers=not no_linked_papers,
+                app_state_for_doi_ingest=(
+                    None if no_linked_papers else app_state
+                ),
+            )
+        finally:
+            shutdown = getattr(app_state, "shutdown", None)
+            if shutdown is not None:
+                if asyncio.iscoroutinefunction(shutdown):
+                    await shutdown()
+                else:
+                    shutdown()
+
+    summaries = asyncio.run(_run())
+    if not summaries:
+        click.echo(f"No bundles found in {source_dir}")
+        return
+
+    if composite_kb:
+        total_files = sum(s.files_added for s in summaries)
+        total_chunks = sum(s.chunks_added for s in summaries)
+        total_linked = sum(s.linked_papers_added for s in summaries)
+        click.echo(
+            f"Composite KB ingest: {composite_kb} "
+            f"({len(summaries)} bundles)"
+        )
+        click.echo(f"  total files:         {total_files}")
+        click.echo(f"  total chunks:        {total_chunks}")
+        click.echo(f"  total linked papers: {total_linked}")
+        for s in summaries:
+            click.echo(
+                f"  - {s.bundle_name or s.kb_name}: "
+                f"{s.files_added} files / {s.chunks_added} chunks"
+            )
+    else:
+        click.echo(f"Per-skill ingest: {len(summaries)} bundles")
+        for s in summaries:
+            _print_skill_bundle_summary(s)
 
 
 @cli.command()
