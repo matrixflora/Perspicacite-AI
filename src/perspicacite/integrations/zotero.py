@@ -26,6 +26,60 @@ class ZoteroWriteUnsupportedError(ZoteroAPIError):
     """Raised when trying to write to the local read-only API."""
 
 
+class ZoteroAuthError(ZoteroAPIError):
+    """Raised on 401/403 from the Zotero API. NEVER retried.
+
+    Zotero rate-limits *bad auth attempts* aggressively at the IP level
+    (~5 failures triggers a ~15 min lockout that affects every key
+    from that IP). Retrying a 401 burns the bucket fast. This
+    exception is what the client raises on first sight of 401/403 so
+    callers can surface a clear "fix your credentials" error instead
+    of looping into a lockout.
+    """
+
+
+class _TokenBucket:
+    """Minimal async token-bucket rate limiter.
+
+    Zotero's published headroom is around 30 req/sec from a single IP
+    before they start dishing out 429s with Retry-After. We default
+    to a tighter 20 req/sec ceiling so a busy batch leaves spare
+    capacity for the UI / other clients.
+
+    Single-process, single-tenant — fine for the typical Perspicacité
+    deployment. For multi-process production setups you'd want a
+    Redis-backed limiter shared across workers.
+    """
+
+    def __init__(self, rate_per_sec: float = 20.0, burst: float = 20.0):
+        self._rate = float(rate_per_sec)
+        self._capacity = float(burst)
+        self._tokens = float(burst)
+        self._last = 0.0
+        import asyncio as _asyncio
+        self._lock = _asyncio.Lock()
+
+    async def acquire(self) -> None:
+        import asyncio as _asyncio
+        import time as _time
+        async with self._lock:
+            now = _time.monotonic()
+            if self._last == 0.0:
+                self._last = now
+            elapsed = now - self._last
+            self._tokens = min(
+                self._capacity, self._tokens + elapsed * self._rate,
+            )
+            self._last = now
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return
+            wait = (1.0 - self._tokens) / self._rate
+        await _asyncio.sleep(wait)
+        # Recurse once to actually subtract the token after the wait
+        await self.acquire()
+
+
 def _extract_doi_from_extra(extra: str) -> str:
     """Some Zotero item types store DOIs in the free-form ``extra`` field
     as ``DOI: 10.xxxx/yyy`` lines. Pull it out for dedup matching."""
@@ -162,6 +216,11 @@ class ZoteroClient:
         self.library_type = "groups" if library_type == "group" else "users"
         self.collection_key = collection_key
         self._http = http_client
+        # Single-process rate limiter — every outbound Zotero request
+        # should ``await self._rate_limiter.acquire()`` to keep us
+        # under the published 30 req/sec ceiling. See _TokenBucket
+        # docstring for production caveats.
+        self._rate_limiter = _TokenBucket(rate_per_sec=20.0, burst=20.0)
 
     def _base(self) -> str:
         return f"{self.base_url}/{self.library_type}/{self.library_id}"
@@ -191,6 +250,44 @@ class ZoteroClient:
     def is_local(self) -> bool:
         """True if base_url points at the Zotero desktop local API (loopback)."""
         return "localhost" in self.base_url or "127.0.0.1" in self.base_url
+
+    async def validate_credentials(self) -> dict[str, Any]:
+        """Fail-fast credentials check. Call once at startup.
+
+        Makes a single low-cost GET against the cloud API key endpoint
+        and confirms it returns metadata for the configured key. On
+        401/403, raises :class:`ZoteroAuthError` *without* retrying —
+        that's how we avoid the IP-level lockout that comes from
+        looping on a misconfigured key.
+
+        Returns the key-info payload (useful for logging or surfacing
+        the granted permissions in a startup banner). Does nothing
+        when the client is configured to talk to the local desktop
+        API only (api_key not required there).
+        """
+        if not self.api_key:
+            return {"info": "local_only_no_auth"}
+        c = await self._client()
+        await self._rate_limiter.acquire()
+        url = f"{ZOTERO_API}/keys/{self.api_key}"
+        try:
+            r = await c.get(url, timeout=10.0)
+        except httpx.HTTPError as exc:
+            raise ZoteroAPIError(
+                f"unable to reach Zotero ({exc.__class__.__name__}: {exc}); "
+                "check network connectivity"
+            ) from exc
+        if r.status_code in (401, 403):
+            raise ZoteroAuthError(
+                f"Zotero rejected the configured api_key ({r.status_code}). "
+                "Verify zotero.api_key in config.yml — repeated 401/403 "
+                "from this IP triggers a ~15min lockout."
+            )
+        if r.status_code != 200:
+            raise ZoteroAPIError(
+                f"Zotero /keys returned {r.status_code} during validation"
+            )
+        return r.json() or {}
 
     async def _find_existing_by_url(self, url: str) -> str | None:
         """Find an existing item whose ``data.url`` matches the given URL.
@@ -356,10 +453,16 @@ class ZoteroClient:
             creators=creators,
             collection_key=self.collection_key,
         )]
+        await self._rate_limiter.acquire()
         try:
             r = await c.post(f"{self._write_base()}/items", json=body, headers=self._headers())
         except httpx.HTTPError as exc:
             raise ZoteroAPIError(f"Zotero POST failed: {exc}") from exc
+        if r.status_code in (401, 403):
+            raise ZoteroAuthError(
+                f"Zotero rejected create_item ({r.status_code}). "
+                "Check api_key + library write permissions."
+            )
         if r.status_code not in (200, 201):
             # Surface the real error so callers can show why the push failed
             # (auth error, write-not-supported, malformed body, etc.) instead
@@ -401,9 +504,17 @@ class ZoteroClient:
             # the failure instead of silently returning a short list.
             attempt = 0
             while True:
+                await self._rate_limiter.acquire()
                 r = await c.get(f"{self._base()}{path}", params=p, headers=self._headers())
                 if r.status_code == 200:
                     break
+                # 401/403 → fail fast. Looping triggers IP-level
+                # auth-failure lockout (~15min on Zotero).
+                if r.status_code in (401, 403):
+                    raise ZoteroAuthError(
+                        f"Zotero returned {r.status_code} for {path}. "
+                        "Check zotero.api_key and library_id."
+                    )
                 if r.status_code in (429, 500, 502, 503, 504) and attempt < 3:
                     retry_after = r.headers.get("retry-after") or r.headers.get("Retry-After")
                     try:
@@ -723,11 +834,17 @@ class ZoteroClient:
                 "md5": md5,
                 "mtime": mtime_ms,
             }]
+            await self._rate_limiter.acquire()
             r = await c.post(
                 f"{self._write_base()}/items",
                 json=register_body,
                 headers=self._headers(),
             )
+            if r.status_code in (401, 403):
+                raise ZoteroAuthError(
+                    f"Zotero rejected attachment register ({r.status_code}). "
+                    "Check api_key + library write permissions."
+                )
             if r.status_code not in (200, 201):
                 raise ZoteroAPIError(
                     f"Zotero attach step1 (register) returned {r.status_code}: "
@@ -769,11 +886,17 @@ class ZoteroClient:
             "filesize": str(len(data)),
             "mtime": str(mtime_ms),
         }
+        await self._rate_limiter.acquire()
         r2 = await c.post(
             f"{self._write_base()}/items/{attach_key}/file",
             data=cred_form,
             headers=cred_headers,
         )
+        if r2.status_code in (401, 403):
+            raise ZoteroAuthError(
+                f"Zotero rejected attachment creds ({r2.status_code}). "
+                "Check api_key + library write permissions."
+            )
         if r2.status_code != 200:
             raise ZoteroAPIError(
                 f"Zotero attach step2 (creds) returned {r2.status_code}: "
