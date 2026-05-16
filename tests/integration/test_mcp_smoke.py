@@ -211,6 +211,13 @@ _TOOL_ARGS: dict[str, dict[str, Any]] = {
         "doi": "10.1234/fake-smoke-doi",
         "dry_run": True,
     },
+    "ingest_github_repo": {
+        "url": "https://github.com/x/y",
+        "kb_name": "smoke",
+    },
+    "ingest_skill_bundle": {
+        "source": "/nonexistent/path/smoke",
+    },
 }
 
 # ---------------------------------------------------------------------------

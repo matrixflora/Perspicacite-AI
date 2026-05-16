@@ -23,11 +23,17 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 from typing import Any
 
 from perspicacite.logging import get_logger
 from perspicacite.pipeline.asb.response import build_asb_response_metadata
 from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
+from perspicacite.pipeline.github_kb import (
+    IngestSummary,
+    ingest_github_repo as ingest_github_repo_pipeline,
+    ingest_skill_bundle as ingest_skill_bundle_pipeline,
+)
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 
 logger = get_logger("perspicacite.mcp.server")
@@ -2324,6 +2330,161 @@ async def ingest_asb_run(
 
 
 # =============================================================================
+# GitHub repo + skill-bundle ingest (Task 7 of 2026-05-15 plan)
+# =============================================================================
+
+
+def _summary_to_dict(summary: IngestSummary) -> dict[str, Any]:
+    """Flatten an :class:`IngestSummary` dataclass for the MCP envelope.
+
+    Using ``dataclasses.asdict`` keeps the JSON shape in sync with the
+    dataclass: when fields are added upstream they surface here without
+    a separate edit. (The ``Co-Authored-By`` linked-papers list of
+    ``(kind, value)`` tuples serializes as JSON arrays of two strings.)
+    """
+    import dataclasses
+
+    return dataclasses.asdict(summary)
+
+
+@mcp.tool()
+async def ingest_github_repo(
+    url: str,
+    kb_name: str,
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
+) -> str:
+    """Ingest a GitHub repository into a Perspicacité KB.
+
+    Walks the repo (filtered by include/exclude globs), chunks markdown,
+    Python (docstrings only), and Jupyter notebooks, and stores them in
+    ``kb_name``. Use ``ingest_skill_bundle`` instead when the repo
+    contains a ``bundle.yml`` you want parsed for paper refs.
+
+    **Latency:** 30-180s depending on repo size. Tarball is cached by
+    commit SHA so re-ingest is fast. Use >=240s HTTP timeout.
+
+    Args:
+        url: GitHub URL (https://github.com/<org>/<repo>[@ref]).
+        kb_name: Target KB name (created if missing).
+        include: Optional list of include globs (gitwildmatch).
+        exclude: Optional list of exclude globs.
+
+    Returns:
+        JSON envelope with kb_name, repo_org, repo_name, commit_sha,
+        files_added, chunks_added, mode.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state  # already _json_error
+
+    # Build a ContentSpec only when the caller supplied at least one
+    # override. ``None`` lets the orchestrator apply its own defaults.
+    content = None
+    if include or exclude:
+        from perspicacite.pipeline.github.bundle import ContentSpec
+
+        defaults = ContentSpec()
+        content = ContentSpec(
+            include=list(include) if include else list(defaults.include),
+            exclude=list(exclude) if exclude else list(defaults.exclude),
+        )
+
+    try:
+        summary = await ingest_github_repo_pipeline(
+            url=url,
+            kb_name=kb_name,
+            config=state.config,
+            vector_store=state.vector_store,
+            embedding_service=state.embedding_provider,
+            session_store=state.session_store,
+            content=content,
+        )
+    except Exception as e:
+        logger.error("mcp_ingest_github_repo_error", url=url, error=str(e))
+        return _json_error(f"GitHub repo ingest failed: {e}")
+
+    logger.info(
+        "mcp_ingest_github_repo",
+        url=url,
+        kb_name=summary.kb_name,
+        files_added=summary.files_added,
+        chunks_added=summary.chunks_added,
+    )
+    return _json_ok(_summary_to_dict(summary))
+
+
+@mcp.tool()
+async def ingest_skill_bundle(
+    source: str,
+    kb_name: str | None = None,
+    ingest_linked_papers: bool = True,
+) -> str:
+    """Ingest an agentic-science-builder skill bundle into Perspicacité.
+
+    The bundle source can be a local directory path OR a GitHub URL
+    pointing at a repo containing ``bundle.yml``. Linked papers (DOIs
+    in the manifest + README) are routed through the existing DOI
+    ingest path when ``ingest_linked_papers=True``.
+
+    **Latency:** 60-600s depending on bundle + linked-paper count.
+    Each linked DOI runs the full PDF-resolve + embed pipeline.
+    Use >=600s timeout for production runs.
+
+    Args:
+        source: Local path OR GitHub URL.
+        kb_name: Target KB name. None → derived from bundle.yml's name
+            via config.bundles.default_kb_name_template.
+        ingest_linked_papers: If True (default), DOIs mined from the
+            bundle are added to the same KB.
+
+    Returns:
+        JSON envelope with kb_name, bundle_name, files_added,
+        chunks_added, linked_papers_added,
+        linked_papers_skipped_non_doi.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state  # already _json_error
+
+    # Match the CLI's path-vs-URL detection: existing local path → Path,
+    # anything else (URL or non-existent path) → raw string. The
+    # orchestrator parses URL strings itself.
+    source_arg: Path | str
+    candidate = Path(source)
+    if candidate.exists():
+        source_arg = candidate
+    else:
+        source_arg = source
+
+    try:
+        summary = await ingest_skill_bundle_pipeline(
+            source=source_arg,
+            kb_name=kb_name,
+            config=state.config,
+            vector_store=state.vector_store,
+            embedding_service=state.embedding_provider,
+            session_store=state.session_store,
+            ingest_linked_papers=ingest_linked_papers,
+            app_state_for_doi_ingest=state if ingest_linked_papers else None,
+        )
+    except Exception as e:
+        logger.error("mcp_ingest_skill_bundle_error", source=source, error=str(e))
+        return _json_error(f"Skill bundle ingest failed: {e}")
+
+    logger.info(
+        "mcp_ingest_skill_bundle",
+        source=source,
+        kb_name=summary.kb_name,
+        bundle_name=summary.bundle_name,
+        files_added=summary.files_added,
+        chunks_added=summary.chunks_added,
+        linked_papers_added=summary.linked_papers_added,
+    )
+    return _json_ok(_summary_to_dict(summary))
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -2353,6 +2514,8 @@ _TOOL_NAMES: list[str] = [
     "delete_knowledge_base",
     "enrich_kb_from_cite_graph_tool",
     "ingest_asb_run",
+    "ingest_github_repo",
+    "ingest_skill_bundle",
 ]
 
 
