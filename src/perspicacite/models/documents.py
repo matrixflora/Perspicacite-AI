@@ -57,6 +57,12 @@ class ChunkMetadata(BaseModel):
     cited_tool: Optional[str] = None
     discovery_score: Optional[float] = None
 
+    # Carries the upstream ``Paper.metadata`` dict, JSON-encoded so it
+    # round-trips through Chroma's scalar-only per-doc metadata. None
+    # for non-bundle papers. Decoded back to a dict at the retrieval
+    # boundary (see DynamicKnowledgeBase.search_two_pass).
+    paper_metadata_json: Optional[str] = None
+
     def __repr__(self) -> str:
         return (
             f"ChunkMetadata(paper_id='{self.paper_id}', "

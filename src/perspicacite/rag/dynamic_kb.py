@@ -146,6 +146,17 @@ class DynamicKnowledgeBase:
             )
             return 0
 
+        # JSON-encode ``paper.metadata`` once per paper so every chunk
+        # carries the same payload through chroma. Non-bundle papers
+        # (no ``metadata`` dict) leave the field as None.
+        import json as _json
+        paper_md_json: str | None = None
+        if isinstance(getattr(paper, "metadata", None), dict) and paper.metadata:
+            try:
+                paper_md_json = _json.dumps(paper.metadata, default=str)
+            except (TypeError, ValueError):
+                paper_md_json = None
+
         chunks: list[DocumentChunk] = []
 
         # Create metadata chunk
@@ -160,7 +171,7 @@ Abstract:
 
         # Format authors as comma-separated string for metadata
         authors_str = ", ".join(str(a) for a in paper.authors) if paper.authors else None
-        
+
         chunks.append(DocumentChunk(
             id=f"{paper.id}_metadata",
             text=metadata_text,
@@ -172,6 +183,7 @@ Abstract:
                 authors=authors_str,
                 year=paper.year,
                 doi=paper.doi,
+                paper_metadata_json=paper_md_json,
             ),
         ))
 
@@ -201,6 +213,7 @@ Abstract:
                         authors=authors_str,
                         year=paper.year,
                         doi=paper.doi,
+                        paper_metadata_json=paper_md_json,
                     ),
                 ))
 
@@ -439,6 +452,17 @@ Abstract:
         if not all_chunks:
             # Fallback: return pass-1 results as-is (if any)
             if hit_chunks:
+                import json as _json
+
+                def _decode_paper_md(hit_meta: Any) -> dict | None:
+                    blob = getattr(hit_meta, "paper_metadata_json", None)
+                    if not blob:
+                        return None
+                    try:
+                        return _json.loads(blob)
+                    except Exception:
+                        return None
+
                 return [
                     {
                         "paper_id": hit["paper_id"],
@@ -447,6 +471,7 @@ Abstract:
                         "authors": getattr(hit["metadata"], "authors", None),
                         "year": getattr(hit["metadata"], "year", None),
                         "doi": getattr(hit["metadata"], "doi", None),
+                        "paper_metadata": _decode_paper_md(hit["metadata"]),
                         "chunks": [{"chunk_index": 0, "text": hit["text"]}],
                         "full_text": hit["text"],
                     }
@@ -474,6 +499,15 @@ Abstract:
             chunks_list = grouped.get(pid, [])
             full_text = " ".join(c["text"] for c in chunks_list)
             meta = paper_meta.get(pid)
+            paper_md: dict | None = None
+            if meta is not None:
+                blob = getattr(meta, "paper_metadata_json", None)
+                if blob:
+                    try:
+                        import json as _json
+                        paper_md = _json.loads(blob)
+                    except Exception:
+                        paper_md = None
             results.append({
                 "paper_id": pid,
                 "paper_score": paper_scores[pid],
@@ -481,6 +515,7 @@ Abstract:
                 "authors": getattr(meta, "authors", None),
                 "year": getattr(meta, "year", None),
                 "doi": getattr(meta, "doi", None),
+                "paper_metadata": paper_md,
                 "chunks": chunks_list,
                 "full_text": full_text,
             })

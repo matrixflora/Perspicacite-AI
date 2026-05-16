@@ -583,7 +583,9 @@ def _chunk_to_metadata(metadata: ChunkMetadata) -> dict[str, Any]:
         result["doi"] = metadata.doi
     if metadata.url is not None:
         result["url"] = metadata.url
-        
+    if getattr(metadata, "paper_metadata_json", None) is not None:
+        result["paper_metadata_json"] = metadata.paper_metadata_json
+
     return result
 
 
@@ -602,6 +604,7 @@ def _metadata_to_chunk(metadata: dict[str, Any]) -> ChunkMetadata:
         year=metadata.get("year"),
         doi=metadata.get("doi"),
         url=metadata.get("url"),
+        paper_metadata_json=metadata.get("paper_metadata_json"),
     )
 
 
