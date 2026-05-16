@@ -45,7 +45,9 @@ class TestCollectFromBackend:
         assert successful == ["SemanticScholar"]
         assert failed == []
 
-    def test_failing_backend_logs_warning_and_appends_to_failed(self, capsys):
+    def test_failing_backend_logs_warning_and_appends_to_failed(self):
+        from structlog.testing import capture_logs
+
         adapter = self._make_adapter()
         collector = MagicMock()
         collector.run_job_collects.side_effect = RuntimeError(
@@ -54,31 +56,28 @@ class TestCollectFromBackend:
         successful: list[str] = []
         failed: list[str] = []
 
-        adapter._collect_from_backend(
-            collector=collector,
-            api_name="OpenAlex",
-            api_collect_list=[{"api": "OpenAlex"}],
-            successful_backends=successful,
-            failed_backends=failed,
-        )
+        with capture_logs() as logs:
+            adapter._collect_from_backend(
+                collector=collector,
+                api_name="OpenAlex",
+                api_collect_list=[{"api": "OpenAlex"}],
+                successful_backends=successful,
+                failed_backends=failed,
+            )
 
         # Failure isolated — no raise
         assert successful == []
         assert failed == ["OpenAlex"]
 
-        # Loud warning emitted with backend name.
-        # structlog uses PrintLoggerFactory in test environments (no
-        # setup_logging called), so output goes to stdout — check there.
-        captured = capsys.readouterr()
-        log_output = captured.out + captured.err
-        assert "OpenAlex" in log_output, (
-            "Expected a WARNING log mentioning OpenAlex in stdout/stderr; "
-            f"got: {log_output!r}"
-        )
-        assert "warning" in log_output.lower() or "WARNING" in log_output or "scilex_backend_failed" in log_output, (
-            "Expected log output to indicate a warning/failure; "
-            f"got: {log_output!r}"
-        )
+        # Loud warning emitted with backend name — captured at the structlog layer.
+        assert any(
+            record.get("log_level") == "warning"
+            and (
+                record.get("backend") == "OpenAlex"
+                or "OpenAlex" in str(record.get("event", ""))
+            )
+            for record in logs
+        ), f"Expected warning log mentioning OpenAlex; got {logs}"
 
     def test_failure_does_not_raise(self):
         """The helper must swallow exceptions — the parent loop relies on

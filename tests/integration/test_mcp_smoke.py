@@ -203,6 +203,14 @@ _TOOL_ARGS: dict[str, dict[str, Any]] = {
     "delete_knowledge_base": {
         "name": "nonexistent-smoke-kb",
     },
+    "ingest_asb_run": {
+        "asb_run_dir": "/nonexistent/path/asb_smoke",
+    },
+    "enrich_kb_from_cite_graph_tool": {
+        "kb_name": "nonexistent-smoke-kb",
+        "doi": "10.1234/fake-smoke-doi",
+        "dry_run": True,
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -262,6 +270,11 @@ def _fake_expand_kb(**kwargs):
         filter_reasons={},
         pdf_stats={"attempted": 0, "success": 0, "failed": 0},
     )
+
+
+async def _fake_enrich_kb_from_cite_graph(**kwargs):
+    """Return an empty hits list without hitting OpenAlex."""
+    return []
 
 
 def _make_coroutine(value):
@@ -339,9 +352,13 @@ async def test_tool_inventory(tool_name: str, mock_state):
             "perspicacite.pipeline.snowball.expand_kb_via_citations",
             new=_make_coroutine(_fake_expand_kb),
         ),
+        patch(
+            "perspicacite.pipeline.cite_graph.enrich_kb_from_cite_graph",
+            new=AsyncMock(side_effect=_fake_enrich_kb_from_cite_graph),
+        ),
     ]
 
-    with patches[0], patches[1], patches[2], patches[3]:
+    with patches[0], patches[1], patches[2], patches[3], patches[4]:
         try:
             result = await fn(**kwargs)
         except Exception as exc:
