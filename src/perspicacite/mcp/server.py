@@ -26,6 +26,7 @@ import uuid
 from typing import Any
 
 from perspicacite.logging import get_logger
+from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
 
 logger = get_logger("perspicacite.mcp.server")
 
@@ -2239,6 +2240,65 @@ async def enrich_kb_from_cite_graph_tool(
     ]}
 
 
+@mcp.tool()
+async def ingest_asb_run(
+    asb_run_dir: str,
+    kb_name: str | None = None,
+    include: list[str] | None = None,
+    mode: str = "composite",
+) -> str:
+    """
+    Ingest an Agent Skill Bundle (ASB) run directory into Perspicacité KBs.
+
+    The ASB run dir is expected to contain skills/_index.json and/or
+    cards/task_*.json+md pairs and optional workflow_dag.json. Both the
+    2026-05-15 (pair edges, executable=bool) and 2026-05-16+ (dict edges
+    with port labels, executable=dict) schemas are supported.
+
+    **Latency:** 30-300s depending on bundle size + backing-paper DOI
+    count. Each backing paper goes through the full DOI ingest path
+    (resolve + fetch + embed). Use >=300s HTTP timeout in clients;
+    prefer async dispatch for large bundles.
+
+    Args:
+        asb_run_dir: Absolute path to the ASB run directory.
+        kb_name: Target KB name. Defaults to the run-dir basename.
+        include: Subset of ["skills", "workflows"]. Defaults to both.
+        mode: "composite" (single KB) or "per-skill" (one KB per skill;
+            workflows still composite).
+
+    Returns:
+        JSON envelope with kb_names, skills_ingested, workflows_ingested,
+        papers_ingested, failed, workflow_dag.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state  # already _json_error
+
+    if not include:
+        include = ["skills", "workflows"]
+
+    try:
+        result = await ingest_asb_run_pipeline(
+            asb_run_dir=asb_run_dir,
+            kb_name=kb_name,
+            include=tuple(include),
+            mode=mode,
+            app_state=state,
+        )
+    except Exception as e:
+        logger.error("mcp_ingest_asb_run_error", error=str(e))
+        return _json_error(f"ASB ingest failed: {e}")
+
+    logger.info(
+        "mcp_ingest_asb_run",
+        kb_names=result.get("kb_names"),
+        skills=result.get("skills_ingested"),
+        workflows=result.get("workflows_ingested"),
+    )
+    return _json_ok(result)
+
+
 # =============================================================================
 # Resource
 # =============================================================================
@@ -2268,6 +2328,7 @@ _TOOL_NAMES: list[str] = [
     "expand_kb_via_citations",
     "delete_knowledge_base",
     "enrich_kb_from_cite_graph_tool",
+    "ingest_asb_run",
 ]
 
 
