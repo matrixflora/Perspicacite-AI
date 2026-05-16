@@ -274,15 +274,44 @@ class GitHubFetcher:
     def _cache_path_for(self, sha: str) -> Path:
         return self._cache_dir / sha
 
-    @staticmethod
-    def _is_valid_cache_entry(path: Path) -> bool:
-        """A cache entry is valid iff it exists and is non-empty.
+    # Filename written into ``cache_dir/<sha>/`` once the tarball
+    # extract loop (or the clone+checkout) has finished successfully.
+    # ``_is_valid_cache_entry`` requires its presence — without it a
+    # mid-extract cancellation would leave a partial directory that the
+    # next fetch would happily serve as a "cache hit".
+    _CACHE_SENTINEL = ".complete"
 
-        Empty directories typically come from aborted extractions
-        (the directory was created before tarfile decoding failed). We
-        delete them so the next fetch re-downloads cleanly."""
+    @classmethod
+    def _is_valid_cache_entry(cls, path: Path) -> bool:
+        """A cache entry is valid iff it exists, is non-empty, AND
+        contains the ``.complete`` sentinel.
 
-        return path.is_dir() and any(path.iterdir())
+        The sentinel is written ONCE the extract loop (tarball) or
+        clone+checkout (git fallback) has finished successfully. A
+        cache entry without the sentinel is treated as corrupt — for
+        example, an extraction cancelled after writing 5 of 50 files
+        leaves a non-empty dir that the old ``any(path.iterdir())``
+        check would have accepted as valid.
+        """
+
+        if not path.is_dir():
+            return False
+        if not (path / cls._CACHE_SENTINEL).is_file():
+            return False
+        # Sanity: an entry with ONLY the sentinel and nothing else is
+        # not actually a usable repo.
+        for child in path.iterdir():
+            if child.name != cls._CACHE_SENTINEL:
+                return True
+        return False
+
+    @classmethod
+    def _purge_cache_entry(cls, path: Path) -> None:
+        """Remove an invalid cache entry (partial extract, missing
+        sentinel, etc). Safe to call on a path that does not exist."""
+
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # Public API
@@ -326,17 +355,18 @@ class GitHubFetcher:
         """Download the repo tarball for ``sha``, extract under
         ``cache_dir/<sha>/``, and return that path.
 
-        Cache hits (a valid non-empty directory under ``cache_dir/<sha>/``)
-        return immediately without re-downloading. Stale partial
-        extracts (empty directories) are cleaned up and re-fetched.
+        Cache hits (a directory under ``cache_dir/<sha>/`` carrying the
+        :attr:`_CACHE_SENTINEL` marker) return immediately without
+        re-downloading. Stale partial extracts (no sentinel) are cleaned
+        up and re-fetched.
         """
 
         target = self._cache_path_for(sha)
         if self._is_valid_cache_entry(target):
             return target
-        if target.exists():
-            # Stale partial extract.
-            shutil.rmtree(target, ignore_errors=True)
+        # Either no entry, an empty partial-extract dir, or a non-empty
+        # partial-extract dir missing the sentinel. All are invalid.
+        self._purge_cache_entry(target)
 
         url = f"{self._api_base}/repos/{ref.org}/{ref.repo}/tarball/{sha}"
         async with httpx.AsyncClient(
@@ -362,11 +392,15 @@ class GitHubFetcher:
         try:
             self._extract_tarball(response.content, target)
         except (tarfile.TarError, OSError) as exc:
-            shutil.rmtree(target, ignore_errors=True)
+            self._purge_cache_entry(target)
             raise FetcherError(f"failed to extract tarball: {exc}") from exc
 
+        # Mark the extract complete BEFORE running the validity check;
+        # the check requires the sentinel to be present.
+        (target / self._CACHE_SENTINEL).touch()
+
         if not self._is_valid_cache_entry(target):
-            shutil.rmtree(target, ignore_errors=True)
+            self._purge_cache_entry(target)
             raise FetcherError("tarball extracted to an empty directory")
 
         return target
@@ -380,11 +414,26 @@ class GitHubFetcher:
         GitHub tarballs always have shape ``<org>-<repo>-<short_sha>/``
         at the top level; we use ``Path.parts`` to walk past it rather
         than parsing the directory name.
+
+        Path-traversal hardening
+        ------------------------
+        Two layers of defence:
+
+        1. Cheap *string* check: skip members whose name starts with
+           ``/`` or contains a ``..`` component. Catches the
+           overwhelming majority of malicious tarballs without
+           resolving anything on disk.
+        2. Resolved-path check: even after stripping the wrapper, the
+           final destination must ``resolve()`` to a path that is
+           ``is_relative_to(target.resolve())``. Catches edge cases
+           that slip past the string filter (e.g. clever component
+           interleavings, future loosening of the string check).
         """
 
+        target_resolved = target.resolve()
         with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:*") as tf:
             for member in tf.getmembers():
-                # Defence-in-depth: refuse path-traversal entries.
+                # Layer 1: cheap string-level rejection.
                 if member.name.startswith("/") or ".." in Path(member.name).parts:
                     continue
                 parts = Path(member.name).parts
@@ -393,6 +442,15 @@ class GitHubFetcher:
                     continue
                 rel = Path(*parts[1:])
                 dest = target / rel
+                # Layer 2: resolved-path check. Reject any member whose
+                # *resolved* destination is not inside the target tree.
+                try:
+                    resolved_dest = dest.resolve()
+                except (OSError, RuntimeError):
+                    # Symlink loops, missing parents, etc.
+                    continue
+                if not resolved_dest.is_relative_to(target_resolved):
+                    continue
                 if member.isdir():
                     dest.mkdir(parents=True, exist_ok=True)
                     continue
@@ -409,38 +467,47 @@ class GitHubFetcher:
     async def fetch_clone(self, ref: RepoRef, *, sha: str) -> Path:
         """Shallow ``git clone`` fallback when the REST API is throttled.
 
-        Uses HTTPS so unauthenticated clones still work, and bakes the
-        token into the URL when one is configured. Checks out the
-        explicit ``sha`` to keep the cache key stable across re-runs.
+        Uses HTTPS so unauthenticated clones still work. When a token
+        is configured it is passed via ``-c http.extraHeader=...``
+        rather than baked into the clone URL — the URL would otherwise
+        appear in ``git``'s stderr on failure and leak the token.
+        Checks out the explicit ``sha`` to keep the cache key stable
+        across re-runs.
         """
 
         target = self._cache_path_for(sha)
         if self._is_valid_cache_entry(target):
             return target
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
+        # Any existing entry without the sentinel is a partial extract;
+        # purge it before retrying.
+        self._purge_cache_entry(target)
 
         target.parent.mkdir(parents=True, exist_ok=True)
 
         clone_url = f"https://github.com/{ref.org}/{ref.repo}.git"
+        argv: list[str] = ["git"]
         if self._token:
-            clone_url = f"https://{self._token}@github.com/{ref.org}/{ref.repo}.git"
+            # Pass auth as an HTTP header rather than in the URL so
+            # git never echoes the token in error messages. The header
+            # value lives in argv (visible in ``ps``), which is still
+            # a risk, but a far smaller one than URL-leaking.
+            argv += [
+                "-c",
+                f"http.extraHeader=Authorization: Bearer {self._token}",
+            ]
+        argv += ["clone", "--depth=1", clone_url, str(target)]
 
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            "clone",
-            "--depth=1",
-            clone_url,
-            str(target),
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
-            shutil.rmtree(target, ignore_errors=True)
+            self._purge_cache_entry(target)
             raise FetcherError(
                 f"git clone failed (rc={proc.returncode}): "
-                f"{stderr.decode('utf-8', 'replace')[:500]}"
+                f"{self._scrub_secrets(stderr.decode('utf-8', 'replace'))[:500]}"
             )
 
         # If the clone landed on a different SHA (the default branch
@@ -451,11 +518,29 @@ class GitHubFetcher:
             await self._git_run(target, "fetch", "--depth=1", "origin", sha)
             await self._git_run(target, "checkout", sha)
 
+        # Mark the cloned working tree as a complete extract.
+        (target / self._CACHE_SENTINEL).touch()
+
         if not self._is_valid_cache_entry(target):
-            shutil.rmtree(target, ignore_errors=True)
+            self._purge_cache_entry(target)
             raise FetcherError("git clone produced an empty working tree")
 
         return target
+
+    def _scrub_secrets(self, text: str) -> str:
+        """Strip any literal occurrences of ``self._token`` from
+        ``text`` before it lands in an error message or log line.
+
+        Defense-in-depth: even with the ``-c http.extraHeader`` change,
+        a misconfigured upstream layer (e.g. a stored credential
+        helper, an old git config) could still echo the token. We
+        replace it with a redaction marker so the rest of the error
+        stays useful for debugging.
+        """
+
+        if not self._token:
+            return text
+        return text.replace(self._token, "<redacted-token>")
 
     @staticmethod
     async def _git_head_sha(repo: Path) -> str | None:
@@ -473,8 +558,7 @@ class GitHubFetcher:
             return None
         return out.decode("utf-8", "replace").strip() or None
 
-    @staticmethod
-    async def _git_run(repo: Path, *args: str) -> None:
+    async def _git_run(self, repo: Path, *args: str) -> None:
         proc = await asyncio.create_subprocess_exec(
             "git",
             "-C",
@@ -487,7 +571,7 @@ class GitHubFetcher:
         if proc.returncode != 0:
             raise FetcherError(
                 f"git {' '.join(args)} failed (rc={proc.returncode}): "
-                f"{stderr.decode('utf-8', 'replace')[:500]}"
+                f"{self._scrub_secrets(stderr.decode('utf-8', 'replace'))[:500]}"
             )
 
     async def fetch(self, ref: RepoRef) -> tuple[Path, str]:
