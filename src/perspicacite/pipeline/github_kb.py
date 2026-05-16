@@ -104,6 +104,11 @@ class IngestSummary:
         Mined ``(kind, value)`` pairs that were NOT routed because v1
         only auto-resolves DOIs. ArXiv / PMC entries land here so the
         operator can route them manually.
+    external_links_logged : int
+        Count of ``external_link`` Wave-4.3 KB-log events emitted for
+        non-paper URLs (datasets / tools) mined from README + docs.
+        Always ``0`` on the raw-repo path; non-zero for bundle ingests
+        when the bundle's prose cites at least one non-paper URL.
     mode : "repo" | "per-skill" | "composite"
         Discriminates the call site so a single ``list[IngestSummary]``
         from the batch path stays self-describing.
@@ -119,6 +124,7 @@ class IngestSummary:
     linked_papers_added: int
     linked_papers_skipped_non_doi: list[tuple[str, str]]
     mode: IngestMode
+    external_links_logged: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +309,12 @@ async def ingest_skill_bundle(
         app_state_for_doi_ingest=app_state_for_doi_ingest,
     )
 
+    external_links_logged = _emit_external_link_events(
+        manifest=manifest,
+        kb_name=kb_name,
+        config=config,
+    )
+
     return IngestSummary(
         kb_name=kb_name,
         bundle_name=manifest.name,
@@ -314,6 +326,7 @@ async def ingest_skill_bundle(
         linked_papers_added=linked_added,
         linked_papers_skipped_non_doi=skipped_non_doi,
         mode="per-skill",
+        external_links_logged=external_links_logged,
     )
 
 
@@ -490,6 +503,70 @@ async def _route_linked_papers(
     else:
         added = 0
     return added, skipped
+
+
+# ---------------------------------------------------------------------------
+# Internals — external-link KB log emission (Task 9)
+# ---------------------------------------------------------------------------
+
+
+def _emit_external_link_events(
+    *,
+    manifest: BundleManifest,
+    kb_name: str,
+    config: Config,
+) -> int:
+    """Walk the manifest's README + docs prose, mine non-paper URLs,
+    and emit one ``external_link`` Wave-4.3 KB-log event per URL.
+
+    Returns the number of events emitted. Best-effort: a write failure
+    on the KB log doesn't propagate (the underlying :class:`KBLogWriter`
+    swallows write errors), and any unexpected error here is logged but
+    not surfaced.
+    """
+    try:
+        bag = manifest.collect_external_links()
+    except Exception as exc:  # defensive — provenance is best-effort
+        logger.warning(
+            "github_kb.external_link_mining_failed",
+            extra={"kb_name": kb_name, "error": str(exc)},
+        )
+        return 0
+
+    if not bag.datasets and not bag.tools:
+        return 0
+
+    # Local imports keep the orchestrator import-cycle-free for callers
+    # that mock these seams in unit tests.
+    from pathlib import Path as _Path
+
+    from perspicacite.pipeline.kb_log import KBEvent, KBLogWriter
+
+    log_dir = _Path(
+        getattr(config.knowledge_base, "log_dir", "data/kb_logs")
+    )
+    kb_log = KBLogWriter(path=log_dir / f"{kb_name}.jsonl")
+
+    emitted = 0
+    for url in bag.datasets:
+        kb_log.append(KBEvent(
+            event="external_link",
+            kb_name=kb_name,
+            paper_id="",
+            source_command="ingest_skill_bundle",
+            extra={"url": url, "category": "dataset"},
+        ))
+        emitted += 1
+    for url in bag.tools:
+        kb_log.append(KBEvent(
+            event="external_link",
+            kb_name=kb_name,
+            paper_id="",
+            source_command="ingest_skill_bundle",
+            extra={"url": url, "category": "tool"},
+        ))
+        emitted += 1
+    return emitted
 
 
 # ---------------------------------------------------------------------------

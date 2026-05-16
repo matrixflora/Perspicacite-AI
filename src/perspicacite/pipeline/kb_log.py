@@ -24,7 +24,7 @@ logger = get_logger("perspicacite.pipeline.kb_log")
 
 EventKind = Literal[
     "kb_created", "paper_added", "paper_skipped",
-    "paper_failed", "kb_pruned",
+    "paper_failed", "kb_pruned", "external_link",
 ]
 
 

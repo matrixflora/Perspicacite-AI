@@ -20,6 +20,7 @@ See:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -323,6 +324,174 @@ async def test_ingest_skill_bundles_batch_per_skill_mode(
     for s in summaries:
         assert s.mode == "per-skill"
         assert s.bundle_name in {"bundle-a", "bundle-b"}
+
+
+# ---------------------------------------------------------------------------
+# external_link KB-log events (Task 9)
+# ---------------------------------------------------------------------------
+
+
+def _read_external_link_events(log_path: Path) -> list[dict]:
+    """Read the KB-log JSONL and return all ``external_link`` event payloads."""
+    if not log_path.exists():
+        return []
+    events: list[dict] = []
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        if not line:
+            continue
+        payload = json.loads(line)
+        if payload.get("event") == "external_link":
+            events.append(payload)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_external_links_emitted_to_kb_log(
+    tmp_path: Path, deterministic_embedder, monkeypatch
+):
+    """Sample bundle's README references a figshare dataset + a github
+    tool URL → at least one ``external_link`` event lands in the KB log."""
+    from perspicacite.pipeline import github_kb
+
+    async def fake_ingest_dois(*a, **kw):  # noqa: ARG001
+        return {"added_papers": 0, "added_chunks": 0,
+                "skipped_duplicates": 0, "failed": []}
+
+    monkeypatch.setattr(github_kb, "ingest_dois_into_kb", fake_ingest_dois)
+
+    cfg = _make_config()
+    cfg.knowledge_base.log_dir = tmp_path / "kb_logs"
+    vs = _make_chroma_store(tmp_path, deterministic_embedder)
+    ss = await _make_session_store(tmp_path)
+
+    summary = await github_kb.ingest_skill_bundle(
+        source=SAMPLE_BUNDLE,
+        kb_name="ext_link_kb",
+        config=cfg,
+        vector_store=vs,
+        embedding_service=deterministic_embedder,
+        session_store=ss,
+        ingest_linked_papers=False,
+    )
+    assert summary.external_links_logged >= 1
+
+    log_path = cfg.knowledge_base.log_dir / "ext_link_kb.jsonl"
+    events = _read_external_link_events(log_path)
+    assert len(events) >= 1
+
+
+@pytest.mark.asyncio
+async def test_external_link_event_carries_url_in_extra(
+    tmp_path: Path, deterministic_embedder, monkeypatch
+):
+    """Each ``external_link`` event's ``extra`` dict has a ``url`` key."""
+    from perspicacite.pipeline import github_kb
+
+    async def fake_ingest_dois(*a, **kw):  # noqa: ARG001
+        return {"added_papers": 0, "added_chunks": 0,
+                "skipped_duplicates": 0, "failed": []}
+
+    monkeypatch.setattr(github_kb, "ingest_dois_into_kb", fake_ingest_dois)
+
+    cfg = _make_config()
+    cfg.knowledge_base.log_dir = tmp_path / "kb_logs"
+    vs = _make_chroma_store(tmp_path, deterministic_embedder)
+    ss = await _make_session_store(tmp_path)
+
+    await github_kb.ingest_skill_bundle(
+        source=SAMPLE_BUNDLE,
+        kb_name="ext_link_url_kb",
+        config=cfg,
+        vector_store=vs,
+        embedding_service=deterministic_embedder,
+        session_store=ss,
+        ingest_linked_papers=False,
+    )
+    log_path = cfg.knowledge_base.log_dir / "ext_link_url_kb.jsonl"
+    events = _read_external_link_events(log_path)
+    assert events  # precondition for the carry-url assertion
+    for ev in events:
+        assert "url" in ev["extra"]
+        assert ev["extra"]["url"].startswith(("http://", "https://"))
+        assert ev["extra"]["category"] in {"dataset", "tool"}
+
+
+@pytest.mark.asyncio
+async def test_ingest_summary_external_links_logged_counts_correctly(
+    tmp_path: Path, deterministic_embedder, monkeypatch
+):
+    """The summary's ``external_links_logged`` matches the distinct URLs
+    mined from the bundle's README + docs."""
+    from perspicacite.pipeline import github_kb
+    from perspicacite.pipeline.github.bundle import BundleManifest
+
+    async def fake_ingest_dois(*a, **kw):  # noqa: ARG001
+        return {"added_papers": 0, "added_chunks": 0,
+                "skipped_duplicates": 0, "failed": []}
+
+    monkeypatch.setattr(github_kb, "ingest_dois_into_kb", fake_ingest_dois)
+
+    cfg = _make_config()
+    cfg.knowledge_base.log_dir = tmp_path / "kb_logs"
+    vs = _make_chroma_store(tmp_path, deterministic_embedder)
+    ss = await _make_session_store(tmp_path)
+
+    summary = await github_kb.ingest_skill_bundle(
+        source=SAMPLE_BUNDLE,
+        kb_name="count_ext_kb",
+        config=cfg,
+        vector_store=vs,
+        embedding_service=deterministic_embedder,
+        session_store=ss,
+        ingest_linked_papers=False,
+    )
+    # Compute the expected count straight from the orchestrator's
+    # collection method so the test stays self-consistent with the
+    # mining logic.
+    manifest = BundleManifest.from_directory(SAMPLE_BUNDLE)
+    bag = manifest.collect_external_links()
+    expected = len(bag.datasets) + len(bag.tools)
+    assert summary.external_links_logged == expected
+
+
+@pytest.mark.asyncio
+async def test_no_external_link_events_when_readme_only_bundle(
+    tmp_path: Path, deterministic_embedder
+):
+    """A README-only bundle with no URLs → 0 external_link events +
+    ``external_links_logged == 0``."""
+    from perspicacite.pipeline import github_kb
+
+    bundle = tmp_path / "url-free"
+    bundle.mkdir()
+    (bundle / "README.md").write_text(
+        "# url-free\n\nPure prose, no URLs.\n", encoding="utf-8"
+    )
+
+    cfg = _make_config()
+    cfg.knowledge_base.log_dir = tmp_path / "kb_logs"
+    vs = _make_chroma_store(tmp_path, deterministic_embedder)
+    ss = await _make_session_store(tmp_path)
+
+    summary = await github_kb.ingest_skill_bundle(
+        source=bundle,
+        kb_name="urlfree_kb",
+        config=cfg,
+        vector_store=vs,
+        embedding_service=deterministic_embedder,
+        session_store=ss,
+        ingest_linked_papers=False,
+    )
+    assert summary.external_links_logged == 0
+
+    log_path = cfg.knowledge_base.log_dir / "urlfree_kb.jsonl"
+    events = _read_external_link_events(log_path)
+    assert events == []
+
+
+# ---------------------------------------------------------------------------
+# ingest_skill_bundles_batch (continued)
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

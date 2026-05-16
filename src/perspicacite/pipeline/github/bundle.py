@@ -258,6 +258,44 @@ class BundleManifest:
                 refs.add((ref.kind, ref.value))
         return refs
 
+    def collect_external_links(self) -> LinkBag:
+        """Return a deduped :class:`LinkBag` of inline links mined from
+        README + ``docs/**/*.md``.
+
+        Companion to :meth:`collect_paper_refs`: that method returns the
+        paper IDs the KB ingester routes through DOI-resolve; this one
+        returns the *non-paper* URLs (``datasets`` / ``tools``) so the
+        orchestrator can record them in the KB log as ``external_link``
+        events. Paper refs surface in :attr:`LinkBag.papers` too, for
+        callers that need a single mining sweep.
+
+        Dedup is per-bucket and preserves first-seen order across the
+        README + docs walk.
+        """
+        merged = LinkBag()
+        seen_papers: set[tuple[str, str]] = set()
+        seen_datasets: set[str] = set()
+        seen_tools: set[str] = set()
+        for text in self._iter_prose_texts():
+            bag = extract_links_from_text(text)
+            for ref in bag.papers:
+                key = (ref.kind, ref.value)
+                if key in seen_papers:
+                    continue
+                seen_papers.add(key)
+                merged.papers.append(ref)
+            for url in bag.datasets:
+                if url in seen_datasets:
+                    continue
+                seen_datasets.add(url)
+                merged.datasets.append(url)
+            for url in bag.tools:
+                if url in seen_tools:
+                    continue
+                seen_tools.add(url)
+                merged.tools.append(url)
+        return merged
+
     # ---- internals ------------------------------------------------------
 
     def _iter_prose_texts(self) -> Iterable[str]:
