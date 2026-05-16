@@ -6,7 +6,7 @@ This package provides download functionality from various sources:
 - Publisher routes (ACS, RSC, AAAS, Springer, Wiley, Elsevier)
 - OpenAlex OA PDF URLs
 - Europe PMC JATS XML (structured sections + references)
-- Alternative endpoints (Sci-Hub mirrors)
+- Alternative endpoints (user-configured private/institutional repositories)
 
 Main entry point:
 

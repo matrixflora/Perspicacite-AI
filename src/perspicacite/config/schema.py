@@ -901,7 +901,12 @@ class PDFDownloadConfig(BaseModel):
     )
     alternative_endpoint: Optional[str] = Field(
         default=None,
-        description="Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror). User must provide their own.",
+        description=(
+            "Alternative endpoint for PDF downloads — a private or "
+            "institutional repository the user maintains (campus proxy, "
+            "internal aggregator of pre-cleared PDFs, on-prem PDF cache). "
+            "User-provided; empty by default. Receives ``<base>/<doi>``."
+        ),
     )
 
     # Publisher API keys for institutional access

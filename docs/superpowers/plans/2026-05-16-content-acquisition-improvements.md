@@ -246,7 +246,7 @@ For each priority, an MCP-level integration test against a clean Zotero scratch 
 ## Out of scope (mentioned for completeness)
 
 - Re-implementing Zotero's connector (browser extension that does the magic for paywalled OA papers). The Zotero project ships this; we should *use* it rather than rebuild.
-- Sci-Hub fallback — already configured (`alternative_endpoint`) but ethically/legally fraught; not improving here.
+- Third-party PDF mirrors via `alternative_endpoint` — `alternative_endpoint` is intentionally limited to user-configured private/institutional repositories (campus proxies, on-prem caches). Not extending here.
 - Generic web-archive (Wayback) fallback when the page is gone — useful but tangential to acquisition.
 
 ---

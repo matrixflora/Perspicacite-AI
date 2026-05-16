@@ -8,8 +8,8 @@ Usage:
     # Test with Unpaywall only (no alternative endpoint)
     python test_download_real.py
     
-    # Test with alternative endpoint
-    export SCIHUB_URL="https://your-mirror.com/"
+    # Test with a private/institutional alternative endpoint
+    export PERSPICACITE_ALT_ENDPOINT="https://pdfs.your-institution.example.org/"
     python test_download_real.py
     
     # Run with pytest
@@ -58,7 +58,7 @@ def get_alternative_endpoint():
     from perspicacite.config.loader import load_config
     
     # First check environment
-    endpoint = os.getenv("SCIHUB_URL")
+    endpoint = os.getenv("PERSPICACITE_ALT_ENDPOINT")
     if endpoint:
         return endpoint
     
@@ -152,13 +152,13 @@ class TestRealUnpaywallDownload:
 
 
 class TestRealAlternativeEndpoint:
-    """Test real PDF downloads from alternative endpoint (e.g., Sci-Hub)."""
+    """Test real PDF downloads from a user-configured alternative endpoint."""
     
     @pytest.mark.asyncio
     @pytest.mark.integration
     @pytest.mark.skipif(
         not get_alternative_endpoint(),
-        reason="No alternative endpoint configured. Set SCIHUB_URL or configure in config.yml"
+        reason="No alternative endpoint configured. Set PERSPICACITE_ALT_ENDPOINT or configure in config.yml"
     )
     async def test_alternative_endpoint_download(self, alternative_endpoint):
         """Test actual PDF download from alternative endpoint."""
@@ -321,7 +321,7 @@ class TestBibTeXFileIntegration:
             print("\n⚠ All downloads failed - this may be due to:")
             print("  - No open access available for these papers")
             print("  - Missing Unpaywall email (set UNPAYWALL_EMAIL)")
-            print("  - Missing alternative endpoint (set SCIHUB_URL)")
+            print("  - Missing alternative endpoint (set PERSPICACITE_ALT_ENDPOINT)")
             print("  - Network connectivity issues")
 
 
