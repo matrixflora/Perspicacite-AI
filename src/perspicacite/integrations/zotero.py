@@ -34,6 +34,91 @@ def _extract_doi_from_extra(extra: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _normalize_doi(doi: str | None) -> str:
+    """Lowercase + strip surrounding whitespace + strip the doi.org URL prefix
+    and any trailing punctuation that bibtex/landing pages sometimes leave on."""
+    if not doi:
+        return ""
+    s = str(doi).strip().lower()
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    return s.rstrip(".,;")
+
+
+def _doi_matches(zotero_item: dict, normalized_doi: str) -> bool:
+    """Return True when the Zotero item's DOI (in ``data.DOI`` or in the
+    ``extra`` field) matches the supplied normalized DOI."""
+    if not normalized_doi:
+        return False
+    data = zotero_item.get("data") or {}
+    raw = data.get("DOI") or _extract_doi_from_extra(data.get("extra") or "")
+    return _normalize_doi(raw) == normalized_doi
+
+
+def _normalize_url(url: str | None) -> str:
+    """Lowercase + strip scheme + strip trailing slash for URL-based dedup."""
+    if not url:
+        return ""
+    s = str(url).strip().lower()
+    for prefix in ("https://", "http://"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    return s.rstrip("/")
+
+
+def _url_matches(zotero_item: dict, normalized_url: str) -> bool:
+    if not normalized_url:
+        return False
+    data = zotero_item.get("data") or {}
+    return _normalize_url(data.get("url") or "") == normalized_url
+
+
+# Maps internal "kind" fields onto Zotero schema fields by itemType.
+# Only the fields the create flow actually fills in are listed; everything
+# else stays at Zotero's defaults.
+def _build_item_body(
+    *,
+    item_type: str,
+    paper: dict,
+    doi: str,
+    url: str,
+    creators: list[dict],
+    collection_key: str,
+) -> dict:
+    base = {
+        "itemType": item_type,
+        "title": paper.get("title") or "",
+        "creators": creators,
+        "abstractNote": paper.get("abstract") or "",
+        "date": str(paper.get("year") or paper.get("date") or ""),
+        "tags": paper.get("tags") or [],
+        **({"collections": [collection_key]} if collection_key else {}),
+    }
+    if item_type == "journalArticle":
+        base["DOI"] = doi
+        base["publicationTitle"] = paper.get("journal") or paper.get("publication_title") or ""
+        base["url"] = url
+    elif item_type == "preprint":
+        base["DOI"] = doi
+        base["repository"] = paper.get("repository") or ""
+        base["archiveID"] = paper.get("archive_id") or paper.get("archiveID") or ""
+        base["url"] = url
+    elif item_type == "webpage":
+        base["url"] = url
+        base["websiteTitle"] = paper.get("website_title") or paper.get("repository") or ""
+    elif item_type == "computerProgram":
+        base["url"] = url
+        base["programmingLanguage"] = paper.get("programming_language") or ""
+        base["versionNumber"] = paper.get("version") or ""
+    else:
+        base["DOI"] = doi
+        base["url"] = url
+    return base
+
+
 class _HTMLStripper(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -98,6 +183,94 @@ class ZoteroClient:
         """True if base_url points at the Zotero desktop local API (loopback)."""
         return "localhost" in self.base_url or "127.0.0.1" in self.base_url
 
+    async def _find_existing_by_url(self, url: str) -> str | None:
+        """Find an existing item whose ``data.url`` matches the given URL.
+
+        Same two-stage approach as DOI dedup: search index first, recent-items
+        fallback second. URL is matched after stripping the scheme and any
+        trailing slash so https://example.com/x and http://example.com/x/
+        compare equal.
+        """
+        norm = _normalize_url(url)
+        if not norm:
+            return None
+        c = await self._client()
+        try:
+            r = await c.get(
+                f"{self._base()}/items",
+                params={"q": url, "qmode": "everything", "format": "json"},
+                headers=self._headers(),
+            )
+            if r.status_code == 200:
+                for item in r.json() or []:
+                    if _url_matches(item, norm):
+                        return item.get("key")
+        except httpx.HTTPError:
+            pass
+        try:
+            r2 = await c.get(
+                f"{self._base()}/items",
+                params={"direction": "desc", "limit": 100, "format": "json"},
+                headers=self._headers(),
+            )
+            if r2.status_code == 200:
+                for item in r2.json() or []:
+                    if _url_matches(item, norm):
+                        return item.get("key")
+        except httpx.HTTPError:
+            pass
+        return None
+
+    async def _find_existing_by_doi(self, doi: str) -> str | None:
+        """Find an existing item by DOI, immune to Zotero search indexing lag.
+
+        Two-stage lookup:
+        1. ``q=<doi>&qmode=everything`` — fast path, hits the search index
+           (indexed within minutes-to-hours of item creation).
+        2. ``direction=desc&limit=100`` — fallback for items not yet indexed;
+           list the 100 most-recently-modified items and filter client-side.
+
+        Returns the existing key if a match is found, else None.
+        """
+        norm = _normalize_doi(doi)
+        if not norm:
+            return None
+
+        c = await self._client()
+
+        # Stage 1: indexed search
+        try:
+            r = await c.get(
+                f"{self._base()}/items",
+                params={"q": doi, "qmode": "everything", "format": "json"},
+                headers=self._headers(),
+            )
+            if r.status_code == 200:
+                for item in r.json() or []:
+                    if _doi_matches(item, norm):
+                        return item.get("key")
+        except httpx.HTTPError:
+            pass  # fall through to recent-items scan
+
+        # Stage 2: recent-items fallback (indexing lag).
+        # Even with the search index out-of-sync, the items list itself is
+        # immediately consistent — checking the 100 newest items catches
+        # the typical "pushed-it-myself a moment ago" double-create case.
+        try:
+            r2 = await c.get(
+                f"{self._base()}/items",
+                params={"direction": "desc", "limit": 100, "format": "json"},
+                headers=self._headers(),
+            )
+            if r2.status_code == 200:
+                for item in r2.json() or []:
+                    if _doi_matches(item, norm):
+                        return item.get("key")
+        except httpx.HTTPError:
+            pass
+
+        return None
+
     async def create_item(self, paper: dict[str, Any]) -> str | None:
         """Create a journalArticle item; returns the new (or pre-existing) key.
 
@@ -117,27 +290,15 @@ class ZoteroClient:
 
         c = await self._client()
         doi = paper.get("doi")
+        url = paper.get("url")
         if doi:
-            try:
-                r = await c.get(
-                    f"{self._base()}/items",
-                    params={"q": doi, "qmode": "everything", "format": "json"},
-                    headers=self._headers(),
-                )
-                if r.status_code == 200:
-                    for item in r.json() or []:
-                        # Zotero stores DOI in `DOI` for journalArticle items
-                        # and sometimes in `extra` for other types.
-                        data = item.get("data") or {}
-                        existing_doi = (
-                            data.get("DOI")
-                            or _extract_doi_from_extra(data.get("extra") or "")
-                            or ""
-                        )
-                        if existing_doi.lower().strip() == doi.lower().strip():
-                            return item.get("key")
-            except httpx.HTTPError:
-                pass  # fall through to create
+            existing_key = await self._find_existing_by_doi(doi)
+            if existing_key:
+                return existing_key
+        elif url:
+            existing_key = await self._find_existing_by_url(url)
+            if existing_key:
+                return existing_key
 
         creators = []
         for a in (paper.get("authors") or []):
@@ -150,16 +311,31 @@ class ZoteroClient:
         if not creators:
             creators = [{"creatorType": "author", "firstName": "", "lastName": "Unknown"}]
 
-        body = [{
-            "itemType": "journalArticle",
-            "title": paper.get("title") or "",
-            "DOI": doi or "",
-            "date": str(paper.get("year") or ""),
-            "publicationTitle": paper.get("journal") or "",
-            "abstractNote": paper.get("abstract") or "",
-            "creators": creators,
-            **({"collections": [self.collection_key]} if self.collection_key else {}),
-        }]
+        # Item-type selection:
+        # - explicit `item_type` always wins
+        # - DOI present → journalArticle (or preprint for 10.48550/arXiv.*)
+        # - URL only → webpage
+        item_type = paper.get("item_type")
+        if not item_type:
+            if doi:
+                item_type = (
+                    "preprint"
+                    if doi.lower().startswith("10.48550/arxiv.")
+                    else "journalArticle"
+                )
+            elif url:
+                item_type = "webpage"
+            else:
+                item_type = "journalArticle"
+
+        body = [_build_item_body(
+            item_type=item_type,
+            paper=paper,
+            doi=doi or "",
+            url=url or "",
+            creators=creators,
+            collection_key=self.collection_key,
+        )]
         try:
             r = await c.post(f"{self._base()}/items", json=body, headers=self._headers())
         except httpx.HTTPError as exc:
