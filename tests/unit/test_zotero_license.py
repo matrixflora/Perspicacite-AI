@@ -102,3 +102,16 @@ def test_cache_hit():
     clf._cache["10.9999/test"] = (info1, 9999999999)  # expires far future
     info2 = clf.get_cached("10.9999/test")
     assert info2 is info1
+
+def test_classify_zotero_tag_cc_by_nc_is_closed():
+    item = {"data": {"tags": [{"tag": "cc-by-nc"}]}}
+    info = _clf().classify_zotero_tags(item)
+    assert info is not None
+    assert info.classification == "closed"
+    assert info.policy == "reflavor"
+
+def test_classify_zotero_tag_cc_by_nd_is_closed():
+    item = {"data": {"tags": [{"tag": "cc-by-nd-4.0"}]}}
+    info = _clf().classify_zotero_tags(item)
+    assert info is not None
+    assert info.classification == "closed"
