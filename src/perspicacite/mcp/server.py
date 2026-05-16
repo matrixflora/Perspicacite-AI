@@ -170,18 +170,59 @@ async def _resolve_push_input(
             raise RuntimeError(
                 "bibtexparser not installed; pip install bibtexparser"
             ) from exc
+        import re as _re
         bib = bibtexparser.loads(inp["bibtex"])
         if not bib.entries:
             raise RuntimeError("bibtex string contained no entries")
         e = bib.entries[0]
+
+        def _unbrace(s: str) -> str:
+            """Recursively strip BibTeX ``{...}`` case-preservation braces.
+            ``The {Evolving} {Role} of {LLM}`` → ``The Evolving Role of LLM``."""
+            if not s:
+                return s
+            prev = None
+            while s != prev:
+                prev = s
+                s = _re.sub(r"\{([^{}]*)\}", r"\1", s)
+            # Collapse runs of whitespace introduced by removed braces
+            return _re.sub(r"\s+", " ", s).strip()
+
+        # arXiv promotion: prefer eprint+archivePrefix=arXiv (canonical),
+        # fall back to a url like ``arxiv.org/abs/<id>``. The synthesized
+        # ``10.48550/arXiv.<id>`` routes the entry through the DOI path
+        # (preprint item_type, real PDF fetch) instead of being demoted
+        # to a webpage when only ``url`` is present in the bib.
+        eprint = (e.get("eprint") or "").strip()
+        archive_prefix = (e.get("archiveprefix") or e.get("archivePrefix") or "").lower()
+        arxiv_id: str | None = None
+        if archive_prefix == "arxiv" and _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint):
+            arxiv_id = eprint
+        elif _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint):
+            arxiv_id = eprint
+        elif e.get("url"):
+            m = _re.search(
+                r"arxiv\.org/(?:abs|pdf)/([0-9]{4}\.[0-9]{4,6})",
+                e.get("url", ""),
+            )
+            if m:
+                arxiv_id = m.group(1)
+
+        explicit_doi = (e.get("doi") or "").strip().rstrip(".") or None
+        synthetic_doi = f"10.48550/arXiv.{arxiv_id}" if arxiv_id else None
+
         promoted = {
-            "doi": (e.get("doi") or "").strip().rstrip(".") or None,
+            "doi": explicit_doi or synthetic_doi,
             "url": e.get("url") or "",
-            "title": e.get("title", "").strip("{}"),
+            "title": _unbrace(e.get("title", "")),
             "year": e.get("year"),
-            "authors": [a.strip() for a in (e.get("author") or "").split(" and ") if a.strip()],
-            "journal": e.get("journal") or "",
-            "abstract": e.get("abstract") or "",
+            "authors": [
+                _unbrace(a.strip())
+                for a in (e.get("author") or "").split(" and ")
+                if a.strip()
+            ],
+            "journal": _unbrace(e.get("journal") or ""),
+            "abstract": _unbrace(e.get("abstract") or ""),
         }
         promoted = {k: v for k, v in promoted.items() if v}
         return await _resolve_push_input(promoted, http_client=http_client)
