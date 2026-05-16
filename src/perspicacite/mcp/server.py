@@ -2018,6 +2018,115 @@ async def ingest_local_documents(
 
 
 @mcp.tool()
+async def ingest_urls_to_kb(
+    kb_name: str,
+    urls: list[str],
+) -> dict:
+    """Ingest arbitrary URLs into ``kb_name`` as searchable KB content.
+
+    For each URL:
+
+    - **GitHub repository URLs** (``github.com/owner/repo``) fetch the
+      raw README via the GitHub API. The README's existing Markdown
+      structure (headings, code blocks) flows directly into the
+      heading-aware Markdown chunker.
+    - **Other URLs** fetch the HTML and convert to Markdown. With the
+      optional ``[html-ingest]`` extra installed (trafilatura), the
+      conversion strips boilerplate (nav, footers, ads) and preserves
+      heading hierarchy. Without it, falls back to a basic
+      BeautifulSoup text extraction.
+
+    The converted Markdown is written to ``data/url_cache/<slug>.md``
+    and then ingested via the regular local-docs path — so it picks
+    up the same heading-aware chunking, embeddings, and KB-log
+    bookkeeping as a hand-fed ``.md`` file would. Cache files are
+    persisted across runs; re-ingesting the same URL re-fetches and
+    overwrites.
+
+    Returns ``{"added_chunks": N, "files": M, "results": [...]}``
+    with per-URL status (``ok`` / ``fetch_failed`` / ``empty``).
+
+    Args:
+        kb_name: Target KB name (must exist; create with
+            ``create_knowledge_base`` first).
+        urls: Up to 50 URLs in one call.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return {"error": state}
+    if not urls:
+        return {"added_chunks": 0, "files": 0, "results": []}
+    if len(urls) > 50:
+        return {"error": "url batch too large (max 50)"}
+
+    import re as _re
+    from pathlib import Path
+
+    import httpx
+
+    from perspicacite.integrations.local_docs import (
+        ingest_local_documents as _ingest,
+    )
+    from perspicacite.pipeline.download.url_to_markdown import (
+        fetch_url_as_markdown,
+    )
+
+    cache_dir = Path("data/url_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    results: list[dict] = []
+    written_paths: list[Path] = []
+    async with httpx.AsyncClient(
+        timeout=30.0, follow_redirects=True,
+    ) as http_client:
+        for url in urls:
+            slug = _re.sub(r"[^a-zA-Z0-9.]+", "_", url.lower())[:120] or "url"
+            dest = cache_dir / f"{slug}.md"
+            try:
+                md, title = await fetch_url_as_markdown(
+                    url, http_client=http_client,
+                )
+                # Prepend the title as an H1 so the markdown chunker
+                # uses it as the top-level section anchor.
+                if title and not md.lstrip().startswith("#"):
+                    md = f"# {title}\n\n{md}"
+                dest.write_text(md, encoding="utf-8")
+                written_paths.append(dest)
+                results.append({
+                    "url": url, "status": "ok",
+                    "chars": len(md), "path": str(dest),
+                })
+            except Exception as exc:
+                results.append({
+                    "url": url, "status": "fetch_failed",
+                    "error": str(exc)[:200],
+                })
+
+    if not written_paths:
+        return {"added_chunks": 0, "files": 0, "results": results}
+
+    class _Reg:
+        async def publish(self, jid, ev): pass
+        async def finish(self, jid, res): self._res = res
+        async def fail(self, jid, err): self._err = err
+
+    reg = _Reg()
+    ingest_result = await _ingest(
+        kb_name=kb_name,
+        paths=written_paths,
+        app_state=mcp_state,
+        registry=reg,
+        job_id="mcp-url-ingest",
+        recursive=False,
+    )
+    return {
+        "added_chunks": int(ingest_result.get("added_chunks", 0)),
+        "files": int(ingest_result.get("files", 0)),
+        "results": results,
+    }
+
+
+@mcp.tool()
 async def build_capsule(
     paper_id: str,
     kb_name: str,
