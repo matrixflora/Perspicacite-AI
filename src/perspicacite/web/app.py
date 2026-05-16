@@ -40,6 +40,7 @@ from perspicacite.web.routers import (
     health as health_router,
     jobs as jobs_router,
     kb as kb_router,
+    llm_proxy as llm_proxy_router,
     survey as survey_router,
     zotero as zotero_router,
     zotero_ingest as zotero_ingest_router,
@@ -77,6 +78,7 @@ app.include_router(health_router.router)
 app.include_router(conversations_router.router)
 app.include_router(chat_router.router)
 app.include_router(kb_router.router)
+app.include_router(llm_proxy_router.router)
 app.include_router(survey_router.router)
 app.include_router(jobs_router.router)
 app.include_router(zotero_router.router)

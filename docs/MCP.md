@@ -39,3 +39,23 @@ existing clients don't break during the migration.
 
 There is no auth on the MCP endpoint by default. Run behind a
 reverse proxy or expose only on `localhost` in production.
+
+## REST: `/api/llm/proxy` (added 2026-05-15)
+
+Pure LLM gateway. No RAG, no KB. Use this when you want
+Perspicacité's configured API keys + stage-tiering rules but
+don't want retrieval.
+
+```bash
+curl -X POST http://localhost:5468/api/llm/proxy \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"What is mass spectrometry?","model":"claude-haiku-4-5"}'
+```
+
+Request body fields:
+
+- `prompt` (required): the prompt text
+- `model` (optional): override model (defaults to `llm.default_model` from config)
+- `max_tokens` (optional, default 2048)
+- `temperature` (optional, default 0.7)
+- `stage` (optional): stage hint passed through to the LLM client
