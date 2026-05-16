@@ -20,6 +20,7 @@ from perspicacite.pipeline.github.bundle import (
     PaperRef,
     extract_links_from_text,
 )
+from perspicacite.pipeline.github.chunk_producer import papers_from_directory
 from perspicacite.pipeline.github.fetcher import (
     FetcherError,
     GitHubFetcher,
@@ -27,6 +28,7 @@ from perspicacite.pipeline.github.fetcher import (
     RepoRef,
     parse_repo_url,
 )
+from perspicacite.pipeline.github.walk import walk_filtered
 
 __all__ = [
     "DEFAULT_EXCLUDE_GLOBS",
@@ -40,5 +42,7 @@ __all__ = [
     "RateLimitedError",
     "RepoRef",
     "extract_links_from_text",
+    "papers_from_directory",
     "parse_repo_url",
+    "walk_filtered",
 ]
