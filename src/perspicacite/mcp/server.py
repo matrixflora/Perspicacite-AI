@@ -2474,7 +2474,7 @@ async def zotero_get_paper_resources(
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
     if not (cfg and cfg.enabled and cfg.api_key):
-        return {"error": "ZOTERO_NOT_CONFIGURED"}
+        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "Zotero not enabled or api_key missing"}
 
     eff_library_id = library_id or cfg.library_id
     if not eff_library_id:
@@ -2587,7 +2587,7 @@ async def zotero_ingest_collection_to_kb(
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
     if not (cfg and cfg.enabled and cfg.api_key):
-        return {"error": "ZOTERO_NOT_CONFIGURED"}
+        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "Zotero not enabled or api_key missing"}
 
     eff_library_id = library_id or cfg.library_id
     if not eff_library_id:
