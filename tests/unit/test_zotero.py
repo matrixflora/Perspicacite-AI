@@ -1,7 +1,11 @@
 import httpx
 import pytest
 
-from perspicacite.integrations.zotero import ZoteroClient
+from perspicacite.integrations.zotero import (
+    ZoteroAuthError,
+    ZoteroClient,
+    _TokenBucket,
+)
 
 
 @pytest.mark.asyncio
@@ -457,3 +461,94 @@ async def test_upload_attachment_uses_if_match_and_prefix_suffix_protocol(
     assert html_bytes in captured_body["body"]
     assert b"name=\"key\"" in captured_body["body"]  # prefix carries the S3 key field
     assert captured_body["body"].endswith(b"------X--")
+
+
+
+# ---------------------------------------------------------------------------
+# Production hardening: validate_credentials() + 401/403 fail-fast + rate limit
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_validate_credentials_returns_key_info_on_200(respx_mock):
+    respx_mock.get("https://api.zotero.org/keys/cloud-key").mock(
+        return_value=httpx.Response(
+            200,
+            json={"key": "cloud-key", "access": {"user": {"library": True}}},
+        )
+    )
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="cloud-key", library_id="123", library_type="user",
+            http_client=http,
+        )
+        info = await c.validate_credentials()
+    assert info["key"] == "cloud-key"
+
+
+@pytest.mark.asyncio
+async def test_validate_credentials_raises_authError_on_401_without_retry(
+    respx_mock,
+):
+    """The whole point: on 401 we must raise immediately, NEVER retry.
+    Looping 401s on Zotero triggers the ~15min IP-level lockout that
+    was the original motivation for this hardening."""
+    route = respx_mock.get("https://api.zotero.org/keys/bad-key").mock(
+        return_value=httpx.Response(401, text="bad api key")
+    )
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="bad-key", library_id="123", library_type="user",
+            http_client=http,
+        )
+        with pytest.raises(ZoteroAuthError, match="api_key"):
+            await c.validate_credentials()
+    # Single attempt — no retry burst
+    assert route.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_create_item_raises_authError_on_403_without_retry(respx_mock):
+    """Same fail-fast contract on the write path."""
+    respx_mock.get(
+        url__regex=r"https://api\.zotero\.org/users/123/items.*"
+    ).mock(return_value=httpx.Response(200, json=[]))
+    route = respx_mock.post("https://api.zotero.org/users/123/items").mock(
+        return_value=httpx.Response(403, text="permission denied")
+    )
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="k", library_id="123", library_type="user",
+            http_client=http,
+        )
+        with pytest.raises(ZoteroAuthError, match="create_item"):
+            await c.create_item({"title": "X", "doi": "10.1/x"})
+    assert route.call_count == 1
+
+
+def test_token_bucket_basic_consume():
+    """A burst of N tokens should be consumable immediately."""
+    import asyncio
+    bucket = _TokenBucket(rate_per_sec=10.0, burst=3.0)
+
+    async def consume_three():
+        for _ in range(3):
+            await bucket.acquire()
+        return True
+
+    assert asyncio.run(consume_three()) is True
+
+
+@pytest.mark.asyncio
+async def test_token_bucket_blocks_when_burst_exhausted():
+    """After consuming the burst, the next acquire should wait
+    ~(1/rate) seconds. We use a high rate so the test is fast but
+    measurable."""
+    import time
+    bucket = _TokenBucket(rate_per_sec=50.0, burst=1.0)
+    await bucket.acquire()  # consume the only burst token
+    t0 = time.monotonic()
+    await bucket.acquire()  # should sleep ~20ms
+    elapsed = time.monotonic() - t0
+    # Allow generous slack (CI noise) but reject "no wait at all"
+    assert 0.005 < elapsed < 0.5
