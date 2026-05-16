@@ -30,7 +30,7 @@ Design references:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -267,17 +267,21 @@ async def ingest_skill_bundle(
         If ``ingest_linked_papers=True`` but no ``app_state_for_doi_ingest``
         was supplied.
     """
+    # Precondition check before any fetch/clone — misconfigured callers
+    # shouldn't pay for a potentially expensive ``_resolve_bundle_source``
+    # (clone-to-cache + working-tree extraction) when the linked-paper
+    # routing seam is missing.
+    if ingest_linked_papers and app_state_for_doi_ingest is None:
+        raise ValueError(
+            "app_state_for_doi_ingest is required when ingest_linked_papers=True"
+        )
+
     bundle_dir = await _resolve_bundle_source(source, config=config, fetcher=fetcher)
     manifest = BundleManifest.from_directory(bundle_dir)
 
     if kb_name is None:
         kb_name = config.bundles.default_kb_name_template.format(
             name=manifest.name,
-        )
-
-    if ingest_linked_papers and app_state_for_doi_ingest is None:
-        raise ValueError(
-            "app_state_for_doi_ingest is required when ingest_linked_papers=True"
         )
 
     papers = papers_from_directory(bundle_dir, manifest, commit_sha=None)
@@ -368,18 +372,7 @@ async def ingest_skill_bundles_batch(
             # Re-stamp mode + kb_name so the summary reads as "composite"
             # for downstream consumers without depending on the inner
             # call having known the composite context.
-            summary = IngestSummary(
-                kb_name=composite_kb,
-                bundle_name=summary.bundle_name,
-                repo_org=summary.repo_org,
-                repo_name=summary.repo_name,
-                commit_sha=summary.commit_sha,
-                files_added=summary.files_added,
-                chunks_added=summary.chunks_added,
-                linked_papers_added=summary.linked_papers_added,
-                linked_papers_skipped_non_doi=summary.linked_papers_skipped_non_doi,
-                mode="composite",
-            )
+            summary = replace(summary, kb_name=composite_kb, mode="composite")
         summaries.append(summary)
 
     return summaries

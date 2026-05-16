@@ -11,8 +11,8 @@ the 2026-05-15 GitHub / skill-bundle ingest plan:
 
 Both ``ingest_dois_into_kb`` and the ``GitHubFetcher`` are seam-points
 patched here so the tests stay fully offline. Real Chroma is used via
-the in-tree ``deterministic_embedder`` fixture so KB writes survive the
-round trip.
+the top-level ``deterministic_embedder`` fixture (defined in
+``tests/conftest.py``) so KB writes survive the round trip.
 
 See:
 - Spec: ``docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md``
@@ -20,71 +20,19 @@ See:
 """
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Skip whole file cleanly if Chroma / numpy aren't available (matches
-# the existing e2e suite). We do the importorskip *before* importing
-# the orchestrator so a Chroma-less environment short-circuits cleanly
-# rather than failing inside dynamic_kb's transitive imports.
+# Skip whole file cleanly if Chroma isn't available. We importorskip
+# *before* importing the orchestrator so a Chroma-less environment
+# short-circuits cleanly rather than failing inside dynamic_kb's
+# transitive imports.
 chromadb = pytest.importorskip("chromadb")
-np = pytest.importorskip("numpy")
 
 from perspicacite.config.schema import Config
 from perspicacite.pipeline.github.fetcher import GitHubFetcher
-
-
-# ---------------------------------------------------------------------------
-# Local deterministic embedder
-# ---------------------------------------------------------------------------
-#
-# Inlined rather than pytest_plugins-loading tests/e2e/conftest.py because
-# pytest auto-loads that conftest when the e2e subtree is collected, and
-# `pytest_plugins` would try to register it a second time → ValueError.
-
-
-def _deterministic_vec(text: str, dim: int) -> list[float]:
-    """SHA-256-derived unit vector. Same text → same vector."""
-    h = hashlib.sha256(text.encode("utf-8")).digest()
-    floats: list[float] = []
-    while len(floats) < dim:
-        for b in h:
-            floats.append((b / 127.5) - 1.0)
-            if len(floats) >= dim:
-                break
-        h = hashlib.sha256(h).digest()
-    arr = np.asarray(floats, dtype=np.float32)
-    norm = float(np.linalg.norm(arr))
-    if norm > 0:
-        arr = arr / norm
-    return arr.tolist()
-
-
-class _DeterministicEmbeddingProvider:
-    """In-memory, deterministic embedding provider for offline KB tests."""
-
-    def __init__(self, dim: int = 384) -> None:
-        self._dim = dim
-
-    @property
-    def dimension(self) -> int:
-        return self._dim
-
-    @property
-    def model_name(self) -> str:
-        return "deterministic-mock"
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        return [_deterministic_vec(t, self._dim) for t in texts]
-
-
-@pytest.fixture
-def deterministic_embedder() -> _DeterministicEmbeddingProvider:
-    """Fresh deterministic embedder per test (independent counters)."""
-    return _DeterministicEmbeddingProvider()
 
 
 SAMPLE_BUNDLE = Path(__file__).parent.parent / "data" / "sample_bundle"
