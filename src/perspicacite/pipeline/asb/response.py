@@ -27,7 +27,14 @@ def build_asb_response_metadata(chunks: list[dict[str, Any]]) -> dict[str, list]
     workflow_map: dict[str, dict] = {}
 
     for chunk in chunks:
-        md = chunk.get("metadata") or {}
+        # Defensive: callers (chat router, MCP tool returns) construct
+        # the helper input from streamed source dicts whose `metadata`
+        # field is *usually* dict-or-None — but a malformed upstream
+        # (e.g. SimpleNamespace, bare string) must not crash the
+        # helper. Skip non-dict metadata silently.
+        md = chunk.get("metadata") if isinstance(chunk, dict) else None
+        if not isinstance(md, dict):
+            continue
         kind = md.get("content_kind")
         if not kind:
             continue
@@ -35,7 +42,10 @@ def build_asb_response_metadata(chunks: list[dict[str, Any]]) -> dict[str, list]
             skill_id = md.get("skill_id")
             if not skill_id or skill_id in skill_map:
                 continue
-            tools = md.get("tools") or []
+            raw_tools = md.get("tools") or []
+            # Each tool entry must be a dict; bare strings / other shapes
+            # are dropped (same defensive contract as `metadata`).
+            tools = [t for t in raw_tools if isinstance(t, dict)]
             env = md.get("environment") or []
             params = md.get("parameters") or []
             # Executable iff every tool has BOTH canonical_url and install

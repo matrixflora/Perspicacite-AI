@@ -165,3 +165,53 @@ def test_build_asb_response_metadata_empty_input():
         "skill_metadata": [],
         "workflow_metadata": [],
     }
+
+
+def test_build_asb_response_metadata_skips_non_dict_metadata():
+    """A malformed upstream may pass metadata as a string, SimpleNamespace,
+    or other non-dict — the helper must skip silently rather than
+    raising AttributeError on ``md.get(...)``."""
+    from types import SimpleNamespace
+
+    from perspicacite.pipeline.asb.response import build_asb_response_metadata
+
+    chunks = [
+        {"metadata": "not-a-dict"},
+        {"metadata": SimpleNamespace(content_kind="skill_body", skill_id="x")},
+        {"metadata": 42},
+        {"metadata": ["list", "instead"]},
+        "not-even-a-chunk",  # non-dict chunk
+        # Mixed: one valid + four invalid
+        {"metadata": {"content_kind": "skill_body", "skill_id": "ok",
+                      "skill_name": "Ok", "tools": [], "environment": [],
+                      "parameters": []}},
+    ]
+    out = build_asb_response_metadata(chunks)
+    assert [s["skill_id"] for s in out["skill_metadata"]] == ["ok"]
+    assert out["workflow_metadata"] == []
+
+
+def test_build_asb_response_metadata_skips_non_dict_tool_entries():
+    """If a chunk's metadata.tools contains a bare string (or other
+    non-dict), the helper must skip those entries rather than crashing
+    on ``t.get('canonical_url')``."""
+    from perspicacite.pipeline.asb.response import build_asb_response_metadata
+
+    out = build_asb_response_metadata([{
+        "metadata": {
+            "content_kind": "skill_body", "skill_id": "s",
+            "skill_name": "S",
+            "tools": [
+                "https://bare-url-not-a-dict",
+                {"name": "ok", "canonical_url": "u", "install": "pip install ok"},
+            ],
+            "environment": [], "parameters": [],
+        }
+    }])
+    sm = out["skill_metadata"][0]
+    # Only the dict entry survives into tool_requirements
+    assert sm["tool_requirements"] == [
+        {"name": "ok", "canonical_url": "u", "install": "pip install ok"}
+    ]
+    # And executable is True because the surviving tool has both fields
+    assert sm["executable"] is True
