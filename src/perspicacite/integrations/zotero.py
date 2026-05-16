@@ -166,6 +166,15 @@ class ZoteroClient:
     def _base(self) -> str:
         return f"{self.base_url}/{self.library_type}/{self.library_id}"
 
+    def _write_base(self) -> str:
+        """Base URL for write operations (create_item, upload_attachment).
+
+        Always cloud, even when ``base_url`` is the local desktop API —
+        the local API is read-only at the Zotero level, and group writes
+        always need the cloud regardless. Requires ``api_key``."""
+        write_root = ZOTERO_API if self.is_local else self.base_url
+        return f"{write_root}/{self.library_type}/{self.library_id}"
+
     def _headers(self) -> dict[str, str]:
         return {
             "Zotero-API-Key": self.api_key,
@@ -190,14 +199,18 @@ class ZoteroClient:
         fallback second. URL is matched after stripping the scheme and any
         trailing slash so https://example.com/x and http://example.com/x/
         compare equal.
+
+        Uses :meth:`_write_base` so dedup hits the same library that
+        :meth:`create_item` writes to (cloud, even when configured for local).
         """
         norm = _normalize_url(url)
         if not norm:
             return None
         c = await self._client()
+        base = self._write_base()
         try:
             r = await c.get(
-                f"{self._base()}/items",
+                f"{base}/items",
                 params={"q": url, "qmode": "everything", "format": "json"},
                 headers=self._headers(),
             )
@@ -209,7 +222,7 @@ class ZoteroClient:
             pass
         try:
             r2 = await c.get(
-                f"{self._base()}/items",
+                f"{base}/items",
                 params={"direction": "desc", "limit": 100, "format": "json"},
                 headers=self._headers(),
             )
@@ -237,11 +250,12 @@ class ZoteroClient:
             return None
 
         c = await self._client()
+        base = self._write_base()
 
         # Stage 1: indexed search
         try:
             r = await c.get(
-                f"{self._base()}/items",
+                f"{base}/items",
                 params={"q": doi, "qmode": "everything", "format": "json"},
                 headers=self._headers(),
             )
@@ -258,7 +272,7 @@ class ZoteroClient:
         # the typical "pushed-it-myself a moment ago" double-create case.
         try:
             r2 = await c.get(
-                f"{self._base()}/items",
+                f"{base}/items",
                 params={"direction": "desc", "limit": 100, "format": "json"},
                 headers=self._headers(),
             )
@@ -276,16 +290,22 @@ class ZoteroClient:
 
         Searches the library by DOI before creating to avoid duplicates.
 
+        Writes always go to the cloud API (api.zotero.org), even when the
+        client is configured with a local desktop ``base_url`` — the local
+        API is read-only at the Zotero level. The required ``api_key``
+        is enforced in ``__init__`` for non-loopback URLs; we re-enforce
+        it here for the local-with-cloud-fallback case.
+
         Raises:
-            ZoteroWriteUnsupportedError: when targeting the local desktop API
-                (which is read-only — items must be created in the Zotero app).
+            ZoteroWriteUnsupportedError: when ``api_key`` is missing
+                (i.e. local-only configuration with no cloud credentials).
             ZoteroAPIError: when the create POST returns an unexpected status.
         """
-        if self.is_local:
+        if self.is_local and not self.api_key:
             raise ZoteroWriteUnsupportedError(
-                "Zotero local API is read-only — push to Zotero requires the "
-                "cloud API (api.zotero.org). Remove zotero.base_url from "
-                "config.yml or set it to https://api.zotero.org to push items."
+                "Zotero push requires the cloud API key. Set "
+                "zotero.api_key in config.yml to enable push to "
+                "api.zotero.org while keeping the local read base_url."
             )
 
         c = await self._client()
@@ -337,7 +357,7 @@ class ZoteroClient:
             collection_key=self.collection_key,
         )]
         try:
-            r = await c.post(f"{self._base()}/items", json=body, headers=self._headers())
+            r = await c.post(f"{self._write_base()}/items", json=body, headers=self._headers())
         except httpx.HTTPError as exc:
             raise ZoteroAPIError(f"Zotero POST failed: {exc}") from exc
         if r.status_code not in (200, 201):
@@ -505,6 +525,28 @@ class ZoteroClient:
             if ((it.get("data") or {}).get("itemType")) == "attachment"
         ]
 
+    async def _get_attachments_via_write_base(
+        self, item_key: str
+    ) -> list[dict[str, Any]]:
+        """Same as get_item_attachments but routed through _write_base().
+
+        Used by :meth:`upload_attachment` for its md5-dedup pre-check —
+        the upload protocol writes to cloud, so the children-list check
+        must also hit cloud, otherwise local-configured clients would
+        see a stale (or empty, for unsynced groups) attachment set."""
+        c = await self._client()
+        r = await c.get(
+            f"{self._write_base()}/items/{item_key}/children",
+            params={"format": "json"},
+            headers=self._headers(),
+        )
+        if r.status_code != 200:
+            return []
+        return [
+            it for it in (r.json() or [])
+            if ((it.get("data") or {}).get("itemType")) == "attachment"
+        ]
+
     async def download_attachment_bytes(self, attachment_key: str) -> bytes | None:
         """Return raw file bytes for an attachment. None on 404/error/empty.
 
@@ -588,10 +630,11 @@ class ZoteroClient:
         import hashlib
         import os
 
-        if self.is_local:
+        if self.is_local and not self.api_key:
             raise ZoteroWriteUnsupportedError(
-                "Zotero local API does not support attachment upload; "
-                "use the cloud API (api.zotero.org) instead."
+                "Zotero attachment upload requires the cloud API key. "
+                "Set zotero.api_key in config.yml to enable upload to "
+                "api.zotero.org while keeping the local read base_url."
             )
         from pathlib import Path
         path = Path(file_path).expanduser()
@@ -606,6 +649,22 @@ class ZoteroClient:
 
         c = await self._client()
 
+        # Pre-check: skip the 3-step protocol entirely if the parent
+        # already has an attachment with the same md5. Otherwise step 2
+        # rejects the upload with HTTP 412 "If-None-Match: * set but
+        # file exists" — discovered live 2026-05-16 when retrying
+        # push_to_zotero(attach_pdf=True) on the same DOI.
+        try:
+            existing = await self._get_attachments_via_write_base(parent_item_key)
+            for att in existing:
+                att_data = att.get("data") or {}
+                if att_data.get("md5") == md5:
+                    return att.get("key")
+        except httpx.HTTPError:
+            # Children-list lookup is best-effort; on failure fall through
+            # and let the upload protocol attempt run as before.
+            pass
+
         # Step 1 — register the attachment shell.
         register_body = [{
             "itemType": "attachment",
@@ -618,7 +677,7 @@ class ZoteroClient:
             "mtime": mtime_ms,
         }]
         r = await c.post(
-            f"{self._base()}/items",
+            f"{self._write_base()}/items",
             json=register_body,
             headers=self._headers(),
         )
@@ -653,7 +712,7 @@ class ZoteroClient:
             "mtime": str(mtime_ms),
         }
         r2 = await c.post(
-            f"{self._base()}/items/{attach_key}/file",
+            f"{self._write_base()}/items/{attach_key}/file",
             data=cred_form,
             headers=cred_headers,
         )
@@ -697,7 +756,7 @@ class ZoteroClient:
         # Step 4 — finalize.
         finalize_form = {"upload": upload_key}
         r4 = await c.post(
-            f"{self._base()}/items/{attach_key}/file",
+            f"{self._write_base()}/items/{attach_key}/file",
             data=finalize_form,
             headers=cred_headers,
         )

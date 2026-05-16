@@ -242,3 +242,141 @@ async def test_create_item_explicit_item_type(respx_mock):
     body = create.calls[0].request.read()
     assert b"preprint" in body
     assert b"arXiv" in body
+
+
+@pytest.mark.asyncio
+async def test_create_item_writes_to_cloud_when_configured_for_local(respx_mock):
+    """Live-discovered (2026-05-16): when zotero.base_url points at the
+    Zotero desktop local API, create_item must still POST to the cloud
+    API (api.zotero.org) because the local API is read-only at the
+    Zotero level. Same fallback pattern as ``download_attachment_bytes``
+    (which falls back to cloud on empty local response)."""
+    # Dedup lookup should also hit cloud (the same library writes go to).
+    respx_mock.get("https://api.zotero.org/groups/999/items").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    create_route = respx_mock.post("https://api.zotero.org/groups/999/items").mock(
+        return_value=httpx.Response(200, json={
+            "successful": {"0": {"key": "K1"}},
+            "success": {"0": "K1"},
+            "failed": {},
+        })
+    )
+
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="real-cloud-key",
+            library_id="999",
+            library_type="group",
+            base_url="http://localhost:23119/api",
+            http_client=http,
+        )
+        key = await c.create_item(paper={"doi": "10.1/x", "title": "T"})
+    assert key == "K1"
+    # The POST went to the cloud base_url, NOT to localhost.
+    assert create_route.called
+    posted_url = str(create_route.calls[0].request.url)
+    assert "api.zotero.org" in posted_url
+    assert "localhost" not in posted_url
+
+
+@pytest.mark.asyncio
+async def test_create_item_local_without_api_key_raises_clear_error():
+    """Local base_url + no api_key → ZoteroWriteUnsupportedError with a
+    clear remediation message. (Previously the error claimed local was
+    "read-only" without mentioning that an api_key would fix it.)"""
+    from perspicacite.integrations.zotero import ZoteroWriteUnsupportedError
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="",  # No cloud creds — push impossible.
+            library_id="999",
+            library_type="group",
+            base_url="http://localhost:23119/api",
+            http_client=http,
+        )
+        with pytest.raises(ZoteroWriteUnsupportedError) as exc:
+            await c.create_item(paper={"doi": "10.1/x", "title": "T"})
+    assert "api_key" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_upload_attachment_writes_to_cloud_when_configured_for_local(
+    respx_mock, tmp_path
+):
+    """Symmetric to create_item: when base_url is local, the attachment
+    upload protocol (3-step + finalize) must use the cloud API."""
+    # Write a small fake PDF that upload_attachment can read.
+    pdf_path = tmp_path / "x.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+    # md5-dedup pre-check looks up parent's children (empty = no dedup).
+    respx_mock.get(
+        "https://api.zotero.org/groups/999/items/PARENT/children"
+    ).mock(return_value=httpx.Response(200, json=[]))
+    register_route = respx_mock.post("https://api.zotero.org/groups/999/items").mock(
+        return_value=httpx.Response(200, json={
+            "successful": {"0": {"key": "ATT_K"}},
+            "success": {"0": "ATT_K"},
+            "failed": {},
+        })
+    )
+    creds_route = respx_mock.post(
+        "https://api.zotero.org/groups/999/items/ATT_K/file"
+    ).mock(
+        # Server-side dedup path: exists=1 — no upload needed.
+        return_value=httpx.Response(200, json={"exists": 1})
+    )
+
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="real-cloud-key",
+            library_id="999",
+            library_type="group",
+            base_url="http://localhost:23119/api",
+            http_client=http,
+        )
+        key = await c.upload_attachment(
+            parent_item_key="PARENT", file_path=str(pdf_path), filename="x.pdf",
+        )
+    assert key == "ATT_K"
+    assert register_route.called
+    assert creds_route.called
+    assert "api.zotero.org" in str(register_route.calls[0].request.url)
+
+
+@pytest.mark.asyncio
+async def test_upload_attachment_skips_when_md5_already_attached(
+    respx_mock, tmp_path
+):
+    """Live-discovered (2026-05-16): re-pushing the same DOI with
+    attach_pdf=True hits HTTP 412 on step 2 ("If-None-Match: * set but
+    file exists") because Zotero already has the same content under
+    that parent. The 3-step upload protocol must be skipped entirely
+    when the parent's children include an attachment with the same md5."""
+    import hashlib
+
+    pdf_bytes = b"%PDF-1.4 some bytes"
+    pdf_path = tmp_path / "x.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+    md5 = hashlib.md5(pdf_bytes).hexdigest()
+
+    respx_mock.get(
+        "https://api.zotero.org/groups/999/items/PARENT/children"
+    ).mock(return_value=httpx.Response(200, json=[
+        {"key": "EXISTING_ATT", "data": {
+            "itemType": "attachment", "md5": md5, "filename": "x.pdf",
+        }}
+    ]))
+    # The register POST should NEVER be reached.
+    register_route = respx_mock.post("https://api.zotero.org/groups/999/items")
+
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="cloud-key", library_id="999", library_type="group",
+            http_client=http,
+        )
+        key = await c.upload_attachment(
+            parent_item_key="PARENT", file_path=str(pdf_path), filename="x.pdf",
+        )
+    assert key == "EXISTING_ATT"
+    assert not register_route.called

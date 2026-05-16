@@ -456,6 +456,72 @@ async def _try_pdf_sources(
     return None
 
 
+async def download_paper_pdf(
+    doi: str,
+    *,
+    url: str | None = None,
+    http_client: httpx.AsyncClient | None = None,
+    unpaywall_email: str | None = None,
+    wiley_tdm_token: str | None = None,
+    aaas_api_key: str | None = None,
+    rsc_api_key: str | None = None,
+    springer_api_key: str | None = None,
+    pdf_cache_dir: str | None = None,
+) -> tuple[bytes, str] | None:
+    """Download a PDF for ``doi``, irrespective of structured-text availability.
+
+    Used by ``push_to_zotero(attach_pdf=True)`` to ensure an actual PDF
+    binary lands in cache. The unified pipeline normally returns
+    structured HTML (e.g. arXiv) before reaching the PDF tier, so a
+    separate PDF-only fetch is needed when the caller specifically
+    wants the PDF artifact.
+
+    Discovers OA URLs via OpenAlex/Unpaywall, then tries each PDF
+    source in the same priority order as ``_try_pdf_sources``. Caches
+    the winning bytes when ``pdf_cache_dir`` is set.
+
+    Returns ``(bytes, source_label)`` on success; ``None`` if no PDF
+    can be found across any route.
+    """
+    clean = doi.replace("https://doi.org/", "").replace("http://doi.org/", "").strip()
+    if not clean:
+        return None
+
+    if http_client is not None:
+        client = http_client
+        should_close = False
+    else:
+        client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
+        should_close = True
+
+    try:
+        if pdf_cache_dir:
+            from perspicacite.pipeline.download.pdf_cache import get_cached_pdf
+            cached = get_cached_pdf(clean, pdf_cache_dir)
+            if cached is not None:
+                return cached, "pdf_cache"
+
+        disc = await discover_paper_sources(clean, client, unpaywall_email)
+        result = await _try_pdf_sources(
+            clean,
+            url,
+            client,
+            disc,
+            unpaywall_email=unpaywall_email,
+            wiley_tdm_token=wiley_tdm_token,
+            aaas_api_key=aaas_api_key,
+            rsc_api_key=rsc_api_key,
+            springer_api_key=springer_api_key,
+        )
+        if result and pdf_cache_dir:
+            from perspicacite.pipeline.download.pdf_cache import store_pdf
+            store_pdf(clean, result[0], pdf_cache_dir, source=result[1])
+        return result
+    finally:
+        if should_close:
+            await client.aclose()
+
+
 def _load_cached_references(doi: str) -> list[dict] | None:
     """Load cached references from the sections JSON file."""
     import json
