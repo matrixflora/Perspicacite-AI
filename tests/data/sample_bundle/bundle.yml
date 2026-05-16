@@ -1,0 +1,29 @@
+name: sample-bundle
+title: "Sample skill bundle for tests"
+description: "Test fixture exercising the github-skill-bundle ingest path."
+version: 0.1.0
+domain:
+  - testing
+  - example
+authors:
+  - "Test Author"
+papers:
+  - doi: "10.1234/yaml-paper-1"
+    note: "first yaml paper"
+  - doi: "10.1234/yaml-paper-2"
+  - arxiv: "2204.12345"
+  - pmc: "PMC9123456"
+datasets:
+  - url: "https://figshare.com/articles/dataset/example-dataset"
+    name: "Example dataset"
+tools:
+  - url: "https://github.com/example/tool"
+    name: "example-tool"
+content:
+  include:
+    - "README.md"
+    - "docs/**/*.md"
+    - "notebooks/**/*.ipynb"
+    - "src/**/*.py"
+  exclude:
+    - "**/__pycache__/**"
