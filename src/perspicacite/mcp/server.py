@@ -2306,6 +2306,136 @@ async def zotero_list_collections(
 
 
 # =============================================================================
+# Tool 14: zotero_get_collection_items
+# =============================================================================
+
+import base64 as _base64
+
+
+def _encode_cursor(start: int) -> str:
+    return _base64.b64encode(str(start).encode()).decode()
+
+
+def _decode_cursor(cursor: str) -> int:
+    try:
+        return int(_base64.b64decode(cursor.encode()).decode())
+    except Exception:
+        return 0
+
+
+@mcp.tool()
+async def zotero_get_collection_items(
+    collection_id: str,
+    library_id: str | None = None,
+    include_abstract: bool = True,
+    limit: int = 200,
+    cursor: str | None = None,
+) -> dict:
+    """Return papers in a Zotero collection with metadata and license classification.
+
+    Args:
+        collection_id: Zotero collection key (e.g. "ABC123").
+        library_id: Override the configured library_id.
+        include_abstract: Include abstractNote in each item (default True).
+        limit: Page size, max 500 (default 200).
+        cursor: Opaque pagination token from a previous call's ``next_cursor``.
+
+    Returns:
+        {"collection_id", "items": [...], "total": int, "next_cursor": str | None}
+        Each item: {"zotero_key", "doi", "title", "authors", "year", "abstract",
+                    "item_type", "tags", "license": {...}, "has_attachments"}
+    """
+    import asyncio
+    import httpx
+    from perspicacite.integrations.zotero import ZoteroClient
+    from perspicacite.integrations.zotero_license import LicenseClassifier
+
+    cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
+    if not (cfg and cfg.enabled and cfg.api_key):
+        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "Zotero not enabled or api_key missing"}
+
+    eff_library_id = library_id or cfg.library_id
+    if not eff_library_id:
+        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "library_id required"}
+
+    base_url = getattr(cfg, "base_url", "") or None
+    client = ZoteroClient(
+        api_key=cfg.api_key,
+        library_id=eff_library_id,
+        library_type=cfg.library_type,
+        base_url=base_url,
+    )
+
+    try:
+        all_items = await client.list_items_in_collection(collection_id, include_subcollections=True)
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 403:
+            return {"error": "ZOTERO_AUTH_FAILED"}
+        if status == 429:
+            ra = exc.response.headers.get("retry-after") or "60"
+            return {"error": "ZOTERO_RATE_LIMITED", "retry_after_s": float(ra)}
+        if status == 404:
+            return {"error": "COLLECTION_NOT_FOUND", "message": f"Collection {collection_id} not found"}
+        return {"error": "ZOTERO_ERROR", "message": str(exc)}
+
+    total = len(all_items)
+    limit = max(1, min(limit, 500))
+    start = _decode_cursor(cursor) if cursor else 0
+    if start < 0 or start > total:
+        return {"error": "INVALID_CURSOR", "message": "Cursor is stale or invalid"}
+    page = all_items[start: start + limit]
+    next_start = start + len(page)
+    next_cursor = _encode_cursor(next_start) if next_start < total else None
+
+    clf = LicenseClassifier()
+    async with httpx.AsyncClient() as http:
+        async def _classify_item(it: dict) -> dict:
+            data = it.get("data") or {}
+            doi = data.get("DOI") or None
+            creators = data.get("creators") or []
+            authors = [
+                ((cr.get("firstName") or "") + " " + (cr.get("lastName") or cr.get("name") or "")).strip()
+                for cr in creators
+            ]
+            year_str = str(data.get("date") or "")[:4]
+            year = int(year_str) if year_str.isdigit() else None
+            tags = [(t.get("tag") or "") for t in (data.get("tags") or [])]
+
+            if doi:
+                lic = await clf.classify(doi, zotero_item=it, http_client=http)
+            else:
+                lic = clf.classify_zotero_tags(it) or clf.heuristic(is_oa=False)
+
+            return {
+                "zotero_key": it.get("key"),
+                "doi": doi,
+                "title": data.get("title") or "",
+                "authors": [a for a in authors if a],
+                "year": year,
+                "abstract": data.get("abstractNote") if include_abstract else None,
+                "item_type": data.get("itemType") or "journalArticle",
+                "tags": tags,
+                "license": {
+                    "spdx": lic.spdx,
+                    "classification": lic.classification,
+                    "policy": lic.policy,
+                    "source": lic.source,
+                },
+                "has_attachments": False,
+            }
+
+        items = await asyncio.gather(*(_classify_item(it) for it in page))
+
+    return {
+        "collection_id": collection_id,
+        "items": list(items),
+        "total": total,
+        "next_cursor": next_cursor,
+    }
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -2335,6 +2465,7 @@ _TOOL_NAMES: list[str] = [
     "delete_knowledge_base",
     "enrich_kb_from_cite_graph_tool",
     "zotero_list_collections",
+    "zotero_get_collection_items",
 ]
 
 
