@@ -1509,6 +1509,7 @@ async def push_to_zotero(
     collection_key: str | None = None,
     attach_pdf: bool = False,
     attach_supplementary: bool = False,
+    youtube_correct: bool = False,
 ) -> str:
     """Push one or more papers to a Zotero library — by DOI, URL, or BibTeX.
 
@@ -1574,6 +1575,11 @@ async def push_to_zotero(
         attach_supplementary: If True, upload any
             ``data/capsules/<paper_id>/supplementary/files/*`` as
             additional child attachments.
+        youtube_correct: For YouTube URLs, run LLM cleanup on the
+            auto-captions before attaching (default ``False``). When
+            False the rendered transcript Markdown carries a warning
+            header so downstream KB chunks are tagged as
+            auto-captions.
 
     Returns:
         JSON ``{"created": [...], "skipped": [], "failed": [...]}`` where
@@ -1771,6 +1777,7 @@ async def push_to_zotero(
                                     target_url,
                                     http_client=http_client,
                                     llm_client=state.llm_client,
+                                    correct_with_llm=youtube_correct,
                                 )
                                 import re as _re_yt
                                 from pathlib import Path as _Path
@@ -2151,6 +2158,7 @@ async def ingest_local_documents(
 async def ingest_urls_to_kb(
     kb_name: str,
     urls: list[str],
+    youtube_correct: bool = False,
 ) -> dict:
     """Ingest arbitrary URLs into ``kb_name`` as searchable KB content.
 
@@ -2160,6 +2168,12 @@ async def ingest_urls_to_kb(
       raw README via the GitHub API. The README's existing Markdown
       structure (headings, code blocks) flows directly into the
       heading-aware Markdown chunker.
+    - **YouTube videos** fetch the public transcript via
+      ``youtube-transcript-api`` and prepend a warning header noting
+      the auto-caption origin + one-sentence context (title + channel)
+      so downstream chunks carry the "may be garbled" signal. Pass
+      ``youtube_correct=True`` to enable an LLM cleanup pass first
+      (opt-in for cost; a 1-hour talk runs ~$0.10-0.50 to clean).
     - **Other URLs** fetch the HTML and convert to Markdown. With the
       optional ``[html-ingest]`` extra installed (trafilatura), the
       conversion strips boilerplate (nav, footers, ads) and preserves
@@ -2180,6 +2194,10 @@ async def ingest_urls_to_kb(
         kb_name: Target KB name (must exist; create with
             ``create_knowledge_base`` first).
         urls: Up to 50 URLs in one call.
+        youtube_correct: Run LLM cleanup on YouTube auto-captions
+            (default ``False`` to keep ingest free). When ``False``,
+            the rendered Markdown carries a warning header so chunks
+            are tagged as auto-captions for downstream consumers.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -2216,6 +2234,7 @@ async def ingest_urls_to_kb(
                 md, title = await fetch_url_as_markdown(
                     url, http_client=http_client,
                     llm_client=state.llm_client,
+                    youtube_correct=youtube_correct,
                 )
                 # Prepend the title as an H1 so the markdown chunker
                 # uses it as the top-level section anchor.

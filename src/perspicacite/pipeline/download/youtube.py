@@ -236,6 +236,7 @@ async def fetch_youtube_transcript(
     *,
     http_client: httpx.AsyncClient | None = None,
     llm_client: Any | None = None,
+    correct_with_llm: bool = False,
 ) -> tuple[str, str]:
     """Fetch a public YouTube video's transcript as Markdown.
 
@@ -243,11 +244,19 @@ async def fetch_youtube_transcript(
     URLs or videos with no captions; raises ``httpx.HTTPError`` for
     network errors on the metadata fetch.
 
-    When ``llm_client`` is provided, the transcript is LLM-corrected
-    using the video title + channel as context (auto-captions garble
-    domain jargon and proper nouns; the correction pass restores them).
-    Set ``llm_client=None`` to skip correction (faster, free, slightly
-    noisier output).
+    LLM correction is **opt-in**. A 1-hour talk yields ~50K chars of
+    auto-captions, which is ~$0.10-0.50 to LLM-clean depending on the
+    model — multiplied across a batch this matters. Default behavior
+    is: ship the raw auto-captions with a prominent warning header
+    that says "this may contain mis-transcriptions" plus one sentence
+    of video context (title + channel), so downstream chunks carry
+    that flag with them and the LLM consuming the KB knows to treat
+    them probabilistically.
+
+    Pass ``correct_with_llm=True`` to enable the correction pass.
+    Requires a valid ``llm_client``. On any correction failure (rate
+    limit, parse error, auth) the raw transcript flows through with
+    the warning header.
     """
     vid = extract_video_id(url)
     if not vid:
@@ -291,16 +300,49 @@ async def fetch_youtube_transcript(
         last_t = blocks[-1][0] if blocks else 0.0
         metadata.duration_seconds = int(last_t) + 30  # estimate
 
-        if llm_client is not None:
-            blocks = await _llm_correct_transcript(
+        corrected = False
+        if correct_with_llm and llm_client is not None:
+            new_blocks = await _llm_correct_transcript(
                 title=metadata.title,
                 author_name=metadata.author_name,
                 blocks=blocks,
                 llm_client=llm_client,
             )
+            # _llm_correct_transcript returns originals on failure, so
+            # we can't tell "succeeded" by identity — but we can tell
+            # "actually changed" by comparing block text. Treat any
+            # difference as evidence the correction pass ran.
+            if any(
+                a[1] != b[1]
+                for a, b in zip(blocks, new_blocks, strict=True)
+            ):
+                corrected = True
+            blocks = new_blocks
+
+        # Warning header. When the transcript is uncorrected (which is
+        # the default), downstream chunks need to carry the "may be
+        # garbled" signal — title + channel give the LLM consuming the
+        # KB enough context to interpret jargon probabilistically.
+        if corrected:
+            caption_note = (
+                "> **Note:** LLM-corrected auto-captions for context: "
+                f"\"{metadata.title}\""
+                + (f" — {metadata.author_name}." if metadata.author_name else ".")
+                + " Minor mis-transcriptions may remain."
+            )
+        else:
+            caption_note = (
+                "> **⚠️ Auto-generated YouTube transcript** — may contain "
+                "mis-transcribed terms (proper nouns, jargon, technical "
+                f"shorthand). Video context: \"{metadata.title}\""
+                + (f" — {metadata.author_name}." if metadata.author_name else ".")
+                + " Treat probabilistically when reasoning over chunks."
+            )
 
         header = [
             f"# {metadata.title}",
+            "",
+            caption_note,
             "",
             f"**Channel:** {metadata.author_name}" if metadata.author_name else "",
             f"**Duration:** {_format_timestamp(metadata.duration_seconds or 0)}",
@@ -319,7 +361,8 @@ async def fetch_youtube_transcript(
             title=metadata.title[:80],
             snippets=len(snippets),
             coalesced_blocks=len(blocks),
-            llm_corrected=bool(llm_client),
+            llm_correction_requested=correct_with_llm,
+            llm_correction_applied=corrected,
         )
         return md, metadata.title
     finally:
