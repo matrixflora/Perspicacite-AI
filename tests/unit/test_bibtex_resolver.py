@@ -107,6 +107,50 @@ async def test_bibtex_synthesizes_arxiv_doi_from_arxiv_url_only():
 
 
 @pytest.mark.asyncio
+async def test_bibtex_no_doi_no_url_resolves_via_title(respx_mock):
+    """A ``@misc`` with only title + author + year (no DOI, no URL, no
+    eprint) should trigger the title resolver and route through the
+    DOI path instead of erroring out."""
+    bib = """
+@misc{vaswani2017,
+  title={{Attention Is All You Need}},
+  author={Vaswani, Ashish and Shazeer, Noam},
+  year={2017}
+}
+"""
+    # OpenAlex returns a clean hit
+    respx_mock.get(url__regex=r"https://api\.openalex\.org/works.*").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "Attention Is All You Need",
+                        "publication_year": 2017,
+                        "doi": "https://doi.org/10.48550/arXiv.1706.03762",
+                        "authorships": [
+                            {"author": {"display_name": "Ashish Vaswani"}},
+                        ],
+                    }
+                ]
+            },
+        )
+    )
+    fake_content = AsyncMock()
+    fake_content.return_value.metadata = {"title": "x"}
+    fake_content.return_value.abstract = ""
+    async with httpx.AsyncClient() as http:
+        with patch(
+            "perspicacite.pipeline.download.retrieve_paper_content",
+            new=fake_content,
+        ):
+            paper, doi, url = await _resolve_push_input(
+                {"bibtex": bib}, http_client=http,
+            )
+    assert doi == "10.48550/arXiv.1706.03762"
+
+
+@pytest.mark.asyncio
 async def test_bibtex_explicit_doi_wins_over_arxiv_synthesis():
     """If the bib has both an explicit ``doi`` and an ``eprint``, the
     explicit ``doi`` is authoritative — it might point to the published

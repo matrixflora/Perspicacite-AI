@@ -75,11 +75,12 @@ class MCPState:
         if self.initialized:
             return
 
+        from pathlib import Path
+
         from perspicacite.llm import AsyncLLMClient, LiteLLMEmbeddingProvider
         from perspicacite.memory.session_store import SessionStore
         from perspicacite.pipeline.parsers.pdf import PDFParser
         from perspicacite.retrieval import ChromaVectorStore
-        from pathlib import Path
 
         self.config = config
 
@@ -196,9 +197,7 @@ async def _resolve_push_input(
         eprint = (e.get("eprint") or "").strip()
         archive_prefix = (e.get("archiveprefix") or e.get("archivePrefix") or "").lower()
         arxiv_id: str | None = None
-        if archive_prefix == "arxiv" and _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint):
-            arxiv_id = eprint
-        elif _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint):
+        if (archive_prefix == "arxiv" and _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint)) or _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint):
             arxiv_id = eprint
         elif e.get("url"):
             m = _re.search(
@@ -211,16 +210,46 @@ async def _resolve_push_input(
         explicit_doi = (e.get("doi") or "").strip().rstrip(".") or None
         synthetic_doi = f"10.48550/arXiv.{arxiv_id}" if arxiv_id else None
 
+        promoted_title = _unbrace(e.get("title", ""))
+        promoted_authors = [
+            _unbrace(a.strip())
+            for a in (e.get("author") or "").split(" and ")
+            if a.strip()
+        ]
+
+        # Last-resort: if the bib entry has no DOI and no usable URL
+        # (or the URL is to a non-academic host like github.com), try
+        # title-based DOI discovery via scholarly metadata APIs. This
+        # rescues entries like LangGraph/smolagents docs cited from
+        # paper bibs, and bare ``@misc`` blocks that omit the arxiv
+        # eprint field.
+        resolved_doi: str | None = None
+        bib_url = (e.get("url") or "").strip()
+        if (
+            not explicit_doi
+            and not synthetic_doi
+            and promoted_title
+            and (not bib_url or _re.search(r"(github\.com|docs?\.)", bib_url))
+        ):
+            from perspicacite.pipeline.download.title_resolver import (
+                resolve_doi_from_title,
+            )
+            try:
+                resolved_doi = await resolve_doi_from_title(
+                    promoted_title,
+                    promoted_authors,
+                    e.get("year"),
+                    http_client=http_client,
+                )
+            except Exception:
+                resolved_doi = None
+
         promoted = {
-            "doi": explicit_doi or synthetic_doi,
+            "doi": explicit_doi or synthetic_doi or resolved_doi,
             "url": e.get("url") or "",
-            "title": _unbrace(e.get("title", "")),
+            "title": promoted_title,
             "year": e.get("year"),
-            "authors": [
-                _unbrace(a.strip())
-                for a in (e.get("author") or "").split(" and ")
-                if a.strip()
-            ],
+            "authors": promoted_authors,
             "journal": _unbrace(e.get("journal") or ""),
             "abstract": _unbrace(e.get("abstract") or ""),
         }
@@ -395,6 +424,7 @@ async def get_paper_content(
         return state
 
     import httpx
+
     from perspicacite.pipeline.download import retrieve_paper_content
 
     try:
@@ -756,7 +786,7 @@ async def create_knowledge_base(
         # Save metadata
         kb = KnowledgeBase(
             name=name,
-            description=description or f"Created via MCP",
+            description=description or "Created via MCP",
             collection_name=collection_name,
             embedding_model=state.embedding_provider.model_name,
             chunk_config=ChunkConfig(
@@ -811,10 +841,11 @@ async def add_papers_to_kb(
 
     try:
         import hashlib
+
         import httpx
+
         from perspicacite.models.kb import chroma_collection_name_for_kb
         from perspicacite.models.papers import Author, Paper, PaperSource
-        from perspicacite.pipeline.download.fallback import get_pdf_with_fallback
         from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase, KnowledgeBaseConfig
 
         collection_name = chroma_collection_name_for_kb(kb_name)
@@ -1139,6 +1170,7 @@ async def screen_papers(
         return state
     try:
         import httpx
+
         from perspicacite.pipeline.download import retrieve_paper_content
         from perspicacite.search.screening import screen_papers as _bm25
         from perspicacite.search.screening import screen_papers_llm as _llm
@@ -1244,7 +1276,6 @@ async def add_dois_to_kb(
         return _json_error("At most 200 DOIs per request")
 
     try:
-        import httpx
         from perspicacite.models.kb import chroma_collection_name_for_kb
         from perspicacite.models.papers import Author, Paper, PaperSource
         from perspicacite.pipeline.download import retrieve_paper_content
@@ -1738,8 +1769,8 @@ async def ingest_url(
         return state
 
     from perspicacite.pipeline.download.cookies import build_authenticated_client
-    from perspicacite.pipeline.download.url_extractors import extract_url
     from perspicacite.pipeline.download.html_capture import capture_landing_html
+    from perspicacite.pipeline.download.url_extractors import extract_url
 
     pdf_config = state.config.pdf_download
     cookies_path = pdf_config.cookies_path if pdf_config else None
@@ -1920,8 +1951,10 @@ async def ingest_local_documents(
     from perspicacite.integrations.local_docs import (
         LocalDocsDisabledError,
         LocalDocsValidationError,
-        ingest_local_documents as _ingest,
         validate_local_path,
+    )
+    from perspicacite.integrations.local_docs import (
+        ingest_local_documents as _ingest,
     )
 
     allowed = list(getattr(mcp_state.config.local_docs, "allowed_roots", []) or [])
@@ -1964,8 +1997,10 @@ async def build_capsule(
     """
     from perspicacite.pipeline.capsule_builder import (
         build_capsule as _build,
-        resolve_paper_from_metadata,
+    )
+    from perspicacite.pipeline.capsule_builder import (
         locate_cached_pdf,
+        resolve_paper_from_metadata,
     )
 
     kb = await mcp_state.session_store.get_kb_metadata(kb_name)
@@ -1994,8 +2029,10 @@ async def build_capsules_for_kb(
     """
     from perspicacite.pipeline.capsule_builder import (
         build_capsule as _build,
-        resolve_paper_from_metadata,
+    )
+    from perspicacite.pipeline.capsule_builder import (
         locate_cached_pdf,
+        resolve_paper_from_metadata,
     )
 
     kb = await mcp_state.session_store.get_kb_metadata(kb_name)
@@ -2053,7 +2090,7 @@ async def fetch_paper_resources(
         return {"error": f"paper '{paper_id}' not found in KB '{kb_name}'"}
     paper = resolve_paper_from_metadata(row)
     cap_dir = capsule_dir_for(paper, root=mcp_state.config.capsule.root)
-    setattr(paper, "_kb_name", kb_name)
+    paper._kb_name = kb_name
 
     if mcp_state.job_registry is None:
         # Synchronous fallback registry — collects events into a list.
@@ -2118,7 +2155,8 @@ async def fetch_supplementary(
     Returns:
         {"fetched": [...], "skipped": [...], "bytes": int} or {"error": ...}.
     """
-    from pathlib import Path
+    import json as _json
+
     from perspicacite.pipeline.capsule_builder import (
         capsule_dir_for,
         resolve_paper_from_metadata,
@@ -2126,7 +2164,6 @@ async def fetch_supplementary(
     from perspicacite.pipeline.download.supplementary import (
         download_supplementary_to_capsule,
     )
-    import json as _json
 
     kb = await mcp_state.session_store.get_kb_metadata(kb_name)
     if kb is None:
@@ -2292,11 +2329,11 @@ async def build_kb_from_search(
         return _json_error("max_results must be 1..100")
 
     try:
+        from perspicacite.llm.mcp_sampling import use_mcp_context
         from perspicacite.pipeline.search_to_kb import (
             SearchFilter,
             search_filter_and_ingest,
         )
-        from perspicacite.llm.mcp_sampling import use_mcp_context
 
         flt = SearchFilter(
             min_year=min_year,
@@ -2447,9 +2484,9 @@ async def expand_kb_via_citations(
     if isinstance(state, str):
         return state
     try:
-        from perspicacite.pipeline.snowball import expand_kb_via_citations as _expand
-        from perspicacite.pipeline.search_to_kb import SearchFilter
         from perspicacite.llm.mcp_sampling import use_mcp_context
+        from perspicacite.pipeline.search_to_kb import SearchFilter
+        from perspicacite.pipeline.snowball import expand_kb_via_citations as _expand
 
         flt = SearchFilter(
             min_year=min_year, max_year=max_year,
@@ -2634,7 +2671,9 @@ async def zotero_list_collections(
         Each collection: {"id", "name", "parent_id", "item_count", "subcollections"}
     """
     import time
+
     import httpx
+
     from perspicacite.integrations.zotero import ZoteroClient
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
@@ -2730,7 +2769,9 @@ async def zotero_get_collection_items(
                     "item_type", "tags", "license": {...}, "has_attachments"}
     """
     import asyncio
+
     import httpx
+
     from perspicacite.integrations.zotero import ZoteroClient
     from perspicacite.integrations.zotero_license import LicenseClassifier
 
@@ -2854,7 +2895,9 @@ async def zotero_get_paper_resources(
         Each resource: {"role", "filename", "access": [{"type", "path"|"url", "via"?}]}
     """
     import asyncio
+
     import httpx
+
     from perspicacite.integrations.zotero import ZoteroClient
     from perspicacite.integrations.zotero_license import LicenseClassifier
     from perspicacite.integrations.zotero_resources import ResourceLocator
@@ -3071,9 +3114,11 @@ async def zotero_ingest_collection_to_kb(
         {"per_kb": [...]} from build_kbs_from_zotero
     """
     import asyncio
+
     import httpx
-    from perspicacite.integrations.zotero import ZoteroClient
+
     from perspicacite.integrations import zotero_ingest
+    from perspicacite.integrations.zotero import ZoteroClient
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
     if not (cfg and cfg.enabled and cfg.api_key):
