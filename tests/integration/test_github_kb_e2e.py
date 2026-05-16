@@ -93,6 +93,15 @@ async def test_ingest_skill_bundle_per_skill_mode(
 
     monkeypatch.setattr(github_kb, "ingest_dois_into_kb", fake_ingest_dois)
 
+    # Stub out the external-id resolvers so this test stays offline AND
+    # preserves its original "arxiv/pmc surface as skipped" semantics.
+    # The dedicated resolution test below patches them to return DOIs.
+    async def _no_resolve(_id: str, *, client=None):  # noqa: ARG001
+        return None
+
+    monkeypatch.setattr(github_kb, "resolve_arxiv_to_doi", _no_resolve)
+    monkeypatch.setattr(github_kb, "resolve_pmc_to_doi", _no_resolve)
+
     cfg = _make_config()
     vs = _make_chroma_store(tmp_path, deterministic_embedder)
     ss = await _make_session_store(tmp_path)
@@ -284,6 +293,92 @@ def _materialise_two_bundles(root: Path) -> None:
             f"  - doi: '10.1234/{name}-paper'\n"
         )
         (sub / "README.md").write_text(f"# {name}\n\nIntro.\n")
+
+
+@pytest.mark.asyncio
+async def test_ingest_skill_bundle_resolves_arxiv_pmc_to_doi(
+    tmp_path: Path, deterministic_embedder, monkeypatch
+):
+    """arXiv + PMC refs in the bundle are resolved to DOIs upstream and
+    routed through the existing DOI ingest path.
+
+    Setup uses the sample bundle, which carries:
+      - 4 native DOIs (2 YAML + 2 README inline)
+      - 1 arXiv id (``2204.12345`` in YAML)
+      - 1 PMC id (``PMC9123456`` in YAML)
+
+    The two resolvers are patched on :mod:`perspicacite.pipeline.github_kb`
+    so the test stays offline. We assert the resolved DOIs land in
+    :func:`ingest_dois_into_kb`'s captured call, the summary's new
+    ``linked_papers_resolved_via_external_id`` field counts them, and
+    ``linked_papers_skipped_non_doi`` is left with only the
+    unresolvable refs.
+    """
+    from perspicacite.pipeline import github_kb
+
+    captured_calls: list[dict] = []
+
+    async def fake_ingest_dois(app_state, kb_name, dois, **kw):  # noqa: ARG001
+        captured_calls.append({"kb_name": kb_name, "dois": list(dois), "kw": kw})
+        return {
+            "added_papers": len(dois),
+            "added_chunks": len(dois),
+            "skipped_duplicates": 0,
+            "failed": [],
+        }
+
+    monkeypatch.setattr(github_kb, "ingest_dois_into_kb", fake_ingest_dois)
+
+    async def fake_resolve_arxiv(arxiv_id: str, *, client=None):  # noqa: ARG001
+        # Only resolve the known sample-bundle arXiv id; anything else
+        # falls through to "unresolvable" so the skipped list still has
+        # something to assert on if the sample expands.
+        if arxiv_id == "2204.12345":
+            return "10.9999/resolved-from-arxiv"
+        return None
+
+    async def fake_resolve_pmc(pmc_id: str, *, client=None):  # noqa: ARG001
+        if pmc_id == "PMC9123456":
+            return "10.9999/resolved-from-pmc"
+        return None
+
+    monkeypatch.setattr(github_kb, "resolve_arxiv_to_doi", fake_resolve_arxiv)
+    monkeypatch.setattr(github_kb, "resolve_pmc_to_doi", fake_resolve_pmc)
+
+    cfg = _make_config()
+    vs = _make_chroma_store(tmp_path, deterministic_embedder)
+    ss = await _make_session_store(tmp_path)
+
+    summary = await github_kb.ingest_skill_bundle(
+        source=SAMPLE_BUNDLE,
+        kb_name="resolved_ids_kb",
+        config=cfg,
+        vector_store=vs,
+        embedding_service=deterministic_embedder,
+        session_store=ss,
+        ingest_linked_papers=True,
+        app_state_for_doi_ingest=MagicMock(),
+    )
+
+    # Two refs resolved (1 arxiv + 1 pmc).
+    assert summary.linked_papers_resolved_via_external_id == 2
+    # All 4 original DOIs + 2 resolved DOIs = 6 routed.
+    assert summary.linked_papers_added == 6
+    # Nothing unresolvable in the sample bundle → empty skip list.
+    assert summary.linked_papers_skipped_non_doi == []
+
+    # The two resolved DOIs must have landed in the captured ingest call.
+    assert len(captured_calls) == 1
+    call_dois = set(captured_calls[0]["dois"])
+    assert "10.9999/resolved-from-arxiv" in call_dois
+    assert "10.9999/resolved-from-pmc" in call_dois
+    # And the 4 original DOIs are still present (no eviction).
+    assert {
+        "10.1234/yaml-paper-1",
+        "10.1234/yaml-paper-2",
+        "10.5678/readme-paper-1",
+        "10.5678/readme-paper-2",
+    } <= call_dois
 
 
 @pytest.mark.asyncio

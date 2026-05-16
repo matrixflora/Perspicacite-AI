@@ -40,6 +40,10 @@ from perspicacite.models.kb import (
     KnowledgeBase,
     chroma_collection_name_for_kb,
 )
+from perspicacite.pipeline.external_id_resolver import (
+    resolve_arxiv_to_doi,
+    resolve_pmc_to_doi,
+)
 from perspicacite.pipeline.github.bundle import (
     BundleManifest,
     ContentSpec,
@@ -101,9 +105,16 @@ class IngestSummary:
         Always ``0`` for the raw-repo path and when
         ``ingest_linked_papers=False``.
     linked_papers_skipped_non_doi : list[tuple[str, str]]
-        Mined ``(kind, value)`` pairs that were NOT routed because v1
-        only auto-resolves DOIs. ArXiv / PMC entries land here so the
+        Mined ``(kind, value)`` pairs that were NOT routed. ArXiv +
+        PMC ids are first run through
+        :mod:`perspicacite.pipeline.external_id_resolver`; only the
+        unresolvable ones land here. Everything else (any future
+        ``kind`` the manifest may grow) is reported as-is so the
         operator can route them manually.
+    linked_papers_resolved_via_external_id : int
+        Count of arXiv / PMC ids that the upstream resolver (arXiv → DOI
+        and PMC → DOI) turned into DOIs before routing. Always ``0`` on
+        the raw-repo path and when ``ingest_linked_papers=False``.
     external_links_logged : int
         Count of ``external_link`` Wave-4.3 KB-log events emitted for
         non-paper URLs (datasets / tools) mined from README + docs.
@@ -125,6 +136,7 @@ class IngestSummary:
     linked_papers_skipped_non_doi: list[tuple[str, str]]
     mode: IngestMode
     external_links_logged: int = 0
+    linked_papers_resolved_via_external_id: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +314,7 @@ async def ingest_skill_bundle(
         description=(manifest.description or f"Skill bundle: {manifest.name}"),
     )
 
-    linked_added, skipped_non_doi = await _route_linked_papers(
+    linked_added, skipped_non_doi, resolved_count = await _route_linked_papers(
         manifest=manifest,
         kb_name=kb_name,
         ingest_linked_papers=ingest_linked_papers,
@@ -327,6 +339,7 @@ async def ingest_skill_bundle(
         linked_papers_skipped_non_doi=skipped_non_doi,
         mode="per-skill",
         external_links_logged=external_links_logged,
+        linked_papers_resolved_via_external_id=resolved_count,
     )
 
 
@@ -459,36 +472,95 @@ async def _route_linked_papers(
     kb_name: str,
     ingest_linked_papers: bool,
     app_state_for_doi_ingest: Any,
-) -> tuple[int, list[tuple[str, str]]]:
-    """Resolve DOIs from the manifest and route them through the existing
-    DOI-ingest pipeline. ArXiv / PMC references are reported back but
-    not auto-routed (v1).
+) -> tuple[int, list[tuple[str, str]], int]:
+    """Route the manifest's linked papers through the DOI ingest pipeline.
+
+    arXiv + PMC refs are first translated to DOIs upstream via
+    :mod:`perspicacite.pipeline.external_id_resolver`; only the
+    unresolvable ones surface in the returned ``skipped`` list. Refs
+    of any future ``kind`` are passed through to ``skipped`` as-is.
+
+    Returns
+    -------
+    (added, skipped, resolved_via_external_id)
+        - ``added`` — papers ``ingest_dois_into_kb`` reported as added.
+        - ``skipped`` — ``(kind, value)`` tuples we could not route.
+        - ``resolved_via_external_id`` — count of arXiv/PMC ids whose
+          DOI resolution succeeded.
     """
     if not ingest_linked_papers:
-        return 0, []
+        return 0, [], 0
 
     refs = manifest.collect_paper_refs()
-    dois = sorted({value for (kind, value) in refs if kind == "doi"})
-    skipped: list[tuple[str, str]] = sorted(
-        ((kind, value) for (kind, value) in refs if kind != "doi"),
+    # The manifest may yield (doi, "10.x/y"), (arxiv, "..."), (pmc, "..."),
+    # or anything else a future schema version adds. Bucket by kind so
+    # we know what to resolve vs. what to pass through unchanged.
+    dois: set[str] = {value for (kind, value) in refs if kind == "doi"}
+    arxiv_ids = sorted({value for (kind, value) in refs if kind == "arxiv"})
+    pmc_ids = sorted({value for (kind, value) in refs if kind == "pmc"})
+    other_refs: list[tuple[str, str]] = sorted(
+        (
+            (kind, value)
+            for (kind, value) in refs
+            if kind not in ("doi", "arxiv", "pmc")
+        ),
         key=lambda kv: (kv[0], kv[1]),
     )
 
+    resolved_count = 0
+    skipped: list[tuple[str, str]] = list(other_refs)
+
+    for arxiv_id in arxiv_ids:
+        try:
+            doi = await resolve_arxiv_to_doi(arxiv_id)
+        except Exception as exc:  # defensive — resolver is contracted not to raise
+            logger.warning(
+                "github_kb.arxiv_resolve_unexpected_error",
+                extra={"arxiv_id": arxiv_id, "error": str(exc)},
+            )
+            doi = None
+        if doi:
+            if doi not in dois:  # dedup against existing DOI set
+                dois.add(doi)
+            resolved_count += 1
+        else:
+            skipped.append(("arxiv", arxiv_id))
+
+    for pmc_id in pmc_ids:
+        try:
+            doi = await resolve_pmc_to_doi(pmc_id)
+        except Exception as exc:
+            logger.warning(
+                "github_kb.pmc_resolve_unexpected_error",
+                extra={"pmc_id": pmc_id, "error": str(exc)},
+            )
+            doi = None
+        if doi:
+            if doi not in dois:
+                dois.add(doi)
+            resolved_count += 1
+        else:
+            skipped.append(("pmc", pmc_id))
+
+    # Keep the returned skipped list sorted for deterministic golden-file
+    # comparisons in downstream tests.
+    skipped.sort(key=lambda kv: (kv[0], kv[1]))
+
     if not dois:
-        return 0, skipped
+        return 0, skipped, resolved_count
 
     try:
         result = await ingest_dois_into_kb(
             app_state_for_doi_ingest,
             kb_name=kb_name,
-            dois=dois,
+            dois=sorted(dois),
         )
     except Exception as exc:  # defensive: bundle ingest must still succeed
         logger.warning(
             "github_kb.linked_paper_ingest_failed",
             extra={"kb_name": kb_name, "error": str(exc)},
         )
-        return 0, skipped
+        return 0, skipped, resolved_count
 
     if isinstance(result, dict):
         added = (
@@ -502,7 +574,7 @@ async def _route_linked_papers(
             added = 0
     else:
         added = 0
-    return added, skipped
+    return added, skipped, resolved_count
 
 
 # ---------------------------------------------------------------------------
