@@ -292,13 +292,21 @@ async def _resolve_push_input(
     # URL route: trust caller-supplied metadata; supplement with OG/citation_*.
     if inp.get("url"):
         url = inp["url"].strip()
+        # YouTube URLs default to videoRecording (Zotero's native type
+        # for video citations). Caller can still override via
+        # explicit ``item_type``.
+        derived_item_type = inp.get("item_type")
+        if not derived_item_type:
+            from perspicacite.pipeline.download.youtube import is_youtube_url
+            if is_youtube_url(url):
+                derived_item_type = "videoRecording"
         paper = {
             "url": url,
             "title": inp.get("title") or "",
             "authors": inp.get("authors") or [],
             "year": inp.get("year"),
             "abstract": inp.get("abstract") or "",
-            "item_type": inp.get("item_type"),
+            "item_type": derived_item_type,
             "tags": inp.get("tags") or [],
             "repository": inp.get("repository") or "",
             "website_title": inp.get("website_title") or "",
@@ -1744,13 +1752,66 @@ async def push_to_zotero(
                             entry["attached_pdf"] = False
                             entry["pdf_attach_error"] = "no PDF available"
 
+                    # YouTube special-case: when the item URL is a
+                    # YouTube video, attach the LLM-corrected transcript
+                    # (as Markdown) instead of the generic HTML capture.
+                    # This gives ASB / KB consumers searchable spoken
+                    # content with [mm:ss] timestamps. Falls through to
+                    # the HTML path on any error.
+                    attached_transcript = False
+                    if (paper.get("url") or url):
+                        from perspicacite.pipeline.download.youtube import (
+                            fetch_youtube_transcript,
+                            is_youtube_url,
+                        )
+                        target_url = paper.get("url") or url
+                        if is_youtube_url(target_url):
+                            try:
+                                md, _yt_title = await fetch_youtube_transcript(
+                                    target_url,
+                                    http_client=http_client,
+                                    llm_client=state.llm_client,
+                                )
+                                import re as _re_yt
+                                from pathlib import Path as _Path
+                                if cache_dir:
+                                    yt_dir = _Path(cache_dir).expanduser() / "youtube"
+                                else:
+                                    yt_dir = (
+                                        _Path.home() / ".cache" / "perspicacite"
+                                        / "youtube"
+                                    )
+                                yt_dir.mkdir(parents=True, exist_ok=True)
+                                slug = _re_yt.sub(
+                                    r"[^a-zA-Z0-9.-]+", "_",
+                                    target_url.lower(),
+                                )[:120]
+                                yt_path = yt_dir / f"{slug}.md"
+                                yt_path.write_text(md, encoding="utf-8")
+                                att_key = await zotero.upload_attachment(
+                                    parent_item_key=key,
+                                    file_path=str(yt_path),
+                                    filename=yt_path.name,
+                                    content_type="text/markdown",
+                                )
+                                entry["attached_transcript"] = bool(att_key)
+                                entry["transcript_chars"] = len(md)
+                                attached_transcript = True
+                            except Exception as exc:
+                                entry["transcript_attach_error"] = str(exc)
+
                     # HTML attach: always for URL-route items, or as a
                     # fallback when the requested PDF couldn't be
                     # attached. The same capture path handles both —
                     # ``capture_landing_html`` falls back to a
                     # bibliographic stub when the live page is blocked.
-                    need_html = (not doi) or (
-                        attach_pdf and (pdf_path is None or pdf_too_large)
+                    # Skipped for YouTube items that already got a
+                    # transcript attachment above.
+                    need_html = (
+                        not attached_transcript and (
+                            (not doi)
+                            or (attach_pdf and (pdf_path is None or pdf_too_large))
+                        )
                     )
                     if need_html:
                         try:
@@ -2154,6 +2215,7 @@ async def ingest_urls_to_kb(
             try:
                 md, title = await fetch_url_as_markdown(
                     url, http_client=http_client,
+                    llm_client=state.llm_client,
                 )
                 # Prepend the title as an H1 so the markdown chunker
                 # uses it as the top-level section anchor.

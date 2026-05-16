@@ -162,12 +162,21 @@ async def fetch_url_as_markdown(
     url: str,
     *,
     http_client: httpx.AsyncClient | None = None,
+    llm_client: Any | None = None,
 ) -> tuple[str, str]:
     """Fetch ``url`` and return ``(markdown_text, title)`` for KB ingest.
 
-    GitHub repository URLs route through the API for the raw README;
-    everything else fetches the HTML and converts via trafilatura
-    (with a BS4 fallback when the optional extra isn't installed).
+    Three routes:
+
+    - **GitHub repos** ``github.com/owner/repo`` → raw README via the
+      GitHub REST API.
+    - **YouTube videos** ``youtube.com/watch?v=...`` /
+      ``youtu.be/...`` → public transcript (manual or auto-captions)
+      via ``youtube-transcript-api``. Requires the ``[youtube-ingest]``
+      extra. When ``llm_client`` is provided, the transcript is
+      LLM-corrected using the video title as context (jargon-heavy
+      videos benefit a lot — "MS/MS" stays "MS/MS").
+    - **Everything else** → HTML via trafilatura (or BS4 fallback).
 
     Raises ``httpx.HTTPError`` / ``ValueError`` for unreachable URLs
     or empty results — callers should treat exceptions as per-URL
@@ -180,6 +189,15 @@ async def fetch_url_as_markdown(
     should_close = http_client is None
 
     try:
+        from perspicacite.pipeline.download.youtube import (
+            fetch_youtube_transcript,
+            is_youtube_url,
+        )
+        if is_youtube_url(url):
+            return await fetch_youtube_transcript(
+                url, http_client=client, llm_client=llm_client,
+            )
+
         gh = _parse_github_repo(url)
         if gh:
             owner, repo = gh
