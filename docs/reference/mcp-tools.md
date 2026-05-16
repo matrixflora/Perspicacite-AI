@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-Perspicacité exposes 23 tools via the Model Context Protocol at
+Perspicacité exposes 27 tools via the Model Context Protocol at
 `http://localhost:5468/mcp` (streamable-HTTP transport, port from `config.yml`).
 
 To connect from Claude Code:
