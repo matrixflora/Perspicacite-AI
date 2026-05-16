@@ -11,6 +11,7 @@ import click
 from perspicacite import __version__
 from perspicacite.config import load_config
 from perspicacite.logging import get_logger, setup_logging
+from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
 
 logger = get_logger("perspicacite.cli")
 
@@ -1673,6 +1674,94 @@ def check_cookies_cmd(
             + " ".join(f"--domain {w.domain}" for w in needs_refresh)
         )
         sys.exit(1)
+
+
+async def _build_app_state_for_cli(config: Any) -> Any:
+    """Test seam: thin wrapper so unit tests can patch this without
+    constructing the full AppState."""
+    from perspicacite.web.state import AppState
+    state = AppState()
+    await state.initialize()
+    return state
+
+
+@cli.command("ingest-asb-run")
+@click.argument(
+    "asb_run_dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True, resolve_path=True),
+)
+@click.option(
+    "--kb-name",
+    default=None,
+    help="Target KB name. Defaults to the run-dir basename.",
+)
+@click.option(
+    "--include",
+    multiple=True,
+    type=click.Choice(["skills", "workflows"]),
+    help="Artifact streams to ingest (repeatable). Default: both.",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["composite", "per-skill"]),
+    default="composite",
+    help="Composite KB (one) or per-skill (one KB per skill).",
+)
+@click.option(
+    "--no-skill-kb-update",
+    is_flag=True,
+    default=False,
+    help="Skip writing back the per-skill skill_kb.json stamp.",
+)
+@click.pass_context
+def ingest_asb_run(
+    ctx: click.Context,
+    asb_run_dir: str,
+    kb_name: str | None,
+    include: tuple[str, ...],
+    mode: str,
+    no_skill_kb_update: bool,
+) -> None:
+    """Ingest an Agent Skill Bundle (ASB) run into a Perspicacite KB.
+
+    Supports both 2026-05-15 and 2026-05-16+ ASB output schemas. Wraps
+    pipeline.asb.run_ingest.ingest_asb_run.
+    """
+    import asyncio
+
+    async def _run() -> dict:
+        app_state = await _build_app_state_for_cli(ctx.obj.get("config"))
+        try:
+            return await ingest_asb_run_pipeline(
+                asb_run_dir=asb_run_dir,
+                kb_name=kb_name,
+                include=tuple(include) if include else ("skills", "workflows"),
+                mode=mode,
+                update_skill_kb_json=not no_skill_kb_update,
+                app_state=app_state,
+            )
+        finally:
+            shutdown = getattr(app_state, "shutdown", None)
+            if shutdown is not None:
+                if asyncio.iscoroutinefunction(shutdown):
+                    await shutdown()
+                else:
+                    shutdown()
+
+    result = asyncio.run(_run())
+
+    # Print a human-readable summary
+    click.echo(f"ASB run ingested into KB(s): {', '.join(result['kb_names'])}")
+    click.echo(f"  skills:    {result['skills_ingested']}")
+    click.echo(f"  workflows: {result['workflows_ingested']}")
+    click.echo(f"  papers:    {result['papers_ingested']}")
+    if result.get("failed"):
+        click.echo(f"  failures:  {len(result['failed'])}")
+        for f in result["failed"][:5]:
+            click.echo(f"    - {f.get('id')}: {f.get('error')}")
+    if result.get("workflow_dag"):
+        dag = result["workflow_dag"]
+        click.echo(f"  workflow:  {len(dag['nodes'])} nodes, {len(dag['edges'])} edges")
 
 
 @cli.command()
