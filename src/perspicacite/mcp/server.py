@@ -2207,6 +2207,105 @@ async def enrich_kb_from_cite_graph_tool(
 
 
 # =============================================================================
+# Tool 13: zotero_list_collections
+# =============================================================================
+
+_zotero_collections_cache: dict[str, tuple[list, float]] = {}
+_COLLECTION_CACHE_TTL = 3600.0  # 1 hour
+
+
+def _build_collection_tree(
+    flat: list[dict], parent_key: str | None = None
+) -> list[dict]:
+    result = []
+    for coll in flat:
+        data = coll.get("data") or {}
+        pc = data.get("parentCollection")
+        coll_parent = None if (pc is False or not pc) else pc
+        if coll_parent == parent_key:
+            result.append({
+                "id": coll["key"],
+                "name": data.get("name") or "",
+                "parent_id": parent_key,
+                "item_count": None,
+                "subcollections": _build_collection_tree(flat, parent_key=coll["key"]),
+            })
+    return result
+
+
+@mcp.tool()
+async def zotero_list_collections(
+    library_id: str | None = None,
+    include_subcollections: bool = True,
+) -> dict:
+    """List all Zotero collections (with sub-collection tree).
+
+    Args:
+        library_id: Override the configured library_id for this call.
+        include_subcollections: If True (default), return a nested tree.
+            If False, return only top-level collections.
+
+    Returns:
+        {"collections": [...], "library_id": str, "library_type": str}
+        Each collection: {"id", "name", "parent_id", "item_count", "subcollections"}
+    """
+    import time
+    import httpx
+    from perspicacite.integrations.zotero import ZoteroClient
+
+    cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
+    if not (cfg and cfg.enabled and cfg.api_key):
+        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "Zotero not enabled or api_key missing"}
+
+    eff_library_id = library_id or cfg.library_id
+    if not eff_library_id:
+        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "library_id required"}
+
+    base_url = getattr(cfg, "base_url", "") or None
+
+    cache_key = f"{eff_library_id}:{cfg.library_type}"
+    cached = _zotero_collections_cache.get(cache_key)
+    if cached and time.time() < cached[1]:
+        flat = cached[0]
+    else:
+        client = ZoteroClient(
+            api_key=cfg.api_key,
+            library_id=eff_library_id,
+            library_type=cfg.library_type,
+            base_url=base_url,
+        )
+        try:
+            flat = await client.list_collections()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status == 403:
+                return {"error": "ZOTERO_AUTH_FAILED", "message": "Zotero API returned 403"}
+            if status == 429:
+                ra = exc.response.headers.get("retry-after") or "60"
+                return {"error": "ZOTERO_RATE_LIMITED", "retry_after_s": float(ra)}
+            if status == 404:
+                return {"error": "LIBRARY_NOT_FOUND", "message": f"Library {eff_library_id} not found"}
+            return {"error": "ZOTERO_ERROR", "message": str(exc)}
+        _zotero_collections_cache[cache_key] = (flat, time.time() + _COLLECTION_CACHE_TTL)
+
+    if include_subcollections:
+        collections = _build_collection_tree(flat, parent_key=None)
+    else:
+        collections = [
+            {"id": c["key"], "name": (c.get("data") or {}).get("name") or "",
+             "parent_id": None, "item_count": None, "subcollections": []}
+            for c in flat
+            if not (c.get("data") or {}).get("parentCollection")
+        ]
+
+    return {
+        "collections": collections,
+        "library_id": eff_library_id,
+        "library_type": cfg.library_type,
+    }
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -2235,6 +2334,7 @@ _TOOL_NAMES: list[str] = [
     "expand_kb_via_citations",
     "delete_knowledge_base",
     "enrich_kb_from_cite_graph_tool",
+    "zotero_list_collections",
 ]
 
 
