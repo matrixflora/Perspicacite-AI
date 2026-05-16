@@ -416,14 +416,26 @@ async def _create_kb_if_missing(
     description: str | None,
 ) -> tuple[Any, bool]:
     """Return (kb_meta, created). Mirrors the create_knowledge_base
-    MCP tool's logic so callers don't have to."""
+    MCP tool's logic so callers don't have to.
+
+    Raises :class:`~perspicacite.rag.kb_compat.EmbeddingModelConflictError`
+    if the KB exists but was built with a different embedding model
+    than the current ``app_state.embedding_provider``.
+    """
     from perspicacite.models.kb import (
         ChunkConfig,
         KnowledgeBase,
         chroma_collection_name_for_kb,
     )
+    from perspicacite.rag.kb_compat import check_embedding_compat_for_ingest
 
     existing = await app_state.session_store.get_kb_metadata(kb_name)
+    # Catch embedding-model mismatch at ingest time so multi-KB
+    # queries don't fail surprisingly later. See 2026-05-16 backlog.
+    check_embedding_compat_for_ingest(
+        kb_meta=existing,
+        embedding_service=app_state.embedding_provider,
+    )
     if existing:
         return existing, False
     collection_name = chroma_collection_name_for_kb(kb_name)
@@ -494,6 +506,15 @@ async def ingest_dois_into_kb(
     kb_meta = await app_state.session_store.get_kb_metadata(kb_name)
     if not kb_meta:
         raise ValueError(f"Knowledge base '{kb_name}' not found")
+    # Catch embedding-model mismatch before embedding any new chunks.
+    # 2026-05-16: previously this site silently re-embedded with the
+    # currently-configured provider, so the KB ended up with chunks
+    # from two different models.
+    from perspicacite.rag.kb_compat import check_embedding_compat_for_ingest
+    check_embedding_compat_for_ingest(
+        kb_meta=kb_meta,
+        embedding_service=app_state.embedding_provider,
+    )
     collection_name = chroma_collection_name_for_kb(kb_name)
 
     pdf_config = app_state.config.pdf_download

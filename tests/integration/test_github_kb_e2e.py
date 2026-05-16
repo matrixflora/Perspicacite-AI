@@ -625,3 +625,112 @@ async def test_ingest_skill_bundles_batch_composite_mode(
     for s in summaries:
         assert s.kb_name == "my-composite"
         assert s.mode == "composite"
+
+
+# ---------------------------------------------------------------------------
+# Embedding-model conflict detection (2026-05-16 P1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_skill_bundle_raises_on_embedding_conflict(
+    tmp_path: Path, deterministic_embedder, monkeypatch
+):
+    """A pre-existing KB built with a *different* embedding model must
+    raise :class:`EmbeddingModelConflictError` before any new chunks
+    are written. The check lives in ``github_kb._add_papers_to_kb``.
+    """
+    from perspicacite.models.kb import (
+        ChunkConfig,
+        KnowledgeBase,
+        chroma_collection_name_for_kb,
+    )
+    from perspicacite.pipeline import github_kb
+    from perspicacite.rag.kb_compat import EmbeddingModelConflictError
+
+    # Pre-stamp a KB record under the target name with a *different*
+    # embedding model than the deterministic embedder reports.
+    ss = await _make_session_store(tmp_path)
+    target_kb_name = "conflict_kb"
+    pre_existing = KnowledgeBase(
+        name=target_kb_name,
+        description="pre-existing — embedded with model-A",
+        collection_name=chroma_collection_name_for_kb(target_kb_name),
+        embedding_model="model-A",  # NOT "deterministic-mock"
+        chunk_config=ChunkConfig(),
+    )
+    await ss.save_kb_metadata(pre_existing)
+
+    # Avoid touching the DOI ingest path; the conflict must trip before
+    # we get anywhere near it.
+    async def _no_ingest(*a, **kw):  # noqa: ARG001
+        raise AssertionError(
+            "linked-paper ingest should not run when the embedding "
+            "conflict trips first"
+        )
+
+    monkeypatch.setattr(github_kb, "ingest_dois_into_kb", _no_ingest)
+
+    cfg = _make_config()
+    vs = _make_chroma_store(tmp_path, deterministic_embedder)
+
+    with pytest.raises(EmbeddingModelConflictError) as excinfo:
+        await github_kb.ingest_skill_bundle(
+            source=SAMPLE_BUNDLE,
+            kb_name=target_kb_name,
+            config=cfg,
+            vector_store=vs,
+            embedding_service=deterministic_embedder,
+            session_store=ss,
+            ingest_linked_papers=False,
+        )
+
+    err = excinfo.value
+    assert err.kb_name == target_kb_name
+    assert err.existing_model == "model-A"
+    assert err.attempted_model == deterministic_embedder.model_name
+
+
+@pytest.mark.asyncio
+async def test_ingest_skill_bundle_ok_when_models_match(
+    tmp_path: Path, deterministic_embedder
+):
+    """Sanity check: when the pre-existing KB's embedding model matches
+    the current service, ingest proceeds normally (no false-positive
+    conflict)."""
+    from perspicacite.models.kb import (
+        ChunkConfig,
+        KnowledgeBase,
+        chroma_collection_name_for_kb,
+    )
+    from perspicacite.pipeline import github_kb
+
+    ss = await _make_session_store(tmp_path)
+    target_kb_name = "matched_kb"
+    pre_existing = KnowledgeBase(
+        name=target_kb_name,
+        description="pre-existing — same model",
+        collection_name=chroma_collection_name_for_kb(target_kb_name),
+        embedding_model=deterministic_embedder.model_name,
+        chunk_config=ChunkConfig(),
+    )
+    await ss.save_kb_metadata(pre_existing)
+    # The Chroma collection has to exist for the dynamic_kb add path,
+    # so create it explicitly to match the pre-stamped metadata.
+    vs = _make_chroma_store(tmp_path, deterministic_embedder)
+    await vs.create_collection(pre_existing.collection_name)
+
+    cfg = _make_config()
+
+    summary = await github_kb.ingest_skill_bundle(
+        source=SAMPLE_BUNDLE,
+        kb_name=target_kb_name,
+        config=cfg,
+        vector_store=vs,
+        embedding_service=deterministic_embedder,
+        session_store=ss,
+        ingest_linked_papers=False,
+    )
+
+    assert summary.kb_name == target_kb_name
+    assert summary.chunks_added > 0

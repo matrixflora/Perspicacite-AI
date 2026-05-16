@@ -273,6 +273,72 @@ async def test_ingest_asb_run_per_skill_mode(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_ingest_asb_run_raises_on_embedding_conflict(tmp_path):
+    """A pre-existing KB built with a *different* embedding model must
+    raise :class:`EmbeddingModelConflictError` at the ASB orchestrator's
+    KB-acquisition seam.
+
+    Uses the real ``_make_or_get_kb`` path (no patch) so the production
+    chain ``_make_or_get_kb → _create_kb_if_missing →
+    check_embedding_compat_for_ingest`` runs.
+    """
+    import types
+
+    from perspicacite.memory.session_store import SessionStore
+    from perspicacite.models.kb import (
+        ChunkConfig,
+        KnowledgeBase,
+        chroma_collection_name_for_kb,
+    )
+    from perspicacite.pipeline.asb.run_ingest import ingest_asb_run
+    from perspicacite.rag.kb_compat import EmbeddingModelConflictError
+
+    target = tmp_path / "run"
+    shutil.copytree(METLINKR, target)
+
+    # Stand up a real session_store with a KB that was built under
+    # a *different* embedding model than the one we'll configure on
+    # the stub app_state. The shape ``check_embedding_compat_for_ingest``
+    # reads is ``kb_meta.embedding_model`` vs
+    # ``app_state.embedding_provider.model_name``.
+    ss = SessionStore(db_path=str(tmp_path / "session.db"))
+    await ss.init_db()
+    pre_existing_name = "asb_conflict_kb"
+    pre_existing = KnowledgeBase(
+        name=pre_existing_name,
+        description="pre-existing — model-A",
+        collection_name=chroma_collection_name_for_kb(pre_existing_name),
+        embedding_model="model-A",
+        chunk_config=ChunkConfig(),
+    )
+    await ss.save_kb_metadata(pre_existing)
+
+    # Stub app_state — only the attributes the production chain touches
+    # before the check are exercised. Anything farther downstream
+    # (vector_store / embedding_service) is never reached because the
+    # check raises first.
+    stub_embedder = types.SimpleNamespace(model_name="model-B")
+    stub_app_state = types.SimpleNamespace(
+        session_store=ss,
+        embedding_provider=stub_embedder,
+    )
+
+    with pytest.raises(EmbeddingModelConflictError) as excinfo:
+        await ingest_asb_run(
+            asb_run_dir=str(target),
+            kb_name=pre_existing_name,
+            include=("skills", "workflows"),
+            mode="composite",
+            app_state=stub_app_state,
+        )
+
+    err = excinfo.value
+    assert err.kb_name == pre_existing_name
+    assert err.existing_model == "model-A"
+    assert err.attempted_model == "model-B"
+
+
+@pytest.mark.asyncio
 async def test_ingest_asb_run_validates_include(tmp_path):
     from perspicacite.pipeline.asb.run_ingest import ingest_asb_run
     with pytest.raises(ValueError, match="include"):

@@ -426,10 +426,22 @@ async def _add_papers_to_kb(
     plus :func:`ingest_dois_into_kb`. Lives here (not a module helper)
     so tests can intercept the orchestrator's behaviour without
     monkey-patching the underlying KB primitives.
+
+    Raises :class:`~perspicacite.rag.kb_compat.EmbeddingModelConflictError`
+    if the KB already exists with a different ``embedding_model`` than
+    the current ``embedding_service`` reports. Check runs BEFORE any
+    ``create_collection`` / ``save_kb_metadata`` calls so a conflict
+    leaves no partial state behind.
     """
+    from perspicacite.rag.kb_compat import check_embedding_compat_for_ingest
+
     collection_name = chroma_collection_name_for_kb(kb_name)
 
     kb_meta = await session_store.get_kb_metadata(kb_name)
+    check_embedding_compat_for_ingest(
+        kb_meta=kb_meta,
+        embedding_service=embedding_service,
+    )
     if kb_meta is None:
         await vector_store.create_collection(collection_name)
         chunk_cfg = ChunkConfig(
