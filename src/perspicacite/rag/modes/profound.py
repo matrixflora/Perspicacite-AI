@@ -1981,6 +1981,7 @@ Follow the system instructions for this situation."""
                         doi=doc.get("doi"),
                         relevance_score=doc.get("paper_score", 0.5),
                         kb_name=doc.get("kb_name"),
+                        metadata=doc.get("paper_metadata"),
                     )
                 )
                 continue
@@ -1997,6 +1998,7 @@ Follow the system instructions for this situation."""
                         title=str(title),
                         url=doc.get("url") or None,
                         relevance_score=0.5,
+                        metadata=None,
                     )
                 )
                 continue
@@ -2008,6 +2010,15 @@ Follow the system instructions for this situation."""
                 authors = getattr(meta, "authors", [])
                 year = getattr(meta, "year", None)
                 doi = getattr(meta, "doi", None)
+                # Decode the ASB ``paper_metadata_json`` blob if present.
+                _pm_blob = getattr(meta, "paper_metadata_json", None)
+                _pm_dict: dict | None = None
+                if _pm_blob:
+                    try:
+                        import json as _json
+                        _pm_dict = _json.loads(_pm_blob)
+                    except Exception:
+                        _pm_dict = None
             else:
                 continue
 
@@ -2034,6 +2045,7 @@ Follow the system instructions for this situation."""
                     doi=doi,
                     relevance_score=getattr(doc, "score", 0.0),
                     kb_name=getattr(doc, "kb_name", None),
+                    metadata=_pm_dict,
                 )
             )
 

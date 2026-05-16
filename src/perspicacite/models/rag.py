@@ -38,6 +38,10 @@ class SourceReference(BaseModel):
     relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
     chunk_text: Optional[str] = None
     kb_name: Optional[str] = None
+    # Carries the underlying paper's ``Paper.metadata`` dict (or chunk
+    # metadata) as a free-form mapping. Surfaces ASB skill / workflow-card
+    # fields to the response builders (build_asb_response_metadata).
+    metadata: Optional[dict[str, Any]] = None
 
     @field_validator("authors", mode="before")
     @classmethod

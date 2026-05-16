@@ -120,6 +120,19 @@ class ContradictionRAGMode(BaseRAGMode):
             return chunk.get("kb_name")
         return getattr(chunk, "kb_name", None)
 
+    def _decode_paper_metadata(self, meta: dict[str, Any]) -> dict | None:
+        """Decode the ``paper_metadata_json`` blob (if any) from a chunk
+        metadata dict produced by ``_chunk_meta``. Returns ``None`` when
+        absent or malformed — keeps non-ASB chunks safe.
+        """
+        blob = meta.get("paper_metadata_json") if isinstance(meta, dict) else None
+        if not blob:
+            return None
+        try:
+            return json.loads(blob)
+        except (TypeError, ValueError):
+            return None
+
     # ------------------------------------------------------------------
     # Per-paper claim summarisation
     # ------------------------------------------------------------------
@@ -325,6 +338,7 @@ class ContradictionRAGMode(BaseRAGMode):
                     doi=meta.get("doi"),
                     relevance_score=min(1.0, max(0.0, self._chunk_score(chunks[0]))),
                     kb_name=kb_name,
+                    metadata=self._decode_paper_metadata(meta),
                 )
             )
         return sources
@@ -407,6 +421,7 @@ class ContradictionRAGMode(BaseRAGMode):
                                 max(0.0, self._chunk_score(first_chunk)),
                             ),
                             kb_name=kb_name,
+                            metadata=self._decode_paper_metadata(meta),
                         )
                     )
                 yield StreamEvent.done(
