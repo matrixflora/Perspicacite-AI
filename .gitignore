@@ -149,6 +149,10 @@ cookies.txt
 .cookies/
 cookies/
 
+# Local inspection artifacts (live-test outputs at repo root)
+mimosa_unattached.json
+mimosa_resolver_results*.json
+
 test_lotus.py
 uv.lock
 Untitled
