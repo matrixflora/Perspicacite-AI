@@ -26,7 +26,9 @@ import uuid
 from typing import Any
 
 from perspicacite.logging import get_logger
+from perspicacite.pipeline.asb.response import build_asb_response_metadata
 from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
+from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 
 logger = get_logger("perspicacite.mcp.server")
 
@@ -515,6 +517,9 @@ async def search_knowledge_base(
             for r in results:
                 meta_obj = r.get("metadata")
                 meta_dict = meta_obj.__dict__ if hasattr(meta_obj, "__dict__") else (meta_obj or {})
+                # Decode the ASB-style paper_metadata_json (if present)
+                # so the response helper can read it directly.
+                pm_dict = decode_paper_metadata_json(meta_obj)
                 chunks.append(
                     {
                         "paper_id": r.get("paper_id"),
@@ -526,14 +531,17 @@ async def search_knowledge_base(
                         "relevance_score": r.get("score"),
                         "doi": meta_dict.get("doi") if isinstance(meta_dict, dict) else None,
                         "kb_name": r.get("kb_name"),
+                        "metadata": pm_dict,
                     }
                 )
 
+            asb_md = build_asb_response_metadata(chunks)
             return _json_ok(
                 {
                     "query": query,
                     "kb_names": kb_names,
                     "results": chunks,
+                    "asb_metadata": asb_md,
                 }
             )
 
@@ -571,6 +579,10 @@ async def search_knowledge_base(
         chunks = []
         for r in results:
             meta = r.metadata if hasattr(r, "metadata") else {}
+            # Decode the ASB-style paper_metadata_json (if present)
+            # so the response helper can read it directly. The decoder
+            # accepts both dict-like and attr-like ``meta``.
+            pm_dict = decode_paper_metadata_json(meta)
             chunks.append(
                 {
                     "paper_id": meta.get("paper_id"),
@@ -579,14 +591,17 @@ async def search_knowledge_base(
                     "chunk_text": r.text if hasattr(r, "text") else str(r),
                     "relevance_score": r.score if hasattr(r, "score") else None,
                     "doi": meta.get("doi"),
+                    "metadata": pm_dict,
                 }
             )
 
+        asb_md = build_asb_response_metadata(chunks)
         return _json_ok(
             {
                 "query": query,
                 "kb_name": effective_kb_name,
                 "results": chunks,
+                "asb_metadata": asb_md,
             }
         )
 
@@ -958,10 +973,18 @@ async def generate_report(
                         "relevance_score": src.get("relevance_score"),
                         "section": src.get("section"),
                         "kb_name": src.get("kb_name"),
+                        "metadata": src.get("metadata"),
                     }
                 )
 
         logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
+
+        asb_md = build_asb_response_metadata(
+            [
+                {"metadata": s.get("metadata") if isinstance(s, dict) else None}
+                for s in sources
+            ]
+        )
 
         return _json_ok(
             {
@@ -973,6 +996,7 @@ async def generate_report(
                 "sources": sources,
                 "papers_used": len(sources),
                 "message_id": message_id,
+                "asb_metadata": asb_md,
             }
         )
 

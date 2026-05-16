@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from perspicacite.models.rag import RAGMode
+from perspicacite.pipeline.asb.response import build_asb_response_metadata
 from perspicacite.provenance.collector import ProvenanceCollector
 from perspicacite.provenance.context import collecting
 from perspicacite.web.state import app_state
@@ -651,6 +652,34 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
                     "sources": sources,
                 }
                 yield f"data: {json.dumps(safe, separators=(',', ':'))}\n\n"
+                # Derive ASB skill/workflow metadata blocks from collected
+                # sources. Each source carries its underlying paper's
+                # ``metadata`` dict; the helper coalesces by skill_id /
+                # task_id and ignores non-ASB sources. Emit a separate
+                # SSE event only when at least one block is non-empty so
+                # non-ASB conversations don't get an extra noise frame.
+                try:
+                    asb_md = build_asb_response_metadata(
+                        [
+                            {"metadata": (s.get("metadata") if isinstance(s, dict) else None)}
+                            for s in sources
+                        ]
+                    )
+                    if asb_md.get("skill_metadata") or asb_md.get("workflow_metadata"):
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "type": "asb_metadata",
+                                    "message_id": assistant_message_id,
+                                    **asb_md,
+                                },
+                                separators=(",", ":"),
+                            )
+                            + "\n\n"
+                        )
+                except Exception as _exc:  # noqa: BLE001
+                    logger.warning(f"asb_metadata_emit_failed: {_exc}")
                 yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
                 return
 
