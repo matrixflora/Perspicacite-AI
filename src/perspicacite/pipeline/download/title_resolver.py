@@ -148,8 +148,24 @@ def _validate_match(
         except (TypeError, ValueError):
             pass
 
-    sim_floor = 0.4 if target_tokens else 0.6
-    return _title_similarity(candidate_title, target_title) >= sim_floor
+    if target_tokens:
+        return _title_similarity(candidate_title, target_title) >= 0.4
+
+    # No real author signal — short generic titles like "Model Context
+    # Protocol Specification" or "LangGraph: Build resilient language
+    # agents" share enough common terms with unrelated journal papers
+    # ("Model-based protocol specification" etc.) to clear a 0.6
+    # Jaccard floor. Tighten by requiring both (a) >= 0.6 Jaccard AND
+    # (b) at least 4 shared content tokens — both are easy to satisfy
+    # for genuine matches but hard to satisfy by accident.
+    target_t = _title_tokens(target_title)
+    cand_t = _title_tokens(candidate_title)
+    if not target_t or not cand_t:
+        return False
+    shared = target_t & cand_t
+    if len(shared) < 4:
+        return False
+    return len(shared) / len(target_t | cand_t) >= 0.6
 
 
 async def _try_openalex(

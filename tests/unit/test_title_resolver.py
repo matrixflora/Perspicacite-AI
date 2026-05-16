@@ -66,6 +66,22 @@ def test_validate_accepts_year_off_by_one():
     )
 
 
+def test_validate_rejects_short_generic_title_match_with_no_author():
+    """Regression: "Model Context Protocol Specification" (4 generic
+    tokens, no author) was matching "Model-based protocol specification"
+    (different 2019 systems-engineering paper) at Jaccard exactly 0.6.
+    For author-less queries we now require BOTH >=0.6 Jaccard AND >=4
+    shared content tokens, so 3-of-4 matches fail."""
+    assert not _validate_match(
+        candidate_title="Model-based protocol specification",
+        candidate_authors=["Mordecai"],
+        candidate_year=2019,
+        target_title="Model Context Protocol Specification",
+        target_authors=["Unknown"],
+        target_year=None,
+    )
+
+
 def test_validate_rejects_junk_unknown_author_with_loose_title():
     """Regression: bib entries with author='Unknown' must not match
     any arbitrary DOI just because the title length is in range.
