@@ -2730,6 +2730,15 @@ async def zotero_get_collection_items(
             else:
                 lic = clf.classify_zotero_tags(it) or clf.heuristic(is_oa=False)
 
+            # Resolve child-attachment keys so downstream tools (and ASB's
+            # MCP bridge) can request the bytes via zotero_get_attachment_bytes
+            # without a second round-trip per item to discover them.
+            try:
+                attachments = await client.get_item_attachments(it.get("key") or "")
+                attachment_keys = [a.get("key") for a in attachments if a.get("key")]
+            except httpx.HTTPError:
+                attachment_keys = []
+
             return {
                 "zotero_key": it.get("key"),
                 "doi": doi,
@@ -2745,7 +2754,8 @@ async def zotero_get_collection_items(
                     "policy": lic.policy,
                     "source": lic.source,
                 },
-                "has_attachments": False,
+                "attachment_keys": attachment_keys,
+                "has_attachments": bool(attachment_keys),
             }
 
         items = await asyncio.gather(*(_classify_item(it) for it in page))
@@ -2867,6 +2877,106 @@ async def zotero_get_paper_resources(
 
 # =============================================================================
 # Tool 16: zotero_ingest_collection_to_kb
+# =============================================================================
+# Tool 16b: zotero_get_attachment_bytes
+# =============================================================================
+
+
+@mcp.tool()
+async def zotero_get_attachment_bytes(
+    attachment_key: str,
+    library_id: str | None = None,
+) -> dict[str, Any]:
+    """Return the raw bytes of a Zotero attachment as base64.
+
+    Companion to ``zotero_get_collection_items``' new ``attachment_keys``
+    field: callers iterate the returned keys and fetch each one via this
+    tool to get the actual PDF/HTML/etc. content for downstream
+    processing (ASB capsule synthesis, KB ingest, archival).
+
+    Args:
+        attachment_key: Zotero key of an attachment child item.
+        library_id: Override ``config.yml`` ``zotero.library_id`` for
+            this call. Useful when the attachment lives in a different
+            group than the server's default.
+
+    Returns:
+        ``{filename, content_b64, content_type, size_bytes, role_hint?,
+        license_spdx?}``. Errors surface as ``{"error": ..., "message": ...}``.
+    """
+    import base64
+
+    cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
+    if not (cfg and cfg.enabled and cfg.api_key):
+        return {"error": "ZOTERO_NOT_CONFIGURED",
+                "message": "Zotero not enabled or api_key missing"}
+    eff_library_id = library_id or cfg.library_id
+    if not eff_library_id:
+        return {"error": "ZOTERO_NOT_CONFIGURED",
+                "message": "library_id required"}
+
+    from perspicacite.integrations.zotero import ZoteroClient
+    client = ZoteroClient(
+        api_key=cfg.api_key,
+        library_id=eff_library_id,
+        library_type=cfg.library_type,
+        base_url=getattr(cfg, "base_url", "") or None,
+    )
+
+    # Fetch the attachment metadata first (filename, contentType, tags
+    # that may encode role_hint or license).
+    c = await client._client()
+    try:
+        meta_r = await c.get(
+            f"{client._base()}/items/{attachment_key}",
+            headers=client._headers(),
+        )
+    except httpx.HTTPError as exc:
+        return {"error": "ZOTERO_FETCH_FAILED", "message": str(exc)}
+    if meta_r.status_code == 404:
+        return {"error": "ATTACHMENT_NOT_FOUND",
+                "message": f"No attachment with key {attachment_key!r}"}
+    if meta_r.status_code != 200:
+        return {"error": "ZOTERO_ERROR",
+                "message": f"HTTP {meta_r.status_code} fetching attachment metadata"}
+    meta = (meta_r.json() or {}).get("data") or {}
+    filename = meta.get("filename") or meta.get("title") or attachment_key
+    content_type = meta.get("contentType") or "application/octet-stream"
+
+    # Then the binary content.
+    data = await client.download_attachment_bytes(attachment_key)
+    if data is None:
+        return {"error": "ATTACHMENT_BYTES_UNAVAILABLE",
+                "message": (
+                    "Attachment exists but bytes couldn't be fetched. "
+                    "Common causes: linked file (not uploaded to Zotero), "
+                    "snapshot-only, or storage quota exceeded."
+                )}
+
+    # Surface optional metadata if Zotero tags encode it
+    # (convention: role:main_article, license:CC-BY-4.0, etc.)
+    role_hint = None
+    license_spdx = None
+    for t in (meta.get("tags") or []):
+        tag = (t.get("tag") or "").strip()
+        low = tag.lower()
+        if low.startswith("role:"):
+            role_hint = tag.split(":", 1)[1]
+        elif low.startswith("license:"):
+            license_spdx = tag.split(":", 1)[1]
+
+    return {
+        "filename": filename,
+        "content_b64": base64.b64encode(data).decode("ascii"),
+        "content_type": content_type,
+        "size_bytes": len(data),
+        "role_hint": role_hint,
+        "license_spdx": license_spdx,
+    }
+
+
+# =============================================================================
+# Tool 17: zotero_ingest_collection_to_kb
 # =============================================================================
 
 # Strong references to background tasks (prevent GC before completion)
