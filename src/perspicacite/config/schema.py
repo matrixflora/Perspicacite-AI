@@ -985,6 +985,35 @@ class PDFDownloadConfig(BaseModel):
     )
 
 
+class GitHubConfig(BaseModel):
+    """GitHub fetcher knobs (2026-05-15 spec).
+
+    Controls how the GitHub-repo / skill-bundle ingest pipeline talks to
+    api.github.com and caches downloaded tarballs on disk. See
+    docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md.
+    """
+
+    token_env_var: str = "GITHUB_TOKEN"
+    cache_dir: Path = Path("data/github_cache")
+    cache_max_mb: int = 2048
+    default_branch: str = "HEAD"
+    user_agent: str = "Perspicacite/2.0"
+    api_base: str = "https://api.github.com"
+
+
+class BundlesConfig(BaseModel):
+    """Skill-bundle ingest knobs (2026-05-15 spec).
+
+    KB-naming templates used by ``ingest_skill_bundle`` /
+    ``ingest_skill_bundles_batch``. ``default_kb_name_template`` applies
+    in per-skill mode (one KB per bundle); ``composite_kb_name_template``
+    applies in composite mode (many bundles → one KB).
+    """
+
+    default_kb_name_template: str = "{name}"  # for per-skill mode
+    composite_kb_name_template: str = "composite-{domain}"
+
+
 class LoggingConfig(BaseModel):
     """Logging configuration."""
 
@@ -1030,6 +1059,8 @@ class Config(BaseModel):
     multimodal: MultimodalConfig = Field(default_factory=MultimodalConfig)
     external_resources: ExternalResourcesConfig = Field(default_factory=ExternalResourcesConfig)
     copyright_filter: CopyrightFilterConfig = Field(default_factory=CopyrightFilterConfig)
+    github: GitHubConfig = Field(default_factory=GitHubConfig)
+    bundles: BundlesConfig = Field(default_factory=BundlesConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":

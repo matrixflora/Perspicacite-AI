@@ -626,6 +626,11 @@ def _filters_to_where(filters: SearchFilters) -> dict[str, Any] | None:
         conditions.append(
             {"source": {"$in": [s.value for s in filters.sources]}}
         )
+    if filters.source_skill is not None:
+        # 2026-05-15: composite skill-bundle KBs stamp each chunk with
+        # `source_skill=<bundle.yml:name>` so queries can filter to one
+        # skill inside a composite KB.
+        conditions.append({"source_skill": filters.source_skill})
 
     if not conditions:
         return None
