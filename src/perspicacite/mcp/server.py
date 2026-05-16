@@ -1516,7 +1516,30 @@ async def push_to_zotero(
                             pdf_path = (
                                 cached_pdf_path(doi, cache_dir) if cache_dir else None
                             )
-                        if pdf_path is not None:
+                        # Size-cap check (Priority 3b extension): if the
+                        # PDF exceeds the configured max_pdf_attach_bytes,
+                        # skip the upload and fall through to HTML capture.
+                        # Saves Zotero quota on huge review articles
+                        # (Chem Rev surveys can be 50+ MB) where the user
+                        # usually has the file locally and just needs the
+                        # bibliographic record + landing-page snapshot.
+                        pdf_too_large = False
+                        max_pdf_bytes = getattr(pdf_config, "max_pdf_attach_bytes", 0) or 0
+                        if pdf_path is not None and max_pdf_bytes > 0:
+                            try:
+                                size_b = pdf_path.stat().st_size
+                                if size_b > max_pdf_bytes:
+                                    pdf_too_large = True
+                                    entry["attached_pdf"] = False
+                                    entry["pdf_attach_skipped"] = (
+                                        f"pdf_too_large ({size_b} bytes "
+                                        f"> max_pdf_attach_bytes {max_pdf_bytes})"
+                                    )
+                                    entry["pdf_size_bytes"] = size_b
+                            except OSError:
+                                pass
+
+                        if pdf_path is not None and not pdf_too_large:
                             try:
                                 att_key = await zotero.upload_attachment(
                                     parent_item_key=key,
@@ -1527,11 +1550,14 @@ async def push_to_zotero(
                                 entry["attached_pdf"] = bool(att_key)
                             except Exception as exc:
                                 entry["pdf_attach_error"] = str(exc)
-                        else:
+                        elif pdf_path is None:
                             entry["attached_pdf"] = False
                             entry["pdf_attach_error"] = "no PDF available"
-                            # Priority 3b: HTML-as-fallback when PDF couldn't be obtained.
-                            # Worse than a PDF, better than nothing.
+
+                        # HTML-as-fallback (Priority 3b): triggered when
+                        # the PDF is missing OR exceeds the size cap.
+                        # Worse than a PDF, better than nothing.
+                        if pdf_path is None or pdf_too_large:
                             try:
                                 from perspicacite.pipeline.download.html_capture import (
                                     capture_landing_html,

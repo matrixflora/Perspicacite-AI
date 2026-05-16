@@ -984,6 +984,22 @@ class PDFDownloadConfig(BaseModel):
         ),
     )
 
+    # When a PDF exceeds this size, push_to_zotero(..., attach_pdf=True)
+    # skips the PDF upload and falls back to capturing the publisher
+    # landing page as an HTML snapshot instead (much smaller, and the
+    # user usually has the PDF locally anyway when it's a 50+ MB review
+    # article). 0 disables the cap. Default 30 MB keeps Zotero free-tier
+    # users (300 MB total) under-quota while still uploading typical
+    # 1–5 MB articles unchanged.
+    max_pdf_attach_bytes: int = Field(
+        default=30 * 1024 * 1024,
+        description=(
+            "Skip PDF attachment in push_to_zotero when the cached PDF "
+            "exceeds this size (in bytes). Falls back to HTML capture. "
+            "Set 0 to disable."
+        ),
+    )
+
 
 class LoggingConfig(BaseModel):
     """Logging configuration."""

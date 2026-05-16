@@ -8,7 +8,25 @@ import yaml
 from pydantic import ValidationError
 
 from perspicacite.config import load_config
-from perspicacite.config.schema import Config
+from perspicacite.config.schema import Config, PDFDownloadConfig
+
+
+def test_max_pdf_attach_bytes_default():
+    """Default cap is 30 MB so Zotero free-tier (300 MB) users don't blow
+    18% of their quota on a single review article."""
+    cfg = PDFDownloadConfig()
+    assert cfg.max_pdf_attach_bytes == 30 * 1024 * 1024
+
+
+def test_max_pdf_attach_bytes_override():
+    cfg = PDFDownloadConfig(max_pdf_attach_bytes=10 * 1024 * 1024)
+    assert cfg.max_pdf_attach_bytes == 10 * 1024 * 1024
+
+
+def test_max_pdf_attach_bytes_zero_disables_cap():
+    """0 is a sentinel meaning 'no cap' — must validate cleanly."""
+    cfg = PDFDownloadConfig(max_pdf_attach_bytes=0)
+    assert cfg.max_pdf_attach_bytes == 0
 
 
 class TestConfigSchema:

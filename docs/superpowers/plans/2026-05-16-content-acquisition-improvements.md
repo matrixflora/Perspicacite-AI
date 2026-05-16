@@ -119,6 +119,10 @@ Implementation re-uses the same render/extract pipeline as the existing `get_pap
 | `anthropic.com/research/*`, `*.modelcontextprotocol.io`, generic HTML | Trafilatura main-content extract → save as `<slug>.html` + `<slug>.md` for KB ingest. Mine `<meta name="citation_*">` and OpenGraph for Zotero metadata. |
 | `preprints.org/manuscript/*` | The landing page has `<meta name="citation_pdf_url">` pointing to a token-signed direct PDF link that works without Cloudflare. Old release scraper from `bibtex2kb/src/html_parser.py` already has this pattern. |
 
+### Priority 3b-extension — **PDF-too-big also triggers HTML fallback** (added 2026-05-16 post-implementation)
+
+In addition to "PDF couldn't be obtained", the HTML fallback also fires when the cached PDF exceeds `pdf_download.max_pdf_attach_bytes` (default 30 MB). Rationale: a 54 MB Chem Rev review article eats 18% of the Zotero free-tier 300 MB quota for one paper; the user usually has the file locally already; the bibliographic record + landing-page snapshot is enough for citation tracking and KB retrieval. The result entry surfaces `pdf_attach_skipped: "pdf_too_large (<bytes> > <cap>)"` alongside the standard `attached_html` field so the caller can see both branches. Set `max_pdf_attach_bytes: 0` to disable the cap (pre-2026-05-16 behavior).
+
 ### Priority 3b — **HTML fallback hook on every PDF-attach path** (new — addresses the "better than nothing" feedback)
 
 In `push_to_zotero` and any other place that calls `retrieve_paper_content(..., pdf_parser=...)`, when the PDF route returns no bytes but the discovery step gathered an `oa_url` / `landing_page_url` / `url`, fall back to:
