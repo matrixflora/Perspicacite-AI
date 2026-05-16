@@ -1,0 +1,9 @@
+{
+  "schema_version": "0.1.0",
+  "skill_id": "cross-identifier-reconciliation",
+  "bundle_dir": "skills/cross-identifier-reconciliation",
+  "entries": [],
+  "total_bytes": 0,
+  "truncated": false,
+  "notes": "no repo URLs in skill tools — nothing to fetch (tools present: [MetLinkR, R])"
+}

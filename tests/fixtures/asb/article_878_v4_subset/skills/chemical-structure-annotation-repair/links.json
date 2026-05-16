@@ -1,0 +1,14 @@
+[
+  {
+    "url": "https://github.com/matchms/matchms",
+    "category": "repo_github",
+    "source": "frontmatter:tools[matchms].repo",
+    "surrounding_text": "matchms"
+  },
+  {
+    "url": "http://edamontology.org/operation_3763",
+    "category": "ontology_edam",
+    "source": "frontmatter:edam_operation",
+    "surrounding_text": ""
+  }
+]

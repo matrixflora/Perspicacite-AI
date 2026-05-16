@@ -1,0 +1,122 @@
+[
+  {
+    "name": "threshold_range",
+    "type": "numeric_range",
+    "typical": null,
+    "min": "40",
+    "max": "60",
+    "units": "%",
+    "source_citation": "Spectrum retention rate: expect 40\u201360% of original spectra to pass all filters, with 30\u201350% removed due to invalid or conflicting annotations and 10\u201340% repaire",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold_range",
+    "type": "numeric_range",
+    "typical": null,
+    "min": "30",
+    "max": "50",
+    "units": "%",
+    "source_citation": "Spectrum retention rate: expect 40\u201360% of original spectra to pass all filters, with 30\u201350% removed due to invalid or conflicting annotations and 10\u201340% repaire",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold_range",
+    "type": "numeric_range",
+    "typical": null,
+    "min": "10",
+    "max": "40",
+    "units": "%",
+    "source_citation": "Spectrum retention rate: expect 40\u201360% of original spectra to pass all filters, with 30\u201350% removed due to invalid or conflicting annotations and 10\u201340% repaire",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "2",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Repair accuracy: SMILES derivation from compound names achieves <2% error rate (1.62% in the GNPS study); adduct assignment repair achieves <0.05% error rate (0",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "1.62",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Repair accuracy: SMILES derivation from compound names achieves <2% error rate (1.62% in the GNPS study); adduct assignment repair achieves <0.05% error rate (0",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "0.05",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Repair accuracy: SMILES derivation from compound names achieves <2% error rate (1.62% in the GNPS study); adduct assignment repair achieves <0.05% error rate (0",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "0.024",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Repair accuracy: SMILES derivation from compound names achieves <2% error rate (1.62% in the GNPS study); adduct assignment repair achieves <0.05% error rate (0",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "100",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Metadata consistency: 100% of retained spectra must pass RDKit SMILES/InChI/InChIKey round-trip validation (no mismatches after RDKit re-serialization).",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "tolerance",
+    "type": "numeric",
+    "typical": "100",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Parent mass validation: 100% of retained spectra must satisfy |monoisotopic_mass(SMILES) \u2212 recorded_parent_mass| \u2264 1 ppm (or your chosen tolerance).",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "tolerance",
+    "type": "numeric",
+    "typical": "1",
+    "min": null,
+    "max": null,
+    "units": "ppm",
+    "source_citation": "Parent mass validation: 100% of retained spectra must satisfy |monoisotopic_mass(SMILES) \u2212 recorded_parent_mass| \u2264 1 ppm (or your chosen tolerance).",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  }
+]

@@ -1,0 +1,11 @@
+[
+  {
+    "language": "python",
+    "version": null,
+    "packages": [
+      "matchms",
+      "rdkit"
+    ],
+    "dockerfile_hint": null
+  }
+]

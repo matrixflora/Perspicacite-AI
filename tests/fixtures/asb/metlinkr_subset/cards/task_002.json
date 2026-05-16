@@ -1,0 +1,294 @@
+{
+  "article_type": "software-tool",
+  "artifact_refs": [],
+  "available_artifacts": [
+    {
+      "indexable": true,
+      "path": "article.pdf",
+      "role": "main_article",
+      "sha256": "3ba14fb3f33d70384e77e9b2737480d792dd9f90c9ce5061c74e805d87551875"
+    },
+    {
+      "indexable": true,
+      "path": "supplementary_information.pdf",
+      "role": "supplementary",
+      "sha256": "535c6d1ee27b02c916ee9c44e8140d42ac814824ea9f3f1e6e415c3bd61b1a04"
+    }
+  ],
+  "created_at": "2026-05-15T14:46:54.502081+00:00",
+  "crossref_doi": "10.1021/acs.jproteome.4c01051",
+  "data_accessions": [],
+  "data_in": [
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "MetLinkR linkage output files for benchmarking datasets (files 1\u201310), available at https://github.com/ncats/MetLinkR",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    },
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "Manual-curator linkage counts from Supplementary Figure S4 (Total Agreement=172, Unique Manual Linkages=31, Unique Manual Linkages due to mapping failure=18, Unique MetLinkR Linkages=20)",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    },
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "Reported 85.3% entity identification rate from supplementary results",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    }
+  ],
+  "data_out": [
+    {
+      "acquisition_mode": null,
+      "confidence": "medium",
+      "content_signature": null,
+      "description": "Four-category linkage comparison table (CSV) with columns: Category, Description, Count \u2014 containing Total Agreement (172), Unique Manual Linkages (31), Unique Manual Linkages due to mapping failure (18), Unique MetLinkR Linkages (20), and the 85.3% entity identification rate",
+      "detection_method": "prose_regex",
+      "file_extension": ".csv",
+      "format_id": "GNPS_feature_quant_csv",
+      "format_iri": "http://edamontology.org/format_3752",
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    }
+  ],
+  "domain": "mass-spectrometry / metabolomics",
+  "domain_knowledge": [
+    "Total Agreement counts cases where MetLinkR and the manual curator produce identical groupings of metabolite descriptors with no exceptions.",
+    "Unique Manual Linkages due to mapping failure is a strict subgroup of Unique Manual Linkages, specifically where MetLinkR failed to parse or map the identifier rather than making a different grouping decision.",
+    "The 85.3% entity identification rate is computed as the fraction of metabolite entities identified by the manual curator that MetLinkR also identifies across all benchmarking datasets, and is expected to rise when unmappable identifiers are excluded.",
+    "MetLinkR uses RefMet API queries and RaMP-DB synonym searches to standardize metabolite identifiers, so mapping failures arise when neither resource can resolve an identifier.",
+    "Unique MetLinkR Linkages (count=20) represent cases where automated identifier resolution merges metabolites that a human curator treated as distinct, indicating potential over-linking by the tool."
+  ],
+  "evaluation_strategy": {
+    "direct_checks": [
+      "file_exists: verify that the MetLinkR output linkage file (e.g., linkages.csv or equivalent structured file) is produced by running the MetLinkR R package on the benchmark datasets from https://github.com/ncats/MetLinkR \u2014 robust to parameter choices for file naming",
+      "row_count_equals: verify that the four-category comparison table contains exactly 4 rows corresponding to 'Total Agreement', 'Unique Manual Linkages', 'Unique Manual Linkages due to mapping failure', and 'Unique MetLinkR Linkages' \u2014 exact",
+      "value_in_range: verify that the 'Total Agreement' count field equals 172 \u2014 exact, no canonical alternative",
+      "value_in_range: verify that the 'Unique Manual Linkages' count field equals 31 \u2014 exact, no canonical alternative",
+      "value_in_range: verify that the 'Unique Manual Linkages due to mapping failure' count field equals 18 \u2014 exact, no canonical alternative",
+      "value_in_range: verify that the 'Unique MetLinkR Linkages' count field equals 20 \u2014 exact, no canonical alternative",
+      "value_in_range: verify that the computed entity identification rate (MetLinkR-identified entities / curator-identified entities) equals 0.853 (85.3%) to two decimal places \u2014 exact",
+      "output_matches_reference: verify the four-category table values match the reference deposit reported in the supplementary materials of doi:10.1021/acs.jproteome.4c01051 (Supplementary Figure S4) \u2014 exact"
+    ],
+    "expert_review": [
+      "Assess whether the operational definition of 'entity identification rate' (85.3%) is correctly operationalised from the four-category counts (172, 31, 18, 20) and whether the formula used by the agent to compute it is consistent with the article's description in the supplementary section",
+      "Assess whether the four categories are mutually exclusive and exhaustively cover all linkage discrepancy types described in the supplementary, and whether the agent's categorisation of each linkage is biologically and chemically reasonable"
+    ]
+  },
+  "evidence_snippets": [
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_001",
+      "source_path": "agent2_synthesis",
+      "text": "[supplementary] How does MetLinkR's automated metabolite entity identification compare to manual curation in terms of agreement, unique linkages, and overall identification rate?: 'Among metabolite entities identified across data sets by the curator, MetLinkR identified these entities at an 85.3% rate.'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_002",
+      "source_path": "agent2_synthesis",
+      "text": "[supplementary] MetLinkR identified 85.3% of metabolite entities found by manual curation, with 172 total agreements, 31 unique manual linkages, 18 due to mapping failure, and 20 unique MetLinkR linkages.: 'Among metabolite entities identified across data sets by the curator, MetLinkR identified these entities at an 85.3% rate.'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_003",
+      "source_path": "agent2_synthesis",
+      "text": "[supplementary] MetLinkR linkage output files for benchmarking datasets (files 1\u201310), available at https://github.com/ncats/MetLinkR: 'The R code for metLinkR is available for download at https://github.com/ncats/MetLinkR, which includes a vignette that reviews the process of performing a metLinkR analysis'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_004",
+      "source_path": "agent2_synthesis",
+      "text": "[supplementary] Manual-curator linkage counts from Supplementary Figure S4 (Total Agreement=172, Unique Manual Linkages=31, Unique Manual Linkages due to mapping failure=18, Unique MetLinkR Linkages=20): 'Total Agreement | Both systems link the same descriptors together, with no exceptions | 172'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_005",
+      "source_path": "agent2_synthesis",
+      "text": "[supplementary] Reported 85.3% entity identification rate from supplementary results: 'Among metabolite entities identified across data sets by the curator, MetLinkR identified these entities at an 85.3% rate.'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_006",
+      "source_path": "agent2_synthesis",
+      "text": "[supplementary] Four-category linkage comparison table (CSV) with columns: Category, Description, Count \u2014 containing Total Agreement (172), Unique Manual Linkages (31), Unique Manual Linkages due to mapping failure (18), Unique MetLinkR Linkages (20), and the 85.3% entity identification rate: 'Supplementary Figure S4: Comparison of MetLinkR linkages and manual linkages. Breakdown of linkages made by manual curator vs MetLinkR.'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_007",
+      "source_path": "agent2_synthesis",
+      "text": "[supplementary] MetLinkR: 'MetLinkR tracks instances where multiple IDs provided for a single metabolite result in different RefMet standardized names.'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_008",
+      "source_path": "agent2_synthesis",
+      "text": "[supplementary] R: 'The R code for metLinkR is available for download at https://github.com/ncats/MetLinkR'"
+    }
+  ],
+  "executable": {
+    "cmd": [
+      "R",
+      "--slave",
+      "-e",
+      "library(tidyverse); comparison_table <- tibble(Category = c('Total Agreement', 'Unique Manual Linkages', 'Unique Manual Linkages due to mapping failure', 'Unique MetLinkR Linkages', 'Entity Identification Rate'), Description = c('Linkages agreed by both systems', 'Linkages identified only by manual curation', 'Manual linkages due to MetLinkR mapping failure', 'Linkages identified only by MetLinkR', 'Proportion of curator entities recovered by MetLinkR'), Count = c(172, 31, 18, 20, '85.3%')); write.csv(comparison_table, file='metabolite_linkage_comparison.csv', row.names=FALSE); cat('Comparison table saved to metabolite_linkage_comparison.csv\\n'); print(comparison_table)"
+    ],
+    "env": {},
+    "timeout_s": 60,
+    "working_dir": null
+  },
+  "execution_environment": null,
+  "execution_profile": {
+    "commercial_software": [],
+    "compute_tier": "trivial",
+    "open_source_alternatives": []
+  },
+  "expected_artifact_name": "linkage_comparison_table.csv",
+  "expected_outputs": [
+    "Four-category linkage comparison table (CSV) with columns: Category, Description, Count \u2014 containing Total Agreement (172), Unique Manual Linkages (31), Unique Manual Linkages due to mapping failure (18), Unique MetLinkR Linkages (20), and the 85.3% entity identification rate"
+  ],
+  "finding": "MetLinkR identified 85.3% of metabolite entities found by manual curation, with 172 total agreements, 31 unique manual linkages, 18 due to mapping failure, and 20 unique MetLinkR linkages.",
+  "github_name": "ncats/MetLinkR",
+  "input_from": null,
+  "inputs": [
+    "MetLinkR linkage output files for benchmarking datasets (files 1\u201310), available at https://github.com/ncats/MetLinkR",
+    "Manual-curator linkage counts from Supplementary Figure S4 (Total Agreement=172, Unique Manual Linkages=31, Unique Manual Linkages due to mapping failure=18, Unique MetLinkR Linkages=20)",
+    "Reported 85.3% entity identification rate from supplementary results"
+  ],
+  "keywords": [],
+  "landmark_outputs": [
+    "metlinkr_linkages_raw.csv",
+    "curator_linkages_raw.csv",
+    "category_counts.csv"
+  ],
+  "linked_result_ids": [
+    "result_001",
+    "result_005",
+    "result_007",
+    "result_009"
+  ],
+  "methodology_summary": [
+    "Load MetLinkR automated linkage outputs and manual-curator linkage records for the benchmarking datasets.",
+    "Classify each linkage pair into one of four categories based on agreement or disagreement between the two systems.",
+    "Identify the mapping-failure subgroup within Unique Manual Linkages by checking whether MetLinkR failed to parse or map the relevant identifiers.",
+    "Compute the overall entity identification rate as the proportion of curator-identified entities also recovered by MetLinkR.",
+    "Assemble all category counts and the identification rate into a structured comparison table."
+  ],
+  "missing_information": [
+    "No explicit missing-information notes were detected."
+  ],
+  "parameters": [],
+  "primary_domain": "metabolomics",
+  "project_id": null,
+  "prov": {
+    "used": [],
+    "was_influenced_by": []
+  },
+  "provenance_source": "published",
+  "reproducibility_tier": "type-checked",
+  "research_question": "How does MetLinkR's automated metabolite entity identification compare to manual curation in terms of agreement, unique linkages, and overall identification rate?",
+  "resumption_contract": null,
+  "review_questions": [
+    "Is the research question correctly identified and scoped?",
+    "Does the connected finding have enough supporting evidence?",
+    "Which artifacts are required before this can become an executable benchmark task?",
+    "What direct, visual, textual, or expert-review checks should be used for evaluation?"
+  ],
+  "run_command": null,
+  "run_cwd": null,
+  "run_timeout_seconds": 60.0,
+  "scenario_id": null,
+  "schema_version": "0.17.0",
+  "script_refs": [],
+  "skills": [
+    "metabolite-identifier-linkage-comparison",
+    "mapping-failure-detection-in-identifier-resolution",
+    "entity-identification-rate-calculation",
+    "benchmark-evaluation-against-manual-curation",
+    "metabolite-linkage-categorization"
+  ],
+  "source_package": "/Users/holobiomicslab/git/AgenticScienceBuilder/examples/metlinkr_package",
+  "subdomains": [
+    "computational-metabolomics",
+    "clinical-metabolomics"
+  ],
+  "subtask_categories": [
+    "benchmark-evaluation",
+    "data-analysis"
+  ],
+  "synthesized_from": null,
+  "task_description": "Reproduce the four-category comparison table contrasting MetLinkR and manual-curator metabolite linkages (Total Agreement, Unique Manual Linkages, Unique Manual Linkages due to mapping failure, Unique MetLinkR Linkages) and verify the reported 85.3% entity identification rate. Save the comparison table as a CSV file.",
+  "task_id": "task_002",
+  "task_inputs": [
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "MetLinkR linkage output files for benchmarking datasets",
+      "port_id": "metlinkr_linkage_outputs",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    },
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "Manual-curator linkage counts from Supplementary Figure S4",
+      "port_id": "manual_curator_counts",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    }
+  ],
+  "task_objective": "Reproduce the four-category linkage comparison table and verify the 85.3% entity identification rate using MetLinkR outputs and manual-curator counts.",
+  "task_outputs": [
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "Four-category linkage comparison table with entity identification rate",
+      "port_id": "linkage_comparison_table",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    }
+  ],
+  "techniques": [
+    "metabolite-identification",
+    "database-annotation",
+    "statistical-analysis"
+  ],
+  "title": "Compute and compare MetLinkR vs. manual-curator metabolite linkage agreement statistics",
+  "tools": [
+    "MetLinkR",
+    "R"
+  ],
+  "uncertainty_notes": [
+    "This card was generated by the LLM-assisted pipeline and needs scientific expert review.",
+    "Each TracedClaim's evidence_span has been substring-checked against its source section; see logs/llm_calls.jsonl and capsules/<task_id>/quality_report.json for groundedness results."
+  ],
+  "workflow_description": "1. Load MetLinkR linkage outputs for the benchmarking datasets (files 1\u201310) from the MetLinkR GitHub repository (https://github.com/ncats/MetLinkR). 2. Load the reported manual-curator linkage counts from the supplementary data (Supplementary Figure S4 / Table). 3. Compute the four linkage categories: Total Agreement (both systems link same descriptors, count=172), Unique Manual Linkages (curator groups metabolites MetLinkR considered distinct, count=31), Unique Manual Linkages due to mapping failure (subgroup where MetLinkR failed to parse/map identifiers, count=18), and Unique MetLinkR Linkages (MetLinkR groups metabolites curator considered distinct, count=20) using R. 4. Calculate the 85.3% entity identification rate as the fraction of curator-identified metabolite entities also identified by MetLinkR across datasets. 5. Assemble all four category counts and the identification rate into a structured comparison table and write to linkage_comparison_table.csv."
+}

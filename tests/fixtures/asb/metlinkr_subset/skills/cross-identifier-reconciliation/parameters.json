@@ -1,0 +1,14 @@
+[
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "85.3",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Recall against manual curator benchmark should approach 85.3% or higher across the 13-dataset cohort; removing unmappable identifiers raises this rate further.",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  }
+]

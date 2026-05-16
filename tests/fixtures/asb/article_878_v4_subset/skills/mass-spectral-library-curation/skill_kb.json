@@ -1,0 +1,9 @@
+{
+  "schema_version": "0.1.0",
+  "skill_id": "mass-spectral-library-curation",
+  "bundle_dir": "skills/mass-spectral-library-curation",
+  "entries": [],
+  "total_bytes": 0,
+  "truncated": false,
+  "notes": "no repo URLs in skill tools — nothing to fetch (tools present: [matchms, Python, RDKit, PubChem])"
+}

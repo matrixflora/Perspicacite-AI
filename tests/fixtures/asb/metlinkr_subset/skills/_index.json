@@ -1,0 +1,12 @@
+{
+  "skills": [
+    {
+      "slug": "cross-identifier-reconciliation",
+      "name": "cross-identifier-reconciliation",
+      "description": "Cross-identifier reconciliation maps multiple per-metabolite identifiers (HMDB, KEGG, PubChem, common name, LIPID MAPS, ChEBI) to a single RefMet standardized name and flags rows where those identifiers resolve to conflicting names, enabling reliable cross-dataset metabolite linkage for meta-analysis. It is essential when input dataset files carry heterogeneous identifier columns from different analytical platforms (e.g., Metabolon, Broad) that must be harmonized before any downstream overlap or association analysis.",
+      "edam_operation": "http://edamontology.org/operation_0224",
+      "schema_version": "0.2.0",
+      "body_path": "skills/cross-identifier-reconciliation/skill.md"
+    }
+  ]
+}

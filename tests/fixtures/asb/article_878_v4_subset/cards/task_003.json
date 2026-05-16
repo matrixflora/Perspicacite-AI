@@ -1,0 +1,265 @@
+{
+  "article_type": "software-tool",
+  "artifact_refs": [],
+  "available_artifacts": [
+    {
+      "indexable": true,
+      "path": "article.pdf",
+      "role": "main_article",
+      "sha256": "0dea8dc70be9009f1fa58deb60eea662cd930973f51688aa8bf974e71fc43d96"
+    }
+  ],
+  "created_at": "2026-05-15T20:28:15.943394+00:00",
+  "crossref_doi": "10.1186/s13321-024-00878-1",
+  "data_accessions": [],
+  "data_in": [
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "GNPS public mass spectral library containing spectra with salt SMILES annotations",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    }
+  ],
+  "data_out": [
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "Cleaned spectrum library with repaired SMILES for salt-containing spectra, where multi-component salt SMILES have been replaced with matching ion SMILES validated by parent mass",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    }
+  ],
+  "domain": "mass-spectrometry / metabolomics",
+  "domain_knowledge": [
+    "Multi-component salt SMILES encoding represents both cation and anion as separate molecular entities within a single SMILES string, whereas the measured fragment in MS corresponds to a single ion after dissociation.",
+    "Parent mass (monoisotopic mass) is calculated from the molecular formula of the intact neutral molecule, but the precursor m/z reflects the actual ion detected, requiring adjustment by the adduct mass difference for comparison.",
+    "Ion fragmentation patterns in MS/MS are specific to the actual ion being measured; incorrect salt SMILES annotations can lead to failed spectral library matching because the theoretical fragments will not correspond to observed fragments.",
+    "RDKit's molecular weight calculation must use monoisotopic masses (exact masses of individual isotopes), not average atomic weights, to match the precursor m/z precision of high-resolution mass spectrometry data."
+  ],
+  "evaluation_strategy": {
+    "direct_checks": [
+      "verify file exists at github.com/matchms/matchms containing the 'repair_smiles_of_salts' filter implementation",
+      "verify file exists at 10.5281/zenodo.11657300 containing matchms source code with salt SMILES repair filter",
+      "script_runs: execute the repair_smiles_of_salts filter on a test dataset of spectra with multi-component salt SMILES annotations",
+      "output_matches_reference: verify that output spectra contain SMILES field with single-component ion SMILES (not multi-component salts) when parent mass validation succeeds",
+      "value_in_range: verify that parent mass of corrected spectrum matches the monoisotopic mass of the output ion SMILES (within tolerance)",
+      "verify file_format_is for output spectra: MGF, JSON, or other structured format consistent with matchms spectrum object serialization",
+      "row_count_equals or contains_substring: verify that spectra originally annotated with multi-component salt SMILES are present in output with repaired single-component SMILES",
+      "robust to parameter choices: verify that the filter correctly handles salts with varying ion charge states and different salt component combinations, no canonical answer"
+    ],
+    "expert_review": [
+      "Verify that the parent-mass matching logic correctly identifies which ion (cation or anion) from a salt dissociation should replace the full salt SMILES, based on observed precursor m/z and ionization mode",
+      "Confirm that the ion SMILES selected by the filter is chemically appropriate for the salt compound (e.g., correct protonation state, charge, isotope)",
+      "Assess whether all major salt dissociation patterns (e.g., Na+, K+, Cl\u2212, acetate, etc.) are handled by the filter or whether important salt types are missing",
+      "Review whether the filter correctly preserves other metadata fields (compound name, InChI, InChIKey) when replacing the salt SMILES, or regenerates them consistently"
+    ]
+  },
+  "evidence_snippets": [
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_001",
+      "source_path": "agent2_synthesis",
+      "text": "[other] How effectively does the 'repair SMILES of salts' filter identify and correct multi-component salt SMILES by matching parent mass against individual or combined salt ion components?: 'Often salts are measured in a mass spectrometer, however, in the mass spectrometer these salts often fall apart into different salts. Resulting in actually measuring only one or a few of the ions'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_002",
+      "source_path": "agent2_synthesis",
+      "text": "[other] The 'repair SMILES of salts' filter corrects multi-component salt SMILES by verifying that the parent mass matches either individual salt components or their combinations, replacing the full salt SMILES with the matching ion SMILES when a parent-mass match is found.: 'We repair this, by checking if the parent mass matches any of the separate or combinations of salt ions given in the SMILES. For instance C1=NC2=NC=NC(=C2N1)N.Cl is converted to 1=NC2=NC=NC(=C2N1)N'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_003",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] GNPS public mass spectral library containing spectra with salt SMILES annotations: 'As an example the newly developed pipeline was run on a current version of the GNPS library'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_004",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] Cleaned spectrum library with repaired SMILES for salt-containing spectra, where multi-component salt SMILES have been replaced with matching ion SMILES validated by parent mass: 'Repair SMILES of salts. Often salts are measured in a mass spectrometer, however, in the mass spectrometer these salts often fall apart into different salts'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_005",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] matchms: 'machine learning algorithms in mass spectrometry. Public libraries of mass spectrometry data that are open to user submission often suffer from limited metadata curation'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_006",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] RDKit: 'SMILES, InChI and InChIKey are loaded by RDKit'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_007",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] Python: 'The pipeline is designed with ease of use, flexibility, and reproducibility as leading principles.'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_008",
+      "source_path": "agent2_synthesis",
+      "text": "[discussion] The discussion states that the pipeline currently lacks plausibility checks that consider both metadata and measured fragments, and explicitly notes future expansions might include filters checking if fragments match the given annotation, but the article does not specify whether the 'repair SMILES of salts' filter uses fragment ion matching or relies only on parent mass and precursor m/z.: 'Wrong chemical annotations that are consistent with the measured mass, for instance, will go unnoticed in the current pipeline. Future expansions might include filters that check if the fragments'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_009",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] The article does not provide details on the tolerance threshold or algorithmic specifics used by the repair_smiles_of_salts filter to match parent mass against salt ion combinations, or how ambiguous cases (multiple ions within tolerance) are resolved.: 'Repair SMILES of salts. Often salts are measured in a mass spectrometer, however, in the mass spectrometer these salts often fall apart into different salts'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_010",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] The article does not explicitly report error rates, validation accuracy, or sensitivity/specificity metrics specific to the 'repair SMILES of salts' filter alone (only aggregate metrics across all repair functions are given: 52,084 repaired out of 83,843 candidate spectra).: 'combined the newly introduced repair functions repaired the metadata of 52,084 spectra'"
+    }
+  ],
+  "executable": {
+    "cmd": [
+      "python",
+      "-c",
+      "import matchms; from rdkit import Chem; from rdkit.Chem import Descriptors; import json; spectra = matchms.importing.load_spectra('{inputs.0}'); cleaned = []; \nfor spec in spectra:\n    if 'smiles' in spec.metadata and '.' in spec.metadata.get('smiles', ''):\n        salt_smiles = spec.metadata['smiles'].split('.')\n        parent_mass = float(spec.metadata.get('precursor_mz', 0))\n        matched = False\n        for ion_smiles in salt_smiles:\n            mol = Chem.MolFromSmiles(ion_smiles)\n            if mol:\n                mass = Descriptors.MonoisotopicMass(mol)\n                if abs(mass - parent_mass) < 0.01:\n                    spec.metadata['smiles'] = ion_smiles\n                    spec.metadata['smiles_repaired'] = True\n                    matched = True\n                    break\n        if not matched:\n            spec.metadata['smiles_repaired'] = False\n    cleaned.append(spec)\nmatchms.exporting.save_spectra(cleaned, 'cleaned_library.json')"
+    ],
+    "env": {},
+    "timeout_s": 600,
+    "working_dir": null
+  },
+  "execution_environment": null,
+  "execution_profile": {
+    "commercial_software": [],
+    "compute_tier": "light",
+    "open_source_alternatives": []
+  },
+  "expected_artifact_name": "cleaned_library_salts_repaired.mgf",
+  "expected_outputs": [
+    "Cleaned spectrum library with repaired SMILES for salt-containing spectra, where multi-component salt SMILES have been replaced with matching ion SMILES validated by parent mass"
+  ],
+  "finding": "The 'repair SMILES of salts' filter corrects multi-component salt SMILES by verifying that the parent mass matches either individual salt components or their combinations, replacing the full salt SMILES with the matching ion SMILES when a parent-mass match is found.",
+  "github_name": null,
+  "input_from": "task_001",
+  "inputs": [
+    "GNPS public mass spectral library containing spectra with salt SMILES annotations"
+  ],
+  "keywords": [],
+  "landmark_outputs": [
+    "identified_salt_spectra.csv",
+    "ion_candidate_matches.csv",
+    "repair_log_salts.txt"
+  ],
+  "linked_result_ids": [
+    "result_011",
+    "result_018"
+  ],
+  "methodology_summary": [
+    "Load spectrum library and filter spectra with salt SMILES annotations",
+    "Decompose salt SMILES into constituent ions and calculate monoisotopic masses",
+    "Match ion masses against spectrum parent mass with tolerance window",
+    "Replace salt SMILES with validated ion SMILES when parent mass match is found",
+    "Output corrected spectrum metadata to cleaned library file"
+  ],
+  "missing_information": [
+    "The discussion states that the pipeline currently lacks plausibility checks that consider both metadata and measured fragments, and explicitly notes future expansions might include filters checking if fragments match the given annotation, but the article does not specify whether the 'repair SMILES of salts' filter uses fragment ion matching or relies only on parent mass and precursor m/z.",
+    "The article does not provide details on the tolerance threshold or algorithmic specifics used by the repair_smiles_of_salts filter to match parent mass against salt ion combinations, or how ambiguous cases (multiple ions within tolerance) are resolved.",
+    "The article does not explicitly report error rates, validation accuracy, or sensitivity/specificity metrics specific to the 'repair SMILES of salts' filter alone (only aggregate metrics across all repair functions are given: 52,084 repaired out of 83,843 candidate spectra)."
+  ],
+  "parameters": [],
+  "primary_domain": "cheminformatics",
+  "project_id": null,
+  "prov": {
+    "used": [],
+    "was_influenced_by": []
+  },
+  "provenance_source": "published",
+  "reproducibility_tier": "type-checked",
+  "research_question": "How effectively does the 'repair SMILES of salts' filter identify and correct multi-component salt SMILES by matching parent mass against individual or combined salt ion components?",
+  "resumption_contract": null,
+  "review_questions": [
+    "Is the research question correctly identified and scoped?",
+    "Does the connected finding have enough supporting evidence?",
+    "Which artifacts are required before this can become an executable benchmark task?",
+    "What direct, visual, textual, or expert-review checks should be used for evaluation?"
+  ],
+  "run_command": null,
+  "run_cwd": null,
+  "run_timeout_seconds": 60.0,
+  "scenario_id": null,
+  "schema_version": "0.17.0",
+  "script_refs": [],
+  "skills": [
+    "salt-smiles-decomposition-and-ion-identification",
+    "monoisotopic-mass-calculation-from-molecular-structure",
+    "parent-mass-precursor-matching-validation",
+    "spectral-metadata-curation-and-repair",
+    "smiles-structure-parsing-and-manipulation"
+  ],
+  "source_package": "/Users/holobiomicslab/git/AgenticScienceBuilder/examples/article_878_package",
+  "subdomains": [
+    "computational-metabolomics"
+  ],
+  "subtask_categories": [
+    "data-processing",
+    "information-extraction"
+  ],
+  "synthesized_from": null,
+  "task_description": "Apply the 'repair SMILES of salts' filter to spectra with multi-component salt annotations, replacing full salt SMILES with the matching ion SMILES when parent-mass validation succeeds. Output the corrected spectrum metadata.",
+  "task_id": "task_003",
+  "task_inputs": [
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "GNPS public mass spectral library with salt annotations",
+      "port_id": "gnps_library",
+      "resolved_via": null,
+      "source": "task_001/cleaned_library",
+      "source_dataset": null
+    }
+  ],
+  "task_objective": "Apply the 'repair SMILES of salts' filter to salt-encoded spectra and output corrected SMILES strings where parent mass validates the ion component match.",
+  "task_outputs": [
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "Spectra with corrected salt SMILES annotations",
+      "port_id": "repaired_spectra",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    }
+  ],
+  "techniques": [
+    "tandem-ms",
+    "spectral-library-matching",
+    "metabolite-identification",
+    "database-annotation",
+    "machine-learning",
+    "quality-control"
+  ],
+  "title": "Filter: repair SMILES of salts by matching parent mass against individual or combined salt ion masses",
+  "tools": [
+    "matchms",
+    "RDKit",
+    "Python"
+  ],
+  "uncertainty_notes": [
+    "This card was generated by the LLM-assisted pipeline and needs scientific expert review.",
+    "Each TracedClaim's evidence_span has been substring-checked against its source section; see logs/llm_calls.jsonl and capsules/<task_id>/quality_report.json for groundedness results."
+  ],
+  "workflow_description": "1. Load spectra from GNPS library with salt-encoded SMILES annotations using matchms. 2. Identify spectra whose SMILES encode multi-component salts (e.g., sodium chloride, ammonium acetate) by parsing SMILES structure with RDKit. 3. For each salt SMILES, generate all possible ion combinations (cation and anion fragments) and calculate their monoisotopic masses. 4. Compare each ion mass against the spectrum's parent mass (precursor m/z adjusted for adduct) to find matches within tolerance. 5. When a match is found, replace the full salt SMILES with the matching ion SMILES in the spectrum's molecular annotation. 6. Output repaired spectra with corrected SMILES metadata to cleaned library file."
+}

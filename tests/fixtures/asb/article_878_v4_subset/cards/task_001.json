@@ -1,0 +1,347 @@
+{
+  "article_type": "software-tool",
+  "artifact_refs": [],
+  "available_artifacts": [
+    {
+      "indexable": true,
+      "path": "article.pdf",
+      "role": "main_article",
+      "sha256": "0dea8dc70be9009f1fa58deb60eea662cd930973f51688aa8bf974e71fc43d96"
+    }
+  ],
+  "created_at": "2026-05-15T20:28:15.943394+00:00",
+  "crossref_doi": "10.1186/s13321-024-00878-1",
+  "data_accessions": [],
+  "data_in": [
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "GNPS public mass spectral library (21-08-2023 no-propagated version)",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    },
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "YAML configuration file with pipeline settings and filter parameters",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    }
+  ],
+  "data_out": [
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "Cleaned mass spectral library in matchms-compatible format",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    },
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "Processing report documenting filter operations, metadata repairs, and statistics",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    }
+  ],
+  "domain": "mass-spectrometry / metabolomics",
+  "domain_knowledge": [
+    "Mass spectra library curation requires harmonization across multiple metadata fields (SMILES, InChI, InChIKey, parent mass, precursor m/z, adduct, ion mode) which must be internally consistent and chemically plausible.",
+    "Parent mass is properly calculated from monoisotopic mass, not molar mass; incorrect molar-mass-based parent masses are a common annotation error in public libraries.",
+    "Salts measured in mass spectrometers often fragment into different ionic forms, requiring repair of SMILES and adduct annotations by validating against parent mass and ion combinations.",
+    "SMILES-to-InChI conversion via RDKit enables validation that annotations are structurally consistent; mismatches indicate annotation errors and can guide repair or removal.",
+    "Precursor m/z, parent mass, and adduct are related by stoichiometry; inconsistencies among these fields or with ion mode indicate curation errors that must be repaired or flagged for removal."
+  ],
+  "evaluation_strategy": {
+    "direct_checks": [
+      "verify file exists: GNPS library input (ALL_GNPS_NO_PROPAGATED.mgf) downloaded from https://gnps-external.ucsd.edu/gnpslibrary/ALL_GNPS_NO_PROPAGATED.mgf or equivalent dated 21-08-2023",
+      "verify file exists: YAML settings file from Zenodo deposit 10.5281/zenodo.10160791",
+      "verify matchms version is 0.26.4 by checking installed package version or requirements file",
+      "script_runs: execute matchms library cleaning pipeline with provided YAML configuration on GNPS input without errors",
+      "file_exists: cleaned spectral library output file (MGF or equivalent format)",
+      "file_exists: processing report or log file documenting filter application and spectrum counts",
+      "file_format_is: cleaned library output in MGF or standard mass spectrometry format",
+      "row_count_equals or contains_substring: verify cleaned library contains approximately 448,485 curated spectra (or report actual count with justification for any deviation)",
+      "field_present: verify output spectra contain harmonized metadata fields (SMILES, InChI, InChIKey, parent mass, adduct, ion mode)",
+      "script_runs: Python 3.9, 3.10, 3.11, or 3.12 environment executing pipeline without dependency errors"
+    ],
+    "expert_review": [
+      "inspect randomly sampled spectra from cleaned library to verify metadata harmonization quality and consistency across SMILES, InChI, InChIKey, and parent mass fields",
+      "assess whether repair functions preserved spectral integrity (peaks, intensities) while correcting metadata",
+      "evaluate whether the final spectrum count (reported vs. actual) matches expected yield from filter steps described in pipeline documentation",
+      "review processing log for any warnings or anomalies during PubChem lookups or RDKit structure validation steps",
+      "assess whether parent mass calculations are monoisotopic (not molar mass) in final output by spot-checking 10+ examples"
+    ]
+  },
+  "evidence_snippets": [
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_001",
+      "source_path": "agent2_synthesis",
+      "text": "[results] What is the quantitative effect of executing the complete matchms library cleaning pipeline on the GNPS public mass spectral library, in terms of spectra retained, repaired, and removed?: 'The new library cleaning pipeline was run on the GNPS public mass spectral library. A YAML file and processing report were automatically generated. Before cleaning, the GNPS library contained 500,569'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_002",
+      "source_path": "agent2_synthesis",
+      "text": "[results] The library cleaning pipeline repaired metadata for 52,084 spectra that would otherwise have been removed, resulting in a final cleaned GNPS library containing 448,485 curated mass spectra, with 31,758 spectra removed due to invalid or non-matching annotations.: 'combined the newly introduced repair functions repaired the metadata of 52,084 spectra. The final cleaned GNPS public mass spectral library contains 448.485 curated mass spectra and is available on'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_003",
+      "source_path": "agent2_synthesis",
+      "text": "[other] GNPS public mass spectral library (21-08-2023 no-propagated version): 'GNPS public mass spectral library (downloaded 21-08-2023, no-propagated version)'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_004",
+      "source_path": "agent2_synthesis",
+      "text": "[other] YAML configuration file with pipeline settings and filter parameters: 'using the YAML settings deposited on Zenodo'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_005",
+      "source_path": "agent2_synthesis",
+      "text": "[other] Cleaned mass spectral library in matchms-compatible format: 'produce a cleaned spectral library'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_006",
+      "source_path": "agent2_synthesis",
+      "text": "[other] Processing report documenting filter operations, metadata repairs, and statistics: 'together with a processing report'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_007",
+      "source_path": "agent2_synthesis",
+      "text": "[other] matchms: 'matchms library cleaning pipeline (version 0.26.4)'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_008",
+      "source_path": "agent2_synthesis",
+      "text": "[other] Python: 'Python 3.9, 3.10, 3.11, 3.12'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_009",
+      "source_path": "agent2_synthesis",
+      "text": "[other] RDKit: 'SMILES, InChI and InChIKey are loaded by RDKit and compared'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_010",
+      "source_path": "agent2_synthesis",
+      "text": "[other] PubChem: 'This filter derives the canonical SMILES, InChI and InChIKey from PubChem'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_011",
+      "source_path": "agent2_synthesis",
+      "text": "[discussion] The exact download URL or DOI for the specific GNPS library version (ALL_GNPS_NO_PROPAGATED.mgf) used as input on 21-08-2023 is not provided in the discussion section.: 'The settings used for the GNPS public mass spectral libraries use case, the logging, and the cleaned libraries can be found on Zenodo'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_012",
+      "source_path": "agent2_synthesis",
+      "text": "[discussion] The discussion does not specify whether the final cleaned library output of 448,485 spectra (or 468,485 as cited in abstract) is available as a downloadable artifact or only as summary statistics.: 'the cleaned libraries can be found on Zenodo [5]'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_013",
+      "source_path": "agent2_synthesis",
+      "text": "[discussion] The exact format and location of the 'processing report' or detailed filter-by-filter application statistics (as shown in pdf_p6_i2 Figure 2) are not explicitly documented in the discussion text.: 'The settings used for the GNPS public mass spectral libraries use case, the logging, and the cleaned libraries can be found on Zenodo [5]'"
+    }
+  ],
+  "executable": {
+    "cmd": [
+      "python",
+      "-m",
+      "matchms.scripts.clean_library",
+      "{inputs.0}",
+      "{inputs.1}",
+      "--output-library",
+      "cleaned_library_{task_id}.msp",
+      "--output-report",
+      "processing_report_{task_id}.json"
+    ],
+    "env": {},
+    "timeout_s": 3600,
+    "working_dir": null
+  },
+  "execution_environment": null,
+  "execution_profile": {
+    "commercial_software": [],
+    "compute_tier": "medium",
+    "open_source_alternatives": []
+  },
+  "expected_artifact_name": "cleaned_gnps_library.mgf",
+  "expected_outputs": [
+    "Cleaned mass spectral library in matchms-compatible format",
+    "Processing report documenting filter operations, metadata repairs, and statistics"
+  ],
+  "finding": "The library cleaning pipeline repaired metadata for 52,084 spectra that would otherwise have been removed, resulting in a final cleaned GNPS library containing 448,485 curated mass spectra, with 31,758 spectra removed due to invalid or non-matching annotations.",
+  "github_name": null,
+  "input_from": null,
+  "inputs": [
+    "GNPS public mass spectral library (21-08-2023 no-propagated version)",
+    "YAML configuration file with pipeline settings and filter parameters"
+  ],
+  "keywords": [],
+  "landmark_outputs": [
+    "metadata_harmonization_report.txt",
+    "repair_statistics.json",
+    "validation_failures.csv",
+    "cleaned_gnps_library.mgf"
+  ],
+  "linked_result_ids": [
+    "result_003",
+    "result_012",
+    "result_013",
+    "result_014"
+  ],
+  "methodology_summary": [
+    "Load GNPS library and apply basic metadata harmonization filters to remove spectra with missing core fields.",
+    "Derive missing structure annotations (SMILES, InChI, InChIKey) from compound names via PubChem lookup with parent mass validation.",
+    "Repair annotation errors in SMILES (salts), parent mass (molar vs. monoisotopic), adduct, and non-matching metadata fields by checking consistency against measured mass and chemical rules.",
+    "Validate all structure annotations by cross-checking SMILES/InChI/InChIKey consistency using RDKit and requiring matching parent mass, adduct, precursor m/z, and ion mode.",
+    "Apply removal filters for spectra failing validation, normalize peak intensities, and export cleaned library with processing statistics."
+  ],
+  "missing_information": [
+    "The exact download URL or DOI for the specific GNPS library version (ALL_GNPS_NO_PROPAGATED.mgf) used as input on 21-08-2023 is not provided in the discussion section.",
+    "The discussion does not specify whether the final cleaned library output of 448,485 spectra (or 468,485 as cited in abstract) is available as a downloadable artifact or only as summary statistics.",
+    "The exact format and location of the 'processing report' or detailed filter-by-filter application statistics (as shown in pdf_p6_i2 Figure 2) are not explicitly documented in the discussion text."
+  ],
+  "parameters": [],
+  "primary_domain": "cheminformatics",
+  "project_id": null,
+  "prov": {
+    "used": [],
+    "was_influenced_by": []
+  },
+  "provenance_source": "published",
+  "reproducibility_tier": "type-checked",
+  "research_question": "What is the quantitative effect of executing the complete matchms library cleaning pipeline on the GNPS public mass spectral library, in terms of spectra retained, repaired, and removed?",
+  "resumption_contract": null,
+  "review_questions": [
+    "Is the research question correctly identified and scoped?",
+    "Does the connected finding have enough supporting evidence?",
+    "Which artifacts are required before this can become an executable benchmark task?",
+    "What direct, visual, textual, or expert-review checks should be used for evaluation?"
+  ],
+  "run_command": null,
+  "run_cwd": null,
+  "run_timeout_seconds": 60.0,
+  "scenario_id": null,
+  "schema_version": "0.17.0",
+  "script_refs": [],
+  "skills": [
+    "mass-spectral-library-curation",
+    "metadata-harmonization-and-validation",
+    "chemical-structure-annotation-repair",
+    "adduct-assignment-and-parent-mass-validation",
+    "spectral-peak-filtering-and-intensity-normalization",
+    "smiles-inchi-consistency-checking"
+  ],
+  "source_package": "/Users/holobiomicslab/git/AgenticScienceBuilder/examples/article_878_package",
+  "subdomains": [
+    "computational-metabolomics"
+  ],
+  "subtask_categories": [
+    "data-processing",
+    "data-analysis",
+    "benchmark-evaluation"
+  ],
+  "synthesized_from": null,
+  "task_description": "Execute the complete matchms library cleaning pipeline (version 0.26.4) on the GNPS public mass spectral library (21-08-2023 no-propagated version) using deposited YAML configuration settings to produce a cleaned spectral library and processing report.",
+  "task_id": "task_001",
+  "task_inputs": [
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "GNPS public mass spectral library (21-08-2023 no-propagated version)",
+      "port_id": "gnps_library",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    },
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "YAML configuration file with pipeline settings and filter parameters",
+      "port_id": "yaml_config",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    }
+  ],
+  "task_objective": "Execute matchms v0.26.4 library cleaning pipeline on GNPS public library (21-08-2023, no-propagated) using Zenodo YAML settings and generate cleaned spectral library with processing report.",
+  "task_outputs": [
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "Cleaned mass spectral library in matchms-compatible format",
+      "port_id": "cleaned_library",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    },
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "Processing report documenting filter operations, metadata repairs, and statistics",
+      "port_id": "processing_report",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    }
+  ],
+  "techniques": [
+    "tandem-ms",
+    "spectral-library-matching",
+    "metabolite-identification",
+    "database-annotation",
+    "machine-learning",
+    "quality-control"
+  ],
+  "title": "Run full matchms library cleaning pipeline on GNPS public mass spectral library",
+  "tools": [
+    "matchms",
+    "Python",
+    "RDKit",
+    "PubChem"
+  ],
+  "uncertainty_notes": [
+    "This card was generated by the LLM-assisted pipeline and needs scientific expert review.",
+    "Each TracedClaim's evidence_span has been substring-checked against its source section; see logs/llm_calls.jsonl and capsules/<task_id>/quality_report.json for groundedness results."
+  ],
+  "workflow_description": "1. Load the GNPS public mass spectral library (21-08-2023 no-propagated version) using matchms in Python 3.9\u20133.12. 2. Apply basic metadata harmonization filters (removal of spectra lacking core metadata fields). 3. Derive missing metadata from other fields, including SMILES/InChI/InChIKey lookup from compound names via PubChem with parent mass validation. 4. Repair annotation errors: correct SMILES of salts by checking parent mass against salt ion combinations, repair parent mass when calculated from molar mass instead of monoisotopic mass, and repair adduct and parent mass based on SMILES and precursor m/z matching. 5. Repair non-matching annotations by selecting the field matching parent mass. 6. Validate all structure annotations by checking SMILES/InChI/InChIKey consistency using RDKit. 7. Apply removal filters requiring valid annotations with consistent metadata, matching parent mass to SMILES monoisotopic mass, minimum number of high-intensity peaks, and consistency among adduct, precursor m/z, parent mass, and ion mode. 8. Normalize peak intensities. 9. Export the cleaned spectral library and generate a processing report documenting all filter operations and statistics."
+}
