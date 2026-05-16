@@ -27,7 +27,7 @@ def test_validate_accepts_close_match():
         candidate_authors=["Ashish Vaswani", "Noam Shazeer"],
         candidate_year=2017,
         target_title="Attention Is All You Need",
-        target_first_lastname="vaswani",
+        target_authors=["Vaswani, Ashish"],
         target_year=2017,
     )
 
@@ -38,7 +38,7 @@ def test_validate_rejects_wrong_first_author():
         candidate_authors=["Some Other Person"],
         candidate_year=2017,
         target_title="Attention Is All You Need",
-        target_first_lastname="vaswani",
+        target_authors=["Vaswani, Ashish"],
         target_year=2017,
     )
 
@@ -49,7 +49,7 @@ def test_validate_rejects_year_off_by_more_than_one():
         candidate_authors=["Ashish Vaswani"],
         candidate_year=2010,
         target_title="Attention Is All You Need",
-        target_first_lastname="vaswani",
+        target_authors=["Vaswani, Ashish"],
         target_year=2017,
     )
 
@@ -61,8 +61,49 @@ def test_validate_accepts_year_off_by_one():
         candidate_authors=["Ashish Vaswani"],
         candidate_year=2018,
         target_title="Attention Is All You Need",
-        target_first_lastname="vaswani",
+        target_authors=["Vaswani, Ashish"],
         target_year=2017,
+    )
+
+
+def test_validate_rejects_junk_unknown_author_with_loose_title():
+    """Regression: bib entries with author='Unknown' must not match
+    any arbitrary DOI just because the title length is in range.
+
+    The old substring check treated ``target_first_lastname='unknown'``
+    as a real surname, accepting any candidate whose lastname was a
+    substring of 'unknown' (e.g. 'u', 'no', 'know'). Now we strip junk
+    placeholders and require strong title overlap when no real author
+    is available."""
+    assert not _validate_match(
+        candidate_title="A 1980 Workshop Paper On Symposium Graphics",
+        candidate_authors=["Smith J"],
+        candidate_year=1980,
+        target_title="LangGraph: Build resilient language agents as graphs",
+        target_authors=["Unknown"],
+        target_year=None,
+    )
+
+
+def test_validate_accepts_swapped_chinese_name():
+    """Regression: Zotero sometimes stores given+family swapped (esp.
+    Chinese names). With first-author-only matching, "Qingyan, Guo"
+    would yield target_first_lastname='qingyan' and never match the
+    Crossref/arXiv record whose family name is 'Guo'. Now we pool all
+    name tokens across all authors and accept any 4+ char overlap."""
+    assert _validate_match(
+        candidate_title=(
+            "Connecting Large Language Models with Evolutionary "
+            "Algorithms Yields Powerful Prompt Optimizers"
+        ),
+        candidate_authors=["Qingyan Guo", "Rui Wang", "Junliang Guo"],
+        candidate_year=2024,
+        target_title=(
+            "Connecting Large Language Models with Evolutionary "
+            "Algorithms Yields Powerful Prompt Optimizers"
+        ),
+        target_authors=["Qingyan, Guo", "Rui, Wang"],  # name parts in either field
+        target_year=2024,
     )
 
 
@@ -76,7 +117,7 @@ def test_validate_rejects_title_length_mismatch():
         candidate_authors=["Vaswani A"],
         candidate_year=2017,
         target_title="Attention Is All You Need",
-        target_first_lastname="vaswani",
+        target_authors=["Vaswani, Ashish"],
         target_year=2017,
     )
 
@@ -430,7 +471,7 @@ async def test_browser_tier_returns_none_when_playwright_missing(monkeypatch):
     async with httpx.AsyncClient() as http:
         doi = await _try_chromium_scholar(
             "Some Title",
-            "vaswani",
+            ["Vaswani, Ashish"],
             2017,
             http_client=http,
         )
@@ -520,7 +561,7 @@ async def test_browser_tier_scrapes_doi_and_verifies_via_crossref(
     async with httpx.AsyncClient() as http:
         doi = await _try_chromium_scholar(
             "Attention Is All You Need",
-            "vaswani",
+            ["Vaswani, Ashish"],
             2017,
             http_client=http,
         )
@@ -612,7 +653,7 @@ async def test_browser_tier_rejects_when_crossref_metadata_doesnt_match(
     async with httpx.AsyncClient() as http:
         doi = await _try_chromium_scholar(
             "Attention Is All You Need",
-            "vaswani",
+            ["Vaswani, Ashish"],
             2017,
             http_client=http,
         )

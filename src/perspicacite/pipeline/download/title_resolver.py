@@ -56,47 +56,105 @@ def _last_name(author: str) -> str:
     return parts[-1].lower() if parts else ""
 
 
+# Common BibTeX/Zotero placeholder author names that should be treated
+# as "no author known", not as a real surname. Without this, validation
+# treats ``["Unknown"]`` as target_lastname="unknown" and erroneously
+# accepts any candidate whose surname is a substring of "unknown".
+_JUNK_AUTHOR_TOKENS = {"unknown", "anonymous", "anon", "n/a", "na"}
+
+
+def _is_junk_author(s: str) -> bool:
+    cleaned = re.sub(r"[{}]", "", s or "").strip().lower()
+    return (not cleaned) or cleaned in _JUNK_AUTHOR_TOKENS
+
+
+def _author_tokens(authors: list[str] | None) -> set[str]:
+    """Pull every meaningful name-token (>=3 letters, alpha) out of an
+    author list. We pool first+last because Zotero/BibTeX entries are
+    routinely inconsistent — Chinese names get stored with given +
+    family swapped, single-name authors land in ``lastName``, etc.
+    Validation then needs any candidate-author overlap, not just a
+    rigid first-author surname match."""
+    out: set[str] = set()
+    for a in authors or []:
+        if _is_junk_author(a):
+            continue
+        cleaned = re.sub(r"[{}]", "", a)
+        for part in re.split(r"[,\s]+", cleaned):
+            p = part.strip().lower()
+            if len(p) >= 3 and p.isalpha():
+                out.add(p)
+    return out
+
+
+_TITLE_STOPWORDS = {
+    "the", "an", "of", "for", "and", "or", "in", "on", "to", "with",
+    "is", "are", "be", "by", "from", "as", "at", "via", "a",
+}
+
+
+def _title_tokens(title: str) -> set[str]:
+    return {
+        t for t in re.findall(r"[a-z0-9]+", (title or "").lower())
+        if len(t) >= 3 and t not in _TITLE_STOPWORDS
+    }
+
+
+def _title_similarity(a: str, b: str) -> float:
+    """Jaccard similarity on title content-word tokens (3+ chars, no
+    stopwords). Returns 0.0 when either side has no usable tokens."""
+    ta, tb = _title_tokens(a), _title_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
 def _validate_match(
     candidate_title: str,
     candidate_authors: list[str],
     candidate_year: int | None,
     target_title: str,
-    target_first_lastname: str,
+    target_authors: list[str] | None,
     target_year: int | None,
 ) -> bool:
-    """Validate a candidate scholar API result against the bib entry."""
+    """Validate a candidate scholar API result against the bib entry.
+
+    Rules:
+
+    - Author overlap: target token set (any-position name parts, junk
+      placeholders stripped) must share at least one 4+ char token with
+      the candidate's token set. Skipped only when the target has no
+      real authors — in that case the title similarity floor is raised.
+    - Year proximity: ±1 when both sides have one.
+    - Title similarity (Jaccard on content-word tokens): >=0.4
+      normally, >=0.6 when no usable target author exists. This is the
+      backstop against the "title-length-only" failure mode that lets
+      arbitrary unrelated DOIs through for ``["Unknown"]`` entries.
+    """
     if not candidate_title:
         return False
-    # First-author last-name overlap (substring, case-insensitive).
-    # Only enforce when target side has a last name.
-    if target_first_lastname:
-        if not candidate_authors:
+
+    target_tokens = _author_tokens(target_authors)
+    cand_tokens = _author_tokens(candidate_authors)
+    if target_tokens:
+        overlap = {t for t in target_tokens & cand_tokens if len(t) >= 4}
+        if not overlap:
             return False
-        cand_first_last = _last_name(candidate_authors[0])
-        if (
-            cand_first_last != target_first_lastname
-            and target_first_lastname not in cand_first_last
-            and cand_first_last not in target_first_lastname
-        ):
-            return False
-    # Year proximity. Only enforce when both sides have a year.
+
     if target_year is not None and candidate_year is not None:
         try:
             if abs(int(candidate_year) - int(target_year)) > 1:
                 return False
         except (TypeError, ValueError):
             pass
-    # Title-length sanity: avoids matches where the search returned a
-    # short related work or a long survey that happens to mention this
-    # paper's keywords.
-    t_len = len(target_title)
-    c_len = len(candidate_title)
-    return not (t_len and (c_len < 0.6 * t_len or c_len > 1.5 * t_len))
+
+    sim_floor = 0.4 if target_tokens else 0.6
+    return _title_similarity(candidate_title, target_title) >= sim_floor
 
 
 async def _try_openalex(
     title: str,
-    first_lastname: str,
+    target_authors: list[str] | None,
     year: int | None,
     *,
     http_client: Any,
@@ -119,7 +177,7 @@ async def _try_openalex(
         c_year = w.get("publication_year")
         c_doi = (w.get("doi") or "").replace("https://doi.org/", "").strip()
         if c_doi and _validate_match(
-            c_title, c_authors, c_year, title, first_lastname, year,
+            c_title, c_authors, c_year, title, target_authors, year,
         ):
             return c_doi
     return None
@@ -127,14 +185,22 @@ async def _try_openalex(
 
 async def _try_crossref(
     title: str,
-    first_lastname: str,
+    target_authors: list[str] | None,
     year: int | None,
     *,
     http_client: Any,
 ) -> str | None:
     params: dict[str, Any] = {"query.bibliographic": title, "rows": 5}
-    if first_lastname:
-        params["query.author"] = first_lastname
+    # Hint Crossref's author-aware ranking with whatever author signal
+    # we have. Doesn't need to be the canonical surname — Crossref
+    # tokenizes the query field generously.
+    if target_authors:
+        first_real = next(
+            (a for a in target_authors if not _is_junk_author(a)),
+            "",
+        )
+        if first_real:
+            params["query.author"] = _last_name(first_real) or first_real
     r = await http_client.get(
         "https://api.crossref.org/works", params=params, timeout=20.0,
     )
@@ -158,7 +224,7 @@ async def _try_crossref(
                 c_year = None
         c_doi = (w.get("DOI") or "").strip()
         if c_doi and _validate_match(
-            c_title, c_authors, c_year, title, first_lastname, year,
+            c_title, c_authors, c_year, title, target_authors, year,
         ):
             return c_doi
     return None
@@ -166,7 +232,7 @@ async def _try_crossref(
 
 async def _try_semantic_scholar(
     title: str,
-    first_lastname: str,
+    target_authors: list[str] | None,
     year: int | None,
     *,
     http_client: Any,
@@ -192,7 +258,7 @@ async def _try_semantic_scholar(
         if not c_doi and ext.get("ArXiv"):
             c_doi = f"10.48550/arXiv.{ext['ArXiv'].strip()}"
         if c_doi and _validate_match(
-            c_title, c_authors, c_year, title, first_lastname, year,
+            c_title, c_authors, c_year, title, target_authors, year,
         ):
             return c_doi
     return None
@@ -200,7 +266,7 @@ async def _try_semantic_scholar(
 
 async def _try_arxiv(
     title: str,
-    first_lastname: str,
+    target_authors: list[str] | None,
     year: int | None,
     *,
     http_client: Any,
@@ -208,8 +274,20 @@ async def _try_arxiv(
     # arXiv API doesn't return JSON; entries come back as Atom XML.
     # We parse the minimum we need with a regex rather than pulling
     # in an XML parser dependency.
+    #
+    # Use AND-of-tokens, not phrase-exact: arXiv's ``ti:"<exact>"``
+    # requires the exact title phrase, which fails for bib entries
+    # whose stored title is the journal/OpenReview form but the
+    # arXiv title is a shorter version (e.g. ``EvoPrompt: Connecting
+    # LLMs ...`` vs ``Connecting Large Language Models ...``).
+    content_toks = sorted(
+        _title_tokens(title), key=len, reverse=True,
+    )[:5]
+    if not content_toks:
+        return None
+    search = " AND ".join(f"ti:{t}" for t in content_toks)
     params: dict[str, Any] = {
-        "search_query": f'ti:"{title}"',
+        "search_query": search,
         "start": 0,
         "max_results": 5,
     }
@@ -237,7 +315,7 @@ async def _try_arxiv(
             continue
         arxiv_id = id_m.group(1)
         if _validate_match(
-            cand_title, authors, cand_year, title, first_lastname, year,
+            cand_title, authors, cand_year, title, target_authors, year,
         ):
             return f"10.48550/arXiv.{arxiv_id}"
     return None
@@ -245,7 +323,7 @@ async def _try_arxiv(
 
 async def _try_chromium_scholar(
     title: str,
-    first_lastname: str,
+    target_authors: list[str] | None,
     year: int | None,
     *,
     http_client: Any,
@@ -278,8 +356,13 @@ async def _try_chromium_scholar(
     query_parts = [title]
     if year:
         query_parts.append(str(year))
-    if first_lastname:
-        query_parts.append(first_lastname)
+    if target_authors:
+        first_real = next(
+            (a for a in target_authors if not _is_junk_author(a)),
+            "",
+        )
+        if first_real:
+            query_parts.append(_last_name(first_real) or first_real)
     scholar_url = (
         "https://scholar.google.com/scholar?q=" + quote(" ".join(query_parts))
     )
@@ -346,7 +429,7 @@ async def _try_chromium_scholar(
                 except (TypeError, ValueError):
                     cand_year = None
             if _validate_match(
-                cand_title, cand_authors, cand_year, title, first_lastname, year,
+                cand_title, cand_authors, cand_year, title, target_authors, year,
             ):
                 return doi
         except Exception:
@@ -367,8 +450,8 @@ async def resolve_doi_from_title(
     Walks OpenAlex -> Crossref -> Semantic Scholar -> arXiv; first
     validated match wins. With ``enable_browser=True``, appends a
     headless-Chromium Google-Scholar tier as the final fallback. A
-    match requires first-author last-name overlap, year within +/-1,
-    and title length 60-150% of the bib entry.
+    match requires either author-token overlap (when the bib entry has
+    a real author) or strong title-word overlap, plus year +/-1.
 
     Returns the discovered DOI bare (``"10.1234/abc"``), or ``None``
     if no tier produced a validated hit. Network/HTTP errors at any
@@ -377,8 +460,6 @@ async def resolve_doi_from_title(
     if not title or len(title.strip()) < 10:
         return None
     title = title.strip()
-
-    first_lastname = _last_name(authors[0]) if authors else ""
 
     year_int: int | None = None
     if year is not None:
@@ -399,7 +480,7 @@ async def resolve_doi_from_title(
     for tier_name, fn in tiers:
         try:
             doi = await fn(
-                title, first_lastname, year_int, http_client=http_client,
+                title, authors, year_int, http_client=http_client,
             )
             if doi:
                 logger.info(
@@ -419,7 +500,7 @@ async def resolve_doi_from_title(
     logger.info(
         "title_resolver_no_match",
         title=title[:80],
-        first_lastname=first_lastname,
+        authors=(authors or [])[:3],
         year=year_int,
         browser_used=enable_browser,
     )
