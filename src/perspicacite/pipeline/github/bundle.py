@@ -169,7 +169,10 @@ class BundleManifest:
     content: ContentSpec = field(default_factory=ContentSpec)
     readme_only: bool = False
     description: str | None = None
-    domain: str | None = None
+    # ``domain`` is a list of research domains the bundle applies to.
+    # Spec models it as a list; we kept a forward-compat path for
+    # scalar-string YAML inputs (auto-wrapped into a single-element list).
+    domain: list[str] = field(default_factory=list)
     version: str | None = None
     authors: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
@@ -309,9 +312,10 @@ def _parse_papers(payload) -> list[PaperRef]:
                 value = str(item[kind]).strip()
                 if not value:
                     continue
-                # Normalise DOIs to lowercase (case-insensitive identifier).
+                # Normalise DOI prefix to lowercase (case-insensitive
+                # by the DOI standard); keep suffix case-preserved.
                 if kind == "doi":
-                    value = value.lower()
+                    value = _normalize_doi(value)
                 out.append(PaperRef(kind=kind, value=value))  # type: ignore[arg-type]
                 break  # one kind per list item
     return out
@@ -360,17 +364,30 @@ def _coerce_str_list(value) -> list[str]:
     return []
 
 
-def _coerce_domain(value) -> str | None:
+def _coerce_domain(value) -> list[str]:
     """``domain`` is documented as a list in the spec but operators
-    sometimes write it as a single string. Accept both; collapse a list
-    into a comma-joined string so downstream consumers don't need to
-    branch."""
+    sometimes write it as a single string. Accept both; ALWAYS return a
+    list so downstream filters can match on individual domain entries
+    (``"genomics" in manifest.domain``) without splitting strings."""
     if value is None:
-        return None
+        return []
     if isinstance(value, list):
-        items = [str(v) for v in value if v is not None]
-        return ", ".join(items) if items else None
-    return str(value)
+        return [str(v).strip() for v in value if v is not None and str(v).strip()]
+    if isinstance(value, str):
+        s = value.strip()
+        return [s] if s else []
+    return [str(value)]
+
+
+def _normalize_doi(value: str) -> str:
+    """Normalise a DOI per the standard: prefix (before the first ``/``)
+    is case-insensitive — lower it for stable deduping; suffix is
+    case-preserved per the DOI spec, since some publisher-side stores
+    distinguish case-sensitive suffixes."""
+    if "/" not in value:
+        return value.lower()
+    prefix, sep, suffix = value.partition("/")
+    return f"{prefix.lower()}{sep}{suffix}"
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +422,7 @@ def extract_links_from_text(text: str) -> LinkBag:
 
     def _add_paper(kind: PaperKind, value: str) -> None:
         if kind == "doi":
-            value = value.lower()
+            value = _normalize_doi(value)
         key = (kind, value)
         if key in seen_papers:
             return

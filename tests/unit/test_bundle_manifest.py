@@ -91,7 +91,7 @@ def test_parse_full_manifest(tmp_path):
     assert m.name == "scrna-qc"
     assert m.description == "QC recipes"
     assert m.version == "0.3.0"
-    assert m.domain == "genomics"
+    assert m.domain == ["genomics"]
     assert m.authors == ["Alice", "Bob"]
     assert m.content.include == ["README.md"]
     assert m.content.exclude == ["tests/**"]
@@ -178,14 +178,53 @@ def test_extract_links_empty_text_returns_empty_bag():
     assert bag.tools == []
 
 
-def test_extract_links_doi_lowercases_prefix():
-    """DOIs should be normalised to lowercase per the spec."""
-    text = "Reference 10.1234/FOO.BAR"
+def test_extract_links_doi_lowercases_prefix_only():
+    """DOIs: prefix (10.XXXX) is case-insensitive per the standard so
+    we lowercase it for stable dedup; suffix is case-preserved because
+    some publisher stores distinguish suffix case."""
+    text = "Reference 10.1234/FOO.BAR also 10.5678/MixedCase"
     bag = extract_links_from_text(text)
-    # The "10." prefix is already lowercase; we lowercase the whole DOI for
-    # stable deduping (DOIs are case-insensitive).
     dois = {ref.value for ref in bag.papers if ref.kind == "doi"}
-    assert "10.1234/foo.bar" in dois
+    # Suffix preserved
+    assert "10.1234/FOO.BAR" in dois
+    assert "10.5678/MixedCase" in dois
+
+
+def test_normalize_doi_only_lowercases_prefix():
+    """Direct unit test for the helper — the prefix lowercases, the
+    suffix is preserved verbatim."""
+    from perspicacite.pipeline.github.bundle import _normalize_doi
+
+    assert _normalize_doi("10.1234/Foo.Bar") == "10.1234/Foo.Bar"
+    assert _normalize_doi("10.ABCD/foo") == "10.abcd/foo"
+    assert _normalize_doi("10.AAA/BBB") == "10.aaa/BBB"
+    # No '/' at all → fall back to lowercasing the whole thing.
+    assert _normalize_doi("garbage-no-slash") == "garbage-no-slash"
+
+
+def test_domain_accepts_list_and_scalar(tmp_path):
+    """The YAML can be either a scalar or a list; both yield
+    ``manifest.domain: list[str]`` for stable downstream consumers."""
+    # Scalar form → single-element list
+    p1 = tmp_path / "scalar" / "bundle.yml"
+    p1.parent.mkdir()
+    p1.write_text("name: a\ndomain: genomics\n")
+    m1 = BundleManifest.parse(p1)
+    assert m1.domain == ["genomics"]
+
+    # List form → list
+    p2 = tmp_path / "list" / "bundle.yml"
+    p2.parent.mkdir()
+    p2.write_text("name: b\ndomain:\n  - genomics\n  - single-cell\n")
+    m2 = BundleManifest.parse(p2)
+    assert m2.domain == ["genomics", "single-cell"]
+
+    # Missing → empty list
+    p3 = tmp_path / "missing" / "bundle.yml"
+    p3.parent.mkdir()
+    p3.write_text("name: c\n")
+    m3 = BundleManifest.parse(p3)
+    assert m3.domain == []
 
 
 # ---------------------------------------------------------------------------
