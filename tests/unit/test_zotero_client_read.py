@@ -63,6 +63,57 @@ async def test_download_attachment_bytes_returns_none_on_error():
 
 
 @pytest.mark.asyncio
+async def test_download_attachment_bytes_falls_back_to_cloud_when_local_empty():
+    """Live-discovered (2026-05-16) bug: local Zotero desktop returns
+    HTTP 200 + ``Content-Length: 0`` for group-library attachments whose
+    bytes only live in Zotero cloud storage. The client must fall back
+    to the cloud REST API in that case."""
+    seen_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        if "localhost" in str(request.url) or "127.0.0.1" in str(request.url):
+            # Local Zotero desktop returns 200 + empty body for group attachments
+            return httpx.Response(200, content=b"")
+        # Cloud REST returns the bytes
+        return httpx.Response(200, content=b"%PDF-FROM-CLOUD")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        c = ZoteroClient(
+            api_key="real-key",
+            library_id="6555390",
+            library_type="group",
+            base_url="http://localhost:23119/api",
+            http_client=http,
+        )
+        out = await c.download_attachment_bytes("ATT1")
+    assert out == b"%PDF-FROM-CLOUD"
+    # Local was tried first, cloud was the fallback
+    assert any("localhost" in u for u in seen_urls)
+    assert any("api.zotero.org" in u for u in seen_urls)
+
+
+@pytest.mark.asyncio
+async def test_download_attachment_bytes_no_cloud_fallback_when_not_local():
+    """When the configured base_url is already the cloud REST API, an
+    empty response should NOT trigger another cloud round-trip — it just
+    means the attachment is missing or unsynced."""
+    seen_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, content=b"")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        c = ZoteroClient(api_key="k", library_id="42", http_client=http)
+        out = await c.download_attachment_bytes("ATT1")
+    assert out is None
+    assert len(seen_urls) == 1
+
+
+@pytest.mark.asyncio
 async def test_get_item_notes_strips_html():
     children = [
         {"key": "N1", "data": {"itemType": "note", "note": "<p>Hello <b>world</b></p>"}},
