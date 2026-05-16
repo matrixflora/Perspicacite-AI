@@ -528,24 +528,50 @@ class ZoteroClient:
     async def _get_attachments_via_write_base(
         self, item_key: str
     ) -> list[dict[str, Any]]:
-        """Same as get_item_attachments but routed through _write_base().
+        """Children of item_key, itemType=attachment.
 
-        Used by :meth:`upload_attachment` for its md5-dedup pre-check —
-        the upload protocol writes to cloud, so the children-list check
-        must also hit cloud, otherwise local-configured clients would
-        see a stale (or empty, for unsynced groups) attachment set."""
+        Used by :meth:`upload_attachment` for md5-dedup + orphan-shell
+        reuse. Tries cloud first (since upload itself writes to cloud
+        and we want post-write state), then falls back to the local
+        desktop API. Empirically (2026-05-16, HolobiomicsLab tests)
+        some Zotero API keys have WRITE access to a group library but
+        no READ access via the cloud GET endpoint — yet the local
+        desktop has full read access. Without this fallback the orphan
+        check returns ``[]`` and step 2 keeps producing fresh orphans
+        every retry."""
         c = await self._client()
-        r = await c.get(
-            f"{self._write_base()}/items/{item_key}/children",
-            params={"format": "json"},
-            headers=self._headers(),
-        )
-        if r.status_code != 200:
-            return []
-        return [
-            it for it in (r.json() or [])
-            if ((it.get("data") or {}).get("itemType")) == "attachment"
-        ]
+
+        async def _read(base: str) -> list[dict[str, Any]] | None:
+            try:
+                r = await c.get(
+                    f"{base}/items/{item_key}/children",
+                    params={"format": "json"},
+                    headers=self._headers(),
+                )
+            except httpx.HTTPError:
+                return None
+            if r.status_code != 200:
+                return None
+            return [
+                it for it in (r.json() or [])
+                if ((it.get("data") or {}).get("itemType")) == "attachment"
+            ]
+
+        # Try cloud first (it's the canonical post-write state). If
+        # cloud is unreachable / forbidden (api_key has WRITE but no
+        # READ access — yes, that's allowed in Zotero), fall back to
+        # the local desktop API, which has full read access for any
+        # library the user is signed into. A cloud 200 with empty list
+        # is treated as authoritative (no fallback) so we don't double
+        # the request count on every clean upload.
+        cloud_kids = await _read(self._write_base())
+        if cloud_kids is not None:
+            return cloud_kids
+        if self.is_local:
+            local_kids = await _read(self._base())
+            if local_kids is not None:
+                return local_kids
+        return []
 
     async def download_attachment_bytes(self, attachment_key: str) -> bytes | None:
         """Return raw file bytes for an attachment. None on 404/error/empty.
@@ -649,61 +675,93 @@ class ZoteroClient:
 
         c = await self._client()
 
-        # Pre-check: skip the 3-step protocol entirely if the parent
-        # already has an attachment with the same md5. Otherwise step 2
-        # rejects the upload with HTTP 412 "If-None-Match: * set but
-        # file exists" — discovered live 2026-05-16 when retrying
-        # push_to_zotero(attach_pdf=True) on the same DOI.
+        # Pre-check: look up the parent's existing attachments to handle:
+        #   (a) Same content already attached (md5 match) → skip protocol.
+        #   (b) Same filename already attached (orphan from a prior
+        #       step-2 failure, OR a "new" shell registered with a stale
+        #       md5). Reuse that key and skip step 1 — otherwise step 1
+        #       creates yet another orphan and step 2 keeps 412'ing
+        #       with "If-None-Match: * set but file exists". Use
+        #       ``If-Match`` (or no precondition) on step 2 to replace.
+        # Discovered live 2026-05-16 while retrying
+        # push_to_zotero(attach_pdf=True) on Cloudflare-gated DOIs.
+        existing_orphan_key: str | None = None
+        existing_orphan_md5: str | None = None
         try:
             existing = await self._get_attachments_via_write_base(parent_item_key)
             for att in existing:
                 att_data = att.get("data") or {}
                 if att_data.get("md5") == md5:
                     return att.get("key")
+                if att_data.get("filename") == fname:
+                    # Same-name orphan or prior-content shell. Reuse it.
+                    # Prefer one with empty md5 (truly never finished); if
+                    # all have md5 set, pick the last (most recent).
+                    if not att_data.get("md5") and existing_orphan_key is None:
+                        existing_orphan_key = att.get("key")
+                        existing_orphan_md5 = None
+                    elif existing_orphan_key is None or existing_orphan_md5 is not None:
+                        existing_orphan_key = att.get("key")
+                        existing_orphan_md5 = att_data.get("md5") or None
         except httpx.HTTPError:
             # Children-list lookup is best-effort; on failure fall through
             # and let the upload protocol attempt run as before.
             pass
 
-        # Step 1 — register the attachment shell.
-        register_body = [{
-            "itemType": "attachment",
-            "parentItem": parent_item_key,
-            "linkMode": "imported_file",
-            "title": fname,
-            "filename": fname,
-            "contentType": content_type,
-            "md5": md5,
-            "mtime": mtime_ms,
-        }]
-        r = await c.post(
-            f"{self._write_base()}/items",
-            json=register_body,
-            headers=self._headers(),
-        )
-        if r.status_code not in (200, 201):
-            raise ZoteroAPIError(
-                f"Zotero attach step1 (register) returned {r.status_code}: "
-                f"{r.text[:300]}"
+        # Step 1 — register the attachment shell (unless we're reusing
+        # an existing orphan from a prior step-2 failure).
+        if existing_orphan_key is not None:
+            attach_key = existing_orphan_key
+        else:
+            register_body = [{
+                "itemType": "attachment",
+                "parentItem": parent_item_key,
+                "linkMode": "imported_file",
+                "title": fname,
+                "filename": fname,
+                "contentType": content_type,
+                "md5": md5,
+                "mtime": mtime_ms,
+            }]
+            r = await c.post(
+                f"{self._write_base()}/items",
+                json=register_body,
+                headers=self._headers(),
             )
-        body = r.json() or {}
-        successful = body.get("successful") or {}
-        if not successful:
-            failed = body.get("failed") or {}
-            raise ZoteroAPIError(
-                f"Zotero attach step1 (register) failed: {failed or body}"
-            )
-        attach_key = next(iter(successful.values())).get("key")
-        if not attach_key:
-            raise ZoteroAPIError("Zotero attach step1: no key returned")
+            if r.status_code not in (200, 201):
+                raise ZoteroAPIError(
+                    f"Zotero attach step1 (register) returned {r.status_code}: "
+                    f"{r.text[:300]}"
+                )
+            body = r.json() or {}
+            successful = body.get("successful") or {}
+            if not successful:
+                failed = body.get("failed") or {}
+                raise ZoteroAPIError(
+                    f"Zotero attach step1 (register) failed: {failed or body}"
+                )
+            attach_key = next(iter(successful.values())).get("key")
+            if not attach_key:
+                raise ZoteroAPIError("Zotero attach step1: no key returned")
 
         # Step 2 — request upload credentials. Form-encoded body, NOT JSON.
-        # If-None-Match: * — required for a fresh attachment slot.
+        # Precondition: use ``If-Match: <md5>`` keyed by whatever md5 the
+        # attachment shell currently records server-side. Empirical (and
+        # confirmed against the Zotero API on 2026-05-16):
+        #   - ``If-None-Match: *`` always returns 412 ("file exists")
+        #     because step 1 records md5 in the shell data, which Zotero
+        #     treats as "file is associated".
+        #   - No precondition returns 428 ("If-Match/If-None-Match header
+        #     not provided").
+        #   - ``If-Match: <our_md5>`` returns 200 — the right path.
+        # For fresh uploads we step-1'd with the current md5, so use it.
+        # For reused orphans, prefer the orphan's md5 (whatever step 1
+        # registered there); fall back to our md5 if cloud reports empty.
         cred_headers = {
             "Zotero-API-Key": self.api_key,
             "Zotero-API-Version": "3",
             "Content-Type": "application/x-www-form-urlencoded",
-            "If-None-Match": "*",
+            "If-Match": existing_orphan_md5 or md5,
         }
         cred_form = {
             "md5": md5,
@@ -727,26 +785,26 @@ class ZoteroClient:
             return attach_key
 
         upload_url = creds.get("url")
-        upload_params = creds.get("params") or {}
         upload_key = creds.get("uploadKey")
         if not upload_url or not upload_key:
             raise ZoteroAPIError(
                 f"Zotero attach step2: bad creds payload {list(creds)}"
             )
 
-        # Step 3 — POST the bytes to the storage URL. Zotero's docs use
-        # multipart/form-data with the actual file under ``file``.
-        # Use a separate (un-authenticated) request — the upload URL is
-        # presigned.
-        files = {"file": (fname, data, content_type)}
-        # ``params`` from Zotero are form fields that must accompany the
-        # bytes (e.g. ``key``, ``acl``, ``policy``, etc. for the S3-like
-        # store). httpx multipart: pass them as ``data``.
-        r3 = await c.post(
-            upload_url,
-            data=upload_params,
-            files=files,
-        )
+        # Step 3 — upload the bytes. Per Zotero's documented protocol
+        # (https://www.zotero.org/support/dev/web_api/v3/file_upload),
+        # the response carries ``prefix`` and ``suffix`` byte strings to
+        # bracket the file bytes, plus the exact ``contentType`` for the
+        # request — not a multipart form. Send the raw concatenated body
+        # via PUT/POST as Zotero specifies.
+        prefix = creds.get("prefix") or ""
+        suffix = creds.get("suffix") or ""
+        upload_ct = creds.get("contentType") or "multipart/form-data"
+        prefix_b = prefix.encode("utf-8") if isinstance(prefix, str) else (prefix or b"")
+        suffix_b = suffix.encode("utf-8") if isinstance(suffix, str) else (suffix or b"")
+        body = prefix_b + data + suffix_b
+        r3 = await c.post(upload_url, content=body,
+                          headers={"Content-Type": upload_ct})
         if r3.status_code not in (200, 201, 204):
             raise ZoteroAPIError(
                 f"Zotero attach step3 (storage POST) returned "

@@ -380,3 +380,80 @@ async def test_upload_attachment_skips_when_md5_already_attached(
         )
     assert key == "EXISTING_ATT"
     assert not register_route.called
+
+
+@pytest.mark.asyncio
+async def test_upload_attachment_uses_if_match_and_prefix_suffix_protocol(
+    respx_mock, tmp_path
+):
+    """Live-discovered (2026-05-16): Zotero's file-upload protocol on
+    step 2 requires ``If-Match: <md5>`` (not ``If-None-Match: *``) — the
+    latter returns 412 because step 1 already records the md5 in the
+    shell data, which Zotero treats as "file is associated". Step 3
+    must use the documented ``prefix + body + suffix`` raw POST, not
+    multipart/form-data with a non-existent ``params`` key (that
+    returns 400 from S3 because ``key`` field is missing)."""
+    import hashlib
+
+    html_bytes = b"<html><body>x</body></html>"
+    html_path = tmp_path / "stub.html"
+    html_path.write_bytes(html_bytes)
+    md5 = hashlib.md5(html_bytes).hexdigest()
+
+    respx_mock.get(
+        "https://api.zotero.org/groups/999/items/PARENT/children"
+    ).mock(return_value=httpx.Response(200, json=[]))
+    respx_mock.post("https://api.zotero.org/groups/999/items").mock(
+        return_value=httpx.Response(200, json={
+            "successful": {"0": {"key": "NEW_ATT"}},
+            "failed": {},
+        })
+    )
+    # Step 2: capture the request to assert the precondition.
+    captured_headers: dict[str, str] = {}
+
+    def _step2(request):
+        captured_headers.update(request.headers)
+        return httpx.Response(200, json={
+            "url": "https://zoterofilestorage.s3.example.com/",
+            "contentType": "multipart/form-data; boundary=----X",
+            "prefix": "------X\r\nContent-Disposition: form-data; name=\"key\"\r\n\r\nfoo/bar\r\n------X\r\n",
+            "suffix": "\r\n------X--",
+            "uploadKey": "UPLOAD_KEY",
+        })
+
+    respx_mock.post(
+        "https://api.zotero.org/groups/999/items/NEW_ATT/file"
+    ).mock(side_effect=_step2)
+
+    # Step 3: S3-style POST. Capture body to verify prefix+bytes+suffix.
+    captured_body: dict[str, bytes] = {}
+
+    def _step3(request):
+        captured_body["body"] = request.content
+        return httpx.Response(204)
+
+    respx_mock.post("https://zoterofilestorage.s3.example.com/").mock(
+        side_effect=_step3
+    )
+
+    # Step 4: finalize — re-uses /file endpoint; mock already set above
+    # returns 200 (which is acceptable for finalize too).
+
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="cloud-key", library_id="999", library_type="group",
+            http_client=http,
+        )
+        key = await c.upload_attachment(
+            parent_item_key="PARENT", file_path=str(html_path),
+            filename="stub.html", content_type="text/html",
+        )
+    assert key == "NEW_ATT"
+    # Precondition assertion: If-Match: <our_md5>, NOT If-None-Match
+    assert captured_headers.get("if-match") == md5
+    assert "if-none-match" not in {k.lower() for k in captured_headers}
+    # Step 3 body assertion: prefix + bytes + suffix concatenation
+    assert html_bytes in captured_body["body"]
+    assert b"name=\"key\"" in captured_body["body"]  # prefix carries the S3 key field
+    assert captured_body["body"].endswith(b"------X--")
