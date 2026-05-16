@@ -78,3 +78,94 @@ async def test_list_collections_returns_tree(monkeypatch):
     assert len(out["collections"]) == 1  # only top-level
     assert out["collections"][0]["id"] == "AAA"
     assert out["collections"][0]["subcollections"][0]["id"] == "BBB"
+
+
+# --- zotero_get_collection_items ---
+
+@pytest.mark.asyncio
+async def test_get_collection_items_collection_not_found(monkeypatch):
+    import httpx
+    from perspicacite.integrations import zotero as zotero_mod
+
+    async def _bad(self, path, params=None):
+        raise httpx.HTTPStatusError(
+            "404", request=httpx.Request("GET", "http://x"), response=httpx.Response(404)
+        )
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "_paginated", _bad)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+    out = await _unwrap(mcp_server.zotero_get_collection_items)(collection_id="MISSING")
+    assert out["error"] == "COLLECTION_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_get_collection_items_returns_items_with_license(monkeypatch):
+    from perspicacite.integrations import zotero as zotero_mod
+    from perspicacite.integrations import zotero_license as lic_mod
+
+    async def _fake_items(self, coll_key, *, include_subcollections=True):
+        return [{
+            "key": "ITEM1",
+            "data": {
+                "DOI": "10.1234/open",
+                "title": "Open Paper",
+                "creators": [{"firstName": "A", "lastName": "Smith"}],
+                "date": "2024",
+                "abstractNote": "Abstract text",
+                "itemType": "journalArticle",
+                "tags": [{"tag": "open-access"}],
+            }
+        }]
+
+    async def _fake_classify(self, doi, *, zotero_item=None, http_client=None, **kw):
+        from perspicacite.integrations.zotero_license import LicenseInfo
+        return LicenseInfo(spdx="CC-BY-4.0", classification="permissive", policy="verbatim", source="crossref")
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "list_items_in_collection", _fake_items)
+    monkeypatch.setattr(lic_mod.LicenseClassifier, "classify", _fake_classify)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+
+    out = await _unwrap(mcp_server.zotero_get_collection_items)(collection_id="AAA")
+    assert "items" in out
+    assert len(out["items"]) == 1
+    item = out["items"][0]
+    assert item["doi"] == "10.1234/open"
+    assert item["license"]["classification"] == "permissive"
+    assert item["license"]["policy"] == "verbatim"
+    assert item["has_attachments"] is False
+    assert out["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_collection_items_cursor_pagination(monkeypatch):
+    from perspicacite.integrations import zotero as zotero_mod
+    from perspicacite.integrations import zotero_license as lic_mod
+    from perspicacite.integrations.zotero_license import LicenseInfo
+
+    all_items = [
+        {"key": f"I{i}", "data": {"DOI": f"10.0/{i}", "title": f"T{i}", "creators": [],
+          "date": "2024", "abstractNote": "", "itemType": "journalArticle", "tags": []}}
+        for i in range(3)
+    ]
+
+    async def _fake_items(self, coll_key, *, include_subcollections=True):
+        return all_items
+
+    async def _fake_classify(self, doi, **kw):
+        return LicenseInfo(spdx=None, classification="unknown", policy="reflavor", source="unknown")
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "list_items_in_collection", _fake_items)
+    monkeypatch.setattr(lic_mod.LicenseClassifier, "classify", _fake_classify)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+
+    page1 = await _unwrap(mcp_server.zotero_get_collection_items)(
+        collection_id="AAA", limit=2
+    )
+    assert len(page1["items"]) == 2
+    assert page1["next_cursor"] is not None
+
+    page2 = await _unwrap(mcp_server.zotero_get_collection_items)(
+        collection_id="AAA", limit=2, cursor=page1["next_cursor"]
+    )
+    assert len(page2["items"]) == 1
+    assert page2["next_cursor"] is None
