@@ -1588,9 +1588,14 @@ async def push_to_zotero(
                     if url:
                         entry["url"] = url
 
-                    # Step 2 (optional): PDF attachment — DOI route only.
-                    # URL-route items get HTML-fallback capture via Priority 3b
-                    # (see _maybe_attach_html below).
+                    # Step 2: attachments. Two independent paths:
+                    # - PDF attach (opt-in via attach_pdf, DOI route only).
+                    # - HTML attach: automatic for URL-route items (where
+                    #   the HTML is the only content available), or as a
+                    #   fallback for DOI-route items when the PDF is
+                    #   missing/too-large.
+                    pdf_path = None
+                    pdf_too_large = False
                     if attach_pdf and doi:
                         pdf_path = (
                             cached_pdf_path(doi, cache_dir) if cache_dir else None
@@ -1670,34 +1675,39 @@ async def push_to_zotero(
                             entry["attached_pdf"] = False
                             entry["pdf_attach_error"] = "no PDF available"
 
-                        # HTML-as-fallback (Priority 3b): triggered when
-                        # the PDF is missing OR exceeds the size cap.
-                        # Worse than a PDF, better than nothing.
-                        if pdf_path is None or pdf_too_large:
-                            try:
-                                from perspicacite.pipeline.download.html_capture import (
-                                    capture_landing_html,
+                    # HTML attach: always for URL-route items, or as a
+                    # fallback when the requested PDF couldn't be
+                    # attached. The same capture path handles both —
+                    # ``capture_landing_html`` falls back to a
+                    # bibliographic stub when the live page is blocked.
+                    need_html = (not doi) or (
+                        attach_pdf and (pdf_path is None or pdf_too_large)
+                    )
+                    if need_html:
+                        try:
+                            from perspicacite.pipeline.download.html_capture import (
+                                capture_landing_html,
+                            )
+                            html_attach = await capture_landing_html(
+                                doi=doi,
+                                landing_url=paper.get("url") or url,
+                                abstract=paper.get("abstract") or "",
+                                title=paper.get("title") or "",
+                                http_client=http_client,
+                                cache_dir=cache_dir,
+                            )
+                            if html_attach is not None:
+                                att_key = await zotero.upload_attachment(
+                                    parent_item_key=key,
+                                    file_path=str(html_attach.path),
+                                    filename=html_attach.path.name,
+                                    content_type="text/html",
                                 )
-                                html_attach = await capture_landing_html(
-                                    doi=doi,
-                                    landing_url=paper.get("url") or url,
-                                    abstract=paper.get("abstract") or "",
-                                    title=paper.get("title") or "",
-                                    http_client=http_client,
-                                    cache_dir=cache_dir,
-                                )
-                                if html_attach is not None:
-                                    att_key = await zotero.upload_attachment(
-                                        parent_item_key=key,
-                                        file_path=str(html_attach.path),
-                                        filename=html_attach.path.name,
-                                        content_type="text/html",
-                                    )
-                                    entry["attached_html"] = bool(att_key)
-                                    entry["html_source"] = html_attach.tier
-                                    entry["html_chars"] = html_attach.char_count
-                            except Exception as exc:
-                                entry["html_attach_error"] = str(exc)
+                                entry["attached_html"] = bool(att_key)
+                                entry["html_source"] = html_attach.tier
+                                entry["html_chars"] = html_attach.char_count
+                        except Exception as exc:
+                            entry["html_attach_error"] = str(exc)
 
                     # Step 3 (optional): supplementary attachments from capsule.
                     # DOI route only — URL-route items don't have a capsule path.
