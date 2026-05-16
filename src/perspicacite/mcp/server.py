@@ -147,6 +147,94 @@ def _json_error(message: str, **extra: Any) -> str:
     return json.dumps({"success": False, "error": message, **extra}, default=str)
 
 
+async def _resolve_push_input(
+    inp: dict, *, http_client: Any
+) -> tuple[dict, str, str]:
+    """Normalize a push_to_zotero input dict into a ``paper`` dict ready for
+    :meth:`ZoteroClient.create_item`.
+
+    Returns ``(paper_dict, normalized_doi, normalized_url)``.
+
+    Three routes:
+    - ``doi``: fetches metadata via the unified pipeline.
+    - ``url``: uses caller-supplied fields; mines OpenGraph / citation_*
+      meta tags from the page if title/authors are missing.
+    - ``bibtex``: parses a BibTeX string. Promotes ``doi`` (if any) into
+      the DOI route, else falls back to URL/title-only.
+    """
+    # BibTeX route: parse and recurse with the parsed dict.
+    if inp.get("bibtex"):
+        try:
+            import bibtexparser
+        except ImportError as exc:
+            raise RuntimeError(
+                "bibtexparser not installed; pip install bibtexparser"
+            ) from exc
+        bib = bibtexparser.loads(inp["bibtex"])
+        if not bib.entries:
+            raise RuntimeError("bibtex string contained no entries")
+        e = bib.entries[0]
+        promoted = {
+            "doi": (e.get("doi") or "").strip().rstrip(".") or None,
+            "url": e.get("url") or "",
+            "title": e.get("title", "").strip("{}"),
+            "year": e.get("year"),
+            "authors": [a.strip() for a in (e.get("author") or "").split(" and ") if a.strip()],
+            "journal": e.get("journal") or "",
+            "abstract": e.get("abstract") or "",
+        }
+        promoted = {k: v for k, v in promoted.items() if v}
+        return await _resolve_push_input(promoted, http_client=http_client)
+
+    # DOI route: full metadata + abstract fetch via the unified pipeline.
+    if inp.get("doi"):
+        from perspicacite.pipeline.download import retrieve_paper_content
+        doi = inp["doi"].strip().replace("https://doi.org/", "")
+        content = await retrieve_paper_content(
+            doi,
+            http_client=http_client,
+            pdf_parser=None,  # metadata-only here
+        )
+        paper: dict[str, Any] = dict(content.metadata or {})
+        paper["doi"] = doi
+        paper["abstract"] = content.abstract or paper.get("abstract")
+        # Caller-supplied fields take precedence over auto-discovered ones
+        for k in ("title", "authors", "year", "journal", "item_type",
+                   "url", "tags", "abstract", "repository", "archive_id"):
+            if inp.get(k):
+                paper[k] = inp[k]
+        url = paper.get("url") or ""
+        return paper, doi, url
+
+    # URL route: trust caller-supplied metadata; supplement with OG/citation_*.
+    if inp.get("url"):
+        url = inp["url"].strip()
+        paper = {
+            "url": url,
+            "title": inp.get("title") or "",
+            "authors": inp.get("authors") or [],
+            "year": inp.get("year"),
+            "abstract": inp.get("abstract") or "",
+            "item_type": inp.get("item_type"),
+            "tags": inp.get("tags") or [],
+            "repository": inp.get("repository") or "",
+            "website_title": inp.get("website_title") or "",
+        }
+        if not paper["title"]:
+            # Last-ditch: derive a title from the URL path so the Zotero
+            # item isn't blank.
+            from urllib.parse import urlparse
+            paper["title"] = (
+                urlparse(url).path.strip("/").split("/")[-1] or url
+            )
+        return paper, "", url
+
+    raise RuntimeError(
+        "push_to_zotero input requires one of: doi, url, bibtex; got keys="
+        + ",".join(sorted(inp.keys()))
+    )
+
+
 def _require_state() -> MCPState | str:
     """Check that MCP state is initialized. Returns state or error string."""
     if not mcp_state.initialized:
@@ -1253,50 +1341,101 @@ async def add_dois_to_kb(
 
 @mcp.tool()
 async def push_to_zotero(
-    dois: list[str] | str,
+    dois: list[str] | str | None = None,
+    items: list[dict] | None = None,
+    library_id: str | None = None,
+    collection_key: str | None = None,
     attach_pdf: bool = False,
     attach_supplementary: bool = False,
 ) -> str:
-    """Push one or more DOIs to the configured Zotero library.
+    """Push one or more papers to a Zotero library — by DOI, URL, or BibTeX.
 
     Fetches metadata via the unified pipeline and calls
-    :meth:`ZoteroClient.create_item` for each DOI. Skips duplicates
-    automatically (ZoteroClient checks by DOI before creating).
+    :meth:`ZoteroClient.create_item` for each item. Skips duplicates
+    automatically (by DOI when present, else by URL); the dedup is
+    immune to Zotero's eventually-consistent search index thanks to a
+    recent-items fallback scan.
 
-    Optionally attaches the cached PDF and/or supplementary files. The
-    PDF is sourced from ``pdf_download.cache_dir`` (see ``cache_pdfs``);
-    if no cached PDF exists we trigger a fetch via the unified pipeline
-    so the upload has something to attach. Supplementary attachment
-    requires the paper to already have a capsule with downloaded SI.
+    Three input routes (mix freely in ``items`` or use the DOI shortcut
+    ``dois`` for the legacy single-route call):
+
+    1. **DOI route** — ``{"doi": "10.xxxx/yyy"}`` (or just a bare string
+       in ``dois``). Fetches metadata + optionally PDF via the unified
+       pipeline; creates a ``journalArticle`` (or ``preprint`` for
+       ``10.48550/arXiv.*`` DOIs).
+
+    2. **URL route** — ``{"url": "https://example.com/...",
+       "title": "...", "authors": [...]}``. For pages without metadata
+       this is degraded — the caller is expected to supply at least a
+       title (the URL ingest pipeline in ``ingest_url`` will mine the
+       page for full metadata if needed). Creates a ``webpage`` item by
+       default; pass ``"item_type": "computerProgram"`` for GitHub
+       repos.
+
+    3. **BibTeX route** — ``{"bibtex": "@misc{key, title={...}, ...}"}``.
+       Parsed locally via bibtexparser; treated like the DOI route
+       when a ``doi`` field is present, else URL route.
+
+    Optionally attaches the cached PDF and/or supplementary files (only
+    works for DOI-route items today; URL-route items get HTML capture
+    via the upcoming ``ingest_url`` tool / Priority 3b HTML fallback).
 
     Cloud-only — the local desktop API rejects writes and attachment
     upload via the documented 3-step protocol. Group libraries also
     require the cloud API.
 
     Args:
-        dois: A single DOI string or a list of DOIs (max 100 per call).
-        attach_pdf: If True, upload the cached PDF as a child attachment.
+        dois: Legacy: a single DOI string or list of DOIs (max 100).
+            Convenience for the DOI-only call shape; equivalent to
+            passing ``items=[{"doi": ...}, ...]``.
+        items: Mixed list of input dicts. Each dict carries at least
+            one of: ``doi``, ``url``, ``bibtex``. Optional fields:
+            ``title``, ``authors``, ``year``, ``abstract``, ``journal``,
+            ``item_type``, ``repository``, ``archive_id``, ``url``,
+            ``tags``. Max 100 items per call.
+        library_id: Override ``config.yml`` ``zotero.library_id`` for
+            this call. Useful for multi-group pushes without restart.
+        collection_key: Override ``config.yml`` ``zotero.collection_key``.
+        attach_pdf: If True, upload the cached PDF as a child attachment
+            (DOI route only).
         attach_supplementary: If True, upload any
             ``data/capsules/<paper_id>/supplementary/files/*`` as
-            additional child attachments (only files already on disk).
+            additional child attachments.
 
     Returns:
         JSON ``{"created": [...], "skipped": [], "failed": [...]}`` where
-        each ``created`` entry includes ``{"doi", "key",
-        "attached_pdf"?, "attached_supplementary"?}``.
+        each entry carries the original input plus ``{"key": "...",
+        "attached_pdf"?, "attached_supplementary"?, "attached_html"?}``.
     """
     state = _require_state()
     if isinstance(state, str):
         return state
 
     cfg = getattr(state.config, "zotero", None)
-    if cfg is None or not cfg.enabled or not cfg.api_key or not cfg.library_id:
+    if cfg is None or not cfg.enabled or not cfg.api_key:
         return _json_error("zotero_not_configured")
+    # library_id / collection_key may come from the call or from config.
+    effective_library_id = library_id or cfg.library_id
+    effective_collection_key = (
+        collection_key if collection_key is not None else (cfg.collection_key or "")
+    )
+    if not effective_library_id:
+        return _json_error(
+            "library_id required (pass via argument or set zotero.library_id)"
+        )
 
-    if isinstance(dois, str):
-        dois = [dois]
-    if len(dois) > 100:
-        return _json_error("at most 100 DOIs per call")
+    # Normalize the two input shapes (dois shortcut, items list) into a
+    # uniform list of input dicts.
+    inputs: list[dict] = []
+    if items:
+        inputs.extend(items)
+    if dois is not None:
+        doi_list = [dois] if isinstance(dois, str) else dois
+        inputs.extend({"doi": d} for d in doi_list)
+    if not inputs:
+        return _json_error("either dois or items must be provided")
+    if len(inputs) > 100:
+        return _json_error("at most 100 items per call")
 
     pdf_config = state.config.pdf_download
     cache_dir = pdf_config.cache_dir if (pdf_config and pdf_config.cache_pdfs) else None
@@ -1318,34 +1457,45 @@ async def push_to_zotero(
         async with build_authenticated_client(cookies_path=cookies_path) as http_client:
             zotero = ZoteroClient(
                 api_key=cfg.api_key,
-                library_id=cfg.library_id,
+                library_id=effective_library_id,
                 library_type=cfg.library_type,
-                collection_key=cfg.collection_key,
+                collection_key=effective_collection_key,
                 base_url=getattr(cfg, "base_url", "") or None,
                 http_client=http_client,
             )
-            for raw_doi in dois:
-                doi = (raw_doi or "").strip().replace("https://doi.org/", "")
-                if not doi:
-                    continue
+            for inp in inputs:
+                # Resolve the input to a `paper` dict via the appropriate
+                # route (DOI / URL / BibTeX). Errors are recorded against
+                # the original input so the caller can correlate.
+                route_err: str | None = None
+                doi: str = ""
+                url: str = ""
+                paper: dict[str, Any] = {}
                 try:
-                    # Step 1: metadata-only fetch to know what to write.
-                    content = await retrieve_paper_content(
-                        doi,
-                        http_client=http_client,
-                        pdf_parser=None,  # metadata-only here
+                    paper, doi, url = await _resolve_push_input(
+                        inp, http_client=http_client
                     )
-                    paper: dict[str, Any] = dict(content.metadata or {})
-                    paper["doi"] = doi
-                    paper["abstract"] = content.abstract or paper.get("abstract")
+                except Exception as exc:
+                    route_err = str(exc)
+                if route_err is not None:
+                    failed.append({"input": inp, "reason": route_err})
+                    continue
+                identifier = doi or url or (paper.get("title") or "<no-id>")
+                try:
                     key = await zotero.create_item(paper)
                     if not key:
-                        failed.append({"doi": doi, "reason": "no key returned"})
+                        failed.append({"input": inp, "reason": "no key returned"})
                         continue
-                    entry: dict[str, Any] = {"doi": doi, "key": key}
+                    entry: dict[str, Any] = {"key": key, "identifier": identifier}
+                    if doi:
+                        entry["doi"] = doi
+                    if url:
+                        entry["url"] = url
 
-                    # Step 2 (optional): PDF attachment.
-                    if attach_pdf:
+                    # Step 2 (optional): PDF attachment — DOI route only.
+                    # URL-route items get HTML-fallback capture via Priority 3b
+                    # (see _maybe_attach_html below).
+                    if attach_pdf and doi:
                         pdf_path = (
                             cached_pdf_path(doi, cache_dir) if cache_dir else None
                         )
@@ -1380,9 +1530,36 @@ async def push_to_zotero(
                         else:
                             entry["attached_pdf"] = False
                             entry["pdf_attach_error"] = "no PDF available"
+                            # Priority 3b: HTML-as-fallback when PDF couldn't be obtained.
+                            # Worse than a PDF, better than nothing.
+                            try:
+                                from perspicacite.pipeline.download.html_capture import (
+                                    capture_landing_html,
+                                )
+                                html_attach = await capture_landing_html(
+                                    doi=doi,
+                                    landing_url=paper.get("url") or url,
+                                    abstract=paper.get("abstract") or "",
+                                    title=paper.get("title") or "",
+                                    http_client=http_client,
+                                    cache_dir=cache_dir,
+                                )
+                                if html_attach is not None:
+                                    att_key = await zotero.upload_attachment(
+                                        parent_item_key=key,
+                                        file_path=str(html_attach.path),
+                                        filename=html_attach.path.name,
+                                        content_type="text/html",
+                                    )
+                                    entry["attached_html"] = bool(att_key)
+                                    entry["html_source"] = html_attach.tier
+                                    entry["html_chars"] = html_attach.char_count
+                            except Exception as exc:
+                                entry["html_attach_error"] = str(exc)
 
                     # Step 3 (optional): supplementary attachments from capsule.
-                    if attach_supplementary:
+                    # DOI route only — URL-route items don't have a capsule path.
+                    if attach_supplementary and doi:
                         from pathlib import Path
                         si_dir = (
                             Path(state.config.capsule.root)
@@ -1413,7 +1590,7 @@ async def push_to_zotero(
 
                     created.append(entry)
                 except Exception as exc:
-                    failed.append({"doi": doi, "reason": str(exc)})
+                    failed.append({"input": inp, "reason": str(exc)})
 
         logger.info(
             "mcp_push_to_zotero",
@@ -1425,6 +1602,122 @@ async def push_to_zotero(
     except Exception as e:
         logger.error("mcp_push_to_zotero_error", error=str(e))
         return _json_error(f"Failed to push to Zotero: {e}")
+
+
+# =============================================================================
+# Tool 11b: ingest_url
+# =============================================================================
+
+
+@mcp.tool()
+async def ingest_url(
+    url: str,
+    push_to_zotero_collection: str | None = None,
+    library_id: str | None = None,
+    attach_html: bool = True,
+) -> str:
+    """Ingest a URL into Zotero (and optionally a KB) — HTML-first.
+
+    Closes the no-DOI gap for vendor docs (Anthropic blog posts, GitHub
+    READMEs, OpenReview entries, preprints.org pages, generic publisher
+    landing pages). Extracts metadata from the page's ``citation_*`` /
+    OpenGraph tags, plus URL-pattern-specific routes for GitHub and
+    OpenReview that use the publisher API directly.
+
+    When ``push_to_zotero_collection`` is set, a Zotero item is created
+    in that collection (under ``library_id`` or the configured library).
+    When ``attach_html`` is True (default), an HTML snapshot of the
+    landing page is captured and attached using the same three-tier
+    classifier as the PDF-fallback path (``full_text_html`` /
+    ``extended_abstract`` / ``bibliographic_stub``).
+
+    Args:
+        url: The page URL. Routes:
+            - ``github.com/<owner>/<repo>`` → repo + README via GitHub API.
+            - ``openreview.net/forum?id=*`` → note via OpenReview API.
+            - ``preprints.org/manuscript/*`` → preprint metadata via meta tags.
+            - everything else → generic ``citation_*`` / OG mining.
+        push_to_zotero_collection: Zotero collection key to drop the item
+            into. None = skip Zotero (extract metadata only).
+        library_id: Override ``zotero.library_id`` for this call.
+        attach_html: If True, also capture and attach an HTML snapshot.
+
+    Returns:
+        JSON ``{"url": ..., "item_type": ..., "title": ..., "doi": ...,
+        "zotero_key"?: ..., "attached_html"?: bool, "html_tier"?: ...}``
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    from perspicacite.pipeline.download.cookies import build_authenticated_client
+    from perspicacite.pipeline.download.url_extractors import extract_url
+    from perspicacite.pipeline.download.html_capture import capture_landing_html
+
+    pdf_config = state.config.pdf_download
+    cookies_path = pdf_config.cookies_path if pdf_config else None
+    cache_dir = pdf_config.cache_dir if (pdf_config and pdf_config.cache_pdfs) else None
+
+    async with build_authenticated_client(cookies_path=cookies_path) as http_client:
+        try:
+            paper = await extract_url(url, http_client=http_client)
+        except Exception as exc:
+            return _json_error(f"url_extraction_failed: {exc}")
+
+        result: dict[str, Any] = {
+            "url": url,
+            "item_type": paper.get("item_type"),
+            "title": paper.get("title"),
+            "doi": paper.get("doi") or "",
+            "ingest_format": paper.get("ingest_format"),
+        }
+
+        if push_to_zotero_collection:
+            cfg = getattr(state.config, "zotero", None)
+            if cfg is None or not cfg.enabled or not cfg.api_key:
+                return _json_error("zotero_not_configured")
+            effective_library_id = library_id or cfg.library_id
+            if not effective_library_id:
+                return _json_error("library_id required for Zotero push")
+            from perspicacite.integrations.zotero import ZoteroClient
+            zotero = ZoteroClient(
+                api_key=cfg.api_key,
+                library_id=effective_library_id,
+                library_type=cfg.library_type,
+                collection_key=push_to_zotero_collection,
+                base_url=getattr(cfg, "base_url", "") or None,
+                http_client=http_client,
+            )
+            try:
+                key = await zotero.create_item(paper)
+                result["zotero_key"] = key
+            except Exception as exc:
+                result["zotero_error"] = str(exc)
+
+            if attach_html and result.get("zotero_key"):
+                try:
+                    cap = await capture_landing_html(
+                        doi=paper.get("doi") or "",
+                        landing_url=url,
+                        abstract=paper.get("abstract") or "",
+                        title=paper.get("title") or "",
+                        http_client=http_client,
+                        cache_dir=cache_dir,
+                    )
+                    if cap is not None:
+                        att_key = await zotero.upload_attachment(
+                            parent_item_key=result["zotero_key"],
+                            file_path=str(cap.path),
+                            filename=cap.path.name,
+                            content_type="text/html",
+                        )
+                        result["attached_html"] = bool(att_key)
+                        result["html_tier"] = cap.tier
+                        result["html_chars"] = cap.char_count
+                except Exception as exc:
+                    result["html_attach_error"] = str(exc)
+
+        return _json_ok(result)
 
 
 # =============================================================================
