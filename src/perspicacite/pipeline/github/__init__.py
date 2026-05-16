@@ -11,6 +11,15 @@ The fetcher's public symbols are re-exported here so callers can write::
 instead of digging into the ``.fetcher`` submodule.
 """
 
+from perspicacite.pipeline.github.bundle import (
+    DEFAULT_EXCLUDE_GLOBS,
+    DEFAULT_INCLUDE_GLOBS,
+    BundleManifest,
+    ContentSpec,
+    LinkBag,
+    PaperRef,
+    extract_links_from_text,
+)
 from perspicacite.pipeline.github.fetcher import (
     FetcherError,
     GitHubFetcher,
@@ -20,9 +29,16 @@ from perspicacite.pipeline.github.fetcher import (
 )
 
 __all__ = [
+    "DEFAULT_EXCLUDE_GLOBS",
+    "DEFAULT_INCLUDE_GLOBS",
+    "BundleManifest",
+    "ContentSpec",
     "FetcherError",
     "GitHubFetcher",
+    "LinkBag",
+    "PaperRef",
     "RateLimitedError",
     "RepoRef",
+    "extract_links_from_text",
     "parse_repo_url",
 ]
