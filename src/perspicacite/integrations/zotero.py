@@ -506,12 +506,20 @@ class ZoteroClient:
         ]
 
     async def download_attachment_bytes(self, attachment_key: str) -> bytes | None:
-        """Return raw file bytes for an attachment. None on 404/error/empty."""
+        """Return raw file bytes for an attachment. None on 404/error/empty.
+
+        Zotero's ``/items/<key>/file`` endpoint returns a 302 to S3 (for
+        cloud-hosted attachments) or 200 with the bytes inline (for the
+        local desktop API). ``follow_redirects=True`` is required for
+        the cloud path — without it, we'd get the 302 with an empty
+        body and silently return None.
+        """
         c = await self._client()
         try:
             r = await c.get(
                 f"{self._base()}/items/{attachment_key}/file",
                 headers=self._headers(),
+                follow_redirects=True,
             )
         except httpx.HTTPError:
             return None
