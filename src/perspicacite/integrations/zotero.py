@@ -513,6 +513,13 @@ class ZoteroClient:
         local desktop API). ``follow_redirects=True`` is required for
         the cloud path — without it, we'd get the 302 with an empty
         body and silently return None.
+
+        Local-API fallback: Zotero desktop's local API returns 200 with
+        ``Content-Length: 0`` for group-library attachments whose bytes
+        live only in Zotero cloud storage (it serves user-library files
+        via ``file://`` redirect, which httpx won't follow either). When
+        a local call yields empty content, retry against the cloud REST
+        API if we have an api_key.
         """
         c = await self._client()
         try:
@@ -521,6 +528,27 @@ class ZoteroClient:
                 headers=self._headers(),
                 follow_redirects=True,
             )
+        except httpx.HTTPError:
+            r = None
+        if r is not None and r.status_code == 200 and r.content:
+            return r.content
+        if self.is_local and self.api_key:
+            return await self._download_attachment_bytes_via_cloud(attachment_key)
+        return None
+
+    async def _download_attachment_bytes_via_cloud(
+        self, attachment_key: str
+    ) -> bytes | None:
+        """Cloud-REST fallback for ``download_attachment_bytes``.
+
+        Builds a cloud URL from ``library_type``/``library_id`` and follows
+        the S3 redirect. Used when the configured base_url is the local
+        desktop API but the bytes live in Zotero cloud (group libraries
+        with files only on zotero.org)."""
+        c = await self._client()
+        url = f"{ZOTERO_API}/{self.library_type}/{self.library_id}/items/{attachment_key}/file"
+        try:
+            r = await c.get(url, headers=self._headers(), follow_redirects=True)
         except httpx.HTTPError:
             return None
         if r.status_code != 200 or not r.content:
