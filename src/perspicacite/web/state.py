@@ -144,8 +144,76 @@ class AppState:
         self.pdf_parser = PDFParser()
         logger.info("PDF downloader and parser initialized")
 
+        # Cookie freshness check (Priority 7): surface a warning at boot
+        # if any configured paywall domain has expired or missing cookies,
+        # so the user knows to re-run `perspicacite import-browser-cookies`
+        # *before* the first paywall hit (rather than silently getting
+        # HTML access-check pages back from the publisher).
+        _warn_stale_cookies(
+            cookies_path=getattr(config.pdf_download, "cookies_path", None),
+            cookie_domains=getattr(config.pdf_download, "cookie_domains", []) or [],
+        )
+
         self.initialized = True
         logger.info("System initialization complete!")
+
+
+def _warn_stale_cookies(*, cookies_path: str | None, cookie_domains: list[str]) -> None:
+    """Log a warning per stale cookie domain at startup.
+
+    Non-fatal — the server boots either way. Three reasons we warn at
+    boot rather than at first download attempt:
+
+    1. The first download attempt could be hours later; the failure
+       mode (publisher returns HTML access-check page instead of PDF)
+       is non-obvious, easy to attribute to "the script is broken".
+    2. Re-importing cookies takes 5 seconds; better to know upfront.
+    3. Boot logs are the natural place to surface integration-health
+       state, and the operator sees them every restart.
+    """
+    if not cookies_path or not cookie_domains:
+        return
+    from pathlib import Path
+    from http.cookiejar import MozillaCookieJar
+    from perspicacite.pipeline.download.cookies import (
+        check_cookie_freshness_for_domains,
+    )
+
+    p = Path(cookies_path).expanduser()
+    if not p.exists():
+        logger.warning(
+            "pdf_cookies_missing — paywalled-publisher fetches will fail. "
+            "Run `perspicacite import-browser-cookies` to fix.",
+            extra={"cookies_path": str(p)},
+        )
+        return
+    try:
+        jar = MozillaCookieJar(str(p))
+        jar.load(ignore_discard=True, ignore_expires=True)
+    except Exception as exc:
+        logger.warning(
+            "pdf_cookies_load_failed at startup; freshness check skipped",
+            extra={"path": str(p), "error": str(exc)},
+        )
+        return
+    report = check_cookie_freshness_for_domains(jar, cookie_domains)
+    stale = [w for w in report if w.status != "ok"]
+    if not stale:
+        logger.info(
+            "pdf_cookies_health_ok",
+            extra={"path": str(p), "domains_checked": len(report)},
+        )
+        return
+    for w in stale:
+        logger.warning(
+            "pdf_cookies_stale",
+            extra={
+                "domain": w.domain,
+                "status": w.status,
+                "matched_hosts": w.matched_hosts,
+                "advice": w.advice,
+            },
+        )
 
 
 app_state = AppState()

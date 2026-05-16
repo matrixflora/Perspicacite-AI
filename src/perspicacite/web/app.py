@@ -40,6 +40,7 @@ from perspicacite.web.routers import (
     health as health_router,
     jobs as jobs_router,
     kb as kb_router,
+    pdf_dropzone as pdf_dropzone_router,
     survey as survey_router,
     zotero as zotero_router,
     zotero_ingest as zotero_ingest_router,
@@ -81,6 +82,7 @@ app.include_router(survey_router.router)
 app.include_router(jobs_router.router)
 app.include_router(zotero_router.router)
 app.include_router(zotero_ingest_router.router)
+app.include_router(pdf_dropzone_router.router)
 
 
 @app.get("/", response_class=HTMLResponse)
