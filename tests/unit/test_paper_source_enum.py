@@ -29,3 +29,9 @@ def test_enum_constructs_from_string_for_chroma_roundtrip():
     assert PaperSource("arxiv") is PaperSource.ARXIV
     assert PaperSource("crossref") is PaperSource.CROSSREF
     assert PaperSource("semantic_scholar") is PaperSource.SEMANTIC_SCHOLAR
+
+
+def test_skill_bundle_enum_value_exists():
+    """SKILL_BUNDLE was added 2026-05-15 for ASB ingest. Pin the value."""
+    from perspicacite.models.papers import PaperSource
+    assert PaperSource.SKILL_BUNDLE.value == "skill_bundle"

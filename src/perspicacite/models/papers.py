@@ -15,6 +15,8 @@ class PaperSource(str, Enum):
     Audit 2026-05-15 finding #5 added explicit database sources
     (OPENALEX, PUBMED, ARXIV, CROSSREF). The 2026-05-15 follow-up
     migration added SEMANTIC_SCHOLAR for direct S2 API hits.
+    Added 2026-05-15: SKILL_BUNDLE for ASB (Agent Skill Bundle) ingest —
+    chunks derived from skills and workflow cards rather than literature.
     """
 
     BIBTEX = "bibtex"
@@ -28,6 +30,9 @@ class PaperSource(str, Enum):
     ARXIV = "arxiv"
     CROSSREF = "crossref"
     SEMANTIC_SCHOLAR = "semantic_scholar"
+    # Added 2026-05-15: tags chunks from ASB skill/card ingest so downstream
+    # consumers can distinguish them from literature-derived chunks.
+    SKILL_BUNDLE = "skill_bundle"
 
 
 class Author(BaseModel):
