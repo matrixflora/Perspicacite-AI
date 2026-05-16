@@ -1,7 +1,7 @@
-# Session handoff — 2026-05-16 backlog drain (ASB metadata wiring + GitHub/skill-bundle ingest)
+# Session handoff — 2026-05-16 backlog drain (ASB metadata wiring + GitHub/skill-bundle ingest + arXiv/PMC resolver + embedding-conflict detection)
 
-**Branch:** `claude/trusting-aryabhata-92508b` (worktree) — 49 commits ahead of `main`.
-**HEAD:** `f13deab docs(roadmap): GitHub + skill-bundle ingest shipped (2026-05-15)`
+**Branch:** `claude/trusting-aryabhata-92508b` (worktree) — 52 commits ahead of `main`.
+**HEAD:** `3d808d0 test(mcp): extend SLOW_TOOLS registry with ingest_asb_run + github tools`
 **Push status:** nothing pushed (per standing workflow). User fast-forwards `main` locally.
 **Working tree:** clean.
 **Companion handoff:** `docs/superpowers/handoffs/2026-05-15-master-execution-handoff.md` (the previous session's 26-task master plan).
@@ -44,16 +44,29 @@ Per the parent plan `docs/superpowers/plans/2026-05-15-github-skill-bundle-inges
 - `869b306` **feat(github): emit external_link KB-log events for non-paper URLs** (Task 9) — extended `EventKind` Literal with `"external_link"`; `BundleManifest.collect_external_links() -> LinkBag`; `IngestSummary.external_links_logged: int`; emitted with `extra={"url", "category": "dataset"|"tool"}`.
 - `f13deab` **docs(roadmap): GitHub + skill-bundle ingest shipped (2026-05-15)** (Task 10) — Wave 4.6 ✅; this commit closes the plan.
 
+### Sub-project 3 — arXiv/PMC resolver for skill-bundle linked papers (1 commit)
+
+Closes a P1 backlog item from the post-github-plan handoff. Previously arXiv and PMC IDs from `bundle.yml`/README were surfaced in `IngestSummary.linked_papers_skipped_non_doi` but never auto-routed; only DOIs went through `ingest_dois_into_kb`. The new resolvers convert arXiv/PMC → DOI so they ingest through the existing path.
+
+- `6d0d3d2` **feat(pipeline): arXiv/PMC → DOI resolvers + auto-ingest in skill-bundle path** — new `src/perspicacite/pipeline/external_id_resolver.py` with `resolve_arxiv_to_doi` (OpenAlex `/works/doi:10.48550/arxiv.<id>` short-circuit, then arXiv API title + OpenAlex `title.search` fallback) and `resolve_pmc_to_doi` (NCBI `idconv/v1.0/`). `github_kb._route_linked_papers` partitions refs, runs resolvers on arXiv/PMC, dedups, populates new `IngestSummary.linked_papers_resolved_via_external_id` field. 9 unit tests + 1 integration test.
+
+### Sub-project 4 — embedding-model conflict detection (2 commits)
+
+Closes the other P1 backlog item from the handoff. Today, all KB-creation sites silently accept "KB exists with different embedding model" — a multi-KB query against incompatible KBs fails surprisingly far downstream. Now caught at ingest time with a clear error.
+
+- `1e0d76d` **feat(rag): embedding-model conflict detection at KB creation** — new `src/perspicacite/rag/kb_compat.py` with `EmbeddingModelConflictError(ValueError)` + `check_embedding_compat_for_ingest(*, kb_meta, embedding_service)`. Wired into `search_to_kb._create_kb_if_missing` (Site A; covers `_make_or_get_kb` via delegation), `github_kb._add_papers_to_kb` (Site C), `ingest_dois_into_kb` (bonus — same vulnerability surface). Best-effort: no-op when either side lacks a model_name. 8 unit tests + 5 integration tests.
+- `3d808d0` **test(mcp): extend SLOW_TOOLS registry with ingest_asb_run + github tools** — P2 housekeeping: the central `SLOW_TOOLS` list in `tests/unit/test_mcp_latency_docstrings.py` was missing entries for `ingest_asb_run`, `ingest_github_repo`, `ingest_skill_bundle`. All three already have `**Latency:**` docstrings; this just closes the registry-drift gap flagged in the Task 7 code review.
+
 ---
 
 ## Test counts
 
 ```
 PYTHONPATH=src pytest tests/unit tests/integration --ignore=tests/integration/test_provider_matrix.py -q
-1650 passed, 6 skipped, 220 warnings in 43.77s
+1673 passed, 6 skipped, 276 warnings in 43.38s
 ```
 
-- **+164 tests added** this session across the two sub-projects.
+- **+187 tests added** this session across the four sub-projects (164 first round + 10 arXiv/PMC + 13 embedding-conflict).
 - **6 skips** = 1 ASB e2e (env-gated `PERSPICACITE_E2E_ASB`) + pre-existing skips.
 - **No new failures.** The 2 pre-existing perf-baseline flakes (`test_perf_baseline`, `test_perf_baseline_llm`) appear to have stabilized in this run — they're wall-clock-sensitive and pass on average.
 - **Provider matrix** (`test_provider_matrix.py::test_liveness_*`) excluded as before.
@@ -64,15 +77,18 @@ PYTHONPATH=src pytest tests/unit tests/integration --ignore=tests/integration/te
 
 ### P1 — Implementation, design decisions still needed
 
-- **arXiv / PMC auto-ingest in linked-papers.** Currently the orchestrator routes only DOIs through `ingest_dois_into_kb`. arXiv and PMC IDs are surfaced in `IngestSummary.linked_papers_skipped_non_doi` but not auto-converted. Needs an arxiv→DOI resolver (use OpenAlex `external_ids.arxiv` lookup or arXiv API metadata) and PMC→DOI lookup (`europepmc` API). Plan + ~2 tasks of subagent-driven work.
-- **Embedding-model conflict detection on KB creation.** All KB-creation sites (`ingest_dois_into_kb._create_kb_if_missing`, `pipeline/asb/run_ingest._make_or_get_kb`, `pipeline/github_kb._create_kb_if_missing`) silently accept "KB exists with different embedding model" — a multi-KB query against incompatible KBs will fail surprisingly far downstream. Standardise across the 3 sites + add a clear ValueError at create time.
+**(P1 backlog from the original handoff is now drained. Two items shipped this session — see Sub-projects 3 and 4 above.)**
+
+New P1 candidates surfaced by recent reviews:
+
+- **`cache_max_mb` is dead.** `GitHubConfig.cache_max_mb` is configured but no eviction logic uses it. Either implement size-based eviction in `pipeline/github/fetcher.py` (probably an LRU on cache_dir/<sha>/ entries) or rename/remove (operator doc references the knob). Touched by Task 2 code review.
 
 ### P2 — Smaller / less-blocking
 
 - **pathspec `gitwildmatch` deprecation.** `pipeline/github/walk.py` uses `pathspec.PathSpec.from_lines("gitwildmatch", patterns)`; pathspec 0.12 deprecates this in favour of `gitignore` (functionally identical for this use case). Switch when convenient; tests already cover the behaviour.
-- **`_TOOL_NAMES`/`_TOOL_ARGS` / `SLOW_TOOLS` registry drift.** `tests/unit/test_mcp_latency_docstrings.py::SLOW_TOOLS` doesn't include `ingest_asb_run` or the two new `ingest_github_repo` / `ingest_skill_bundle` tools — the per-tool docstring test covers it locally but the central registry is incomplete. Adding the entries closes the loop.
-- **`cache_max_mb` is dead.** `GitHubConfig.cache_max_mb` is configured but no eviction logic uses it. Either implement size-based eviction or rename/remove (operator doc references the knob).
 - **`ChunkMetadata.paper_metadata_json` size.** JSON-encoded blob is stored on EVERY chunk of a paper (currently the same payload for all chunks). For huge ASB payloads on big papers, that's measurable storage. Worth a Wave 8 audit; for now the size is bounded by `extra="allow"` ParsedCard models so it's tractable.
+- **Resolver-output dataclass.** `_route_linked_papers` now returns a 3-tuple `(added, skipped, resolved_count)`. If a fourth counter ever lands (e.g. resolution-failure rate), this should become a dataclass per Task 5/arxiv reviewer notes.
+- **`title.search` URL-encoding in `external_id_resolver`.** The OpenAlex `title.search:"<title>"` filter is built via f-string interpolation. Vanishingly rare to hit a problem in practice (arXiv titles don't contain `?` or `&`), but worth URL-quoting + escaping internal `"` for hardness.
 
 ### P3 — Larger, needs brainstorm
 
@@ -171,8 +187,8 @@ A conservative first move: fast-forward `main` to `f13deab`, push, tag the relea
 
 ## Effort summary
 
-- **Total commits this session:** 22 (12 features, 5 fixes, 3 refactors, 2 docs/plan + roadmap).
-- **New source modules:** 7 (`pipeline/github/{__init__,fetcher,bundle,walk,chunk_producer}.py`, `pipeline/github_kb.py`, `rag/paper_metadata_codec.py`).
-- **New test files:** 11 (`test_chunk_metadata_round_trip.py`, `test_source_reference_metadata.py`, `test_paper_metadata_codec.py`, `test_chat_asb_metadata_sse.py`, `test_mcp_asb_metadata.py`, `test_search_filters.py`, `test_github_fetcher.py`, `test_bundle_manifest.py`, `test_github_walk.py`, `test_github_chunk_producer.py`, `test_github_kb_e2e.py`, `test_cli_github_commands.py`, `test_mcp_github_tools.py`, `test_kb_log_external_links.py`).
+- **Total commits this session:** 25 (15 features, 6 fixes, 3 refactors, 3 docs/plan + roadmap + handoff/registry).
+- **New source modules:** 9 (`pipeline/github/{__init__,fetcher,bundle,walk,chunk_producer}.py`, `pipeline/github_kb.py`, `rag/paper_metadata_codec.py`, `pipeline/external_id_resolver.py`, `rag/kb_compat.py`).
+- **New test files:** 13 (`test_chunk_metadata_round_trip.py`, `test_source_reference_metadata.py`, `test_paper_metadata_codec.py`, `test_chat_asb_metadata_sse.py`, `test_mcp_asb_metadata.py`, `test_search_filters.py`, `test_github_fetcher.py`, `test_bundle_manifest.py`, `test_github_walk.py`, `test_github_chunk_producer.py`, `test_github_kb_e2e.py`, `test_cli_github_commands.py`, `test_mcp_github_tools.py`, `test_kb_log_external_links.py`, `test_external_id_resolver.py`, `test_kb_compat.py`).
 - **New docs:** 2 (`docs/superpowers/plans/2026-05-16-asb-metadata-wiring.md`, `docs/github-skill-bundle-ingest-2026-05-15.md`).
-- **Lines added (approx):** ~3000 source + ~3500 test + ~600 docs.
+- **Lines added (approx):** ~3200 source + ~3700 test + ~600 docs.
