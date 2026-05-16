@@ -81,3 +81,52 @@ def test_search_two_pass_exposes_decoded_paper_metadata():
     r0 = results[0]
     assert "paper_metadata" in r0, f"missing paper_metadata key in {list(r0)}"
     assert r0["paper_metadata"]["skill_id"] == "abc"
+
+
+def test_search_two_pass_decodes_paper_metadata_via_peek_row():
+    """When no vector hit exists, ``search_two_pass`` resolves paper metadata via
+    ``peek_paper_metadata_row`` (forced_paper_ids / merged-scope candidates branch).
+    The decoded ``paper_metadata`` must still appear on the result dict."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase, KnowledgeBaseConfig
+    from perspicacite.rag.query_scope import PaperScopeResult
+
+    payload = {"content_kind": "workflow_card", "task_id": "task_007", "tools": ["t1"]}
+    # Raw chroma metadata row (flat dict, as stored) — including the JSON blob.
+    peek_row = {
+        "paper_id": "asb_skill:peeked",
+        "chunk_index": 0,
+        "source": "skill_bundle",
+        "title": "Peeked Skill",
+        "authors": None,
+        "year": None,
+        "doi": None,
+        "paper_metadata_json": json.dumps(payload),
+    }
+
+    fake_vs = MagicMock()
+    # Vector search returns no hits — forces the forced_paper_ids branch.
+    fake_vs.search = AsyncMock(return_value=[])
+    fake_vs.peek_paper_metadata_row = AsyncMock(return_value=peek_row)
+    fake_vs.get_chunks_by_paper_ids = AsyncMock(return_value=[
+        {"paper_id": "asb_skill:peeked", "chunk_index": 0, "text": "body text"}
+    ])
+
+    fake_emb = MagicMock()
+    fake_emb.embed = AsyncMock(return_value=[[0.0] * 8])
+
+    dkb = DynamicKnowledgeBase(fake_vs, fake_emb, config=KnowledgeBaseConfig(vector_size=8))
+    dkb.collection_name = "test"
+    dkb._initialized = True
+
+    scope = PaperScopeResult(forced_paper_ids=["asb_skill:peeked"], max_papers=1)
+    results = asyncio.run(dkb.search_two_pass("anything", top_k=5, paper_scope=scope))
+
+    assert results, "expected at least one result via peek_paper_metadata_row path"
+    fake_vs.peek_paper_metadata_row.assert_awaited()
+    r0 = results[0]
+    assert r0["paper_id"] == "asb_skill:peeked"
+    assert "paper_metadata" in r0, f"missing paper_metadata key in {list(r0)}"
+    assert r0["paper_metadata"]["task_id"] == "task_007"
+    assert r0["paper_metadata"]["content_kind"] == "workflow_card"
