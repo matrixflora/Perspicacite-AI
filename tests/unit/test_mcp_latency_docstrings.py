@@ -20,6 +20,10 @@ SLOW_TOOLS = [
     "fetch_paper_resources",
     "fetch_supplementary",
     "enrich_kb_from_cite_graph_tool",
+    # 2026-05-16: ASB run ingest + github/skill-bundle ingest
+    "ingest_asb_run",
+    "ingest_github_repo",
+    "ingest_skill_bundle",
 ]
 
 
