@@ -126,6 +126,7 @@ packages_to_use/
 !docs/guides/*.md
 !docs/reference/*.md
 !docs/development/*.md
+!docs/handoffs/*.md
 agenticRAG_improvement_plan.txt
 
 # Image files (except logo/screenshots)
