@@ -155,6 +155,31 @@ async def test_llm_correction_falls_through_on_llm_exception():
 # ---------------------------------------------------------------------------
 
 
+def _install_fake_youtube_api(monkeypatch, snippets):
+    """Helper: monkeypatch ``youtube_transcript_api`` with a deterministic
+    fake that returns the given snippets."""
+    class FakeFetched:
+        pass
+    fetched = FakeFetched()
+    fetched.snippets = snippets
+
+    class FakeApi:
+        def fetch(self, vid):
+            return fetched
+
+    import sys
+    import types
+    fake_mod = types.ModuleType("youtube_transcript_api")
+    fake_mod.YouTubeTranscriptApi = FakeApi
+    monkeypatch.setitem(sys.modules, "youtube_transcript_api", fake_mod)
+
+
+class _FakeSnip:
+    def __init__(self, text, start):
+        self.text = text
+        self.start = start
+
+
 @pytest.mark.asyncio
 async def test_fetch_youtube_transcript_renders_markdown(respx_mock, monkeypatch):
     """Full path: oEmbed metadata + mocked transcript API → markdown."""
@@ -164,27 +189,11 @@ async def test_fetch_youtube_transcript_renders_markdown(respx_mock, monkeypatch
             "author_name": "Cool Channel",
         })
     )
-
-    class FakeSnip:
-        def __init__(self, text, start):
-            self.text = text
-            self.start = start
-    class FakeFetched:
-        snippets = [
-            FakeSnip("Hello and welcome", 0.0),
-            FakeSnip("to the talk", 5.0),
-            FakeSnip("In the next part", 35.0),
-        ]
-    class FakeApi:
-        def fetch(self, vid):
-            assert vid == "AbCdEfGhIjK"
-            return FakeFetched()
-
-    import sys
-    import types
-    fake_mod = types.ModuleType("youtube_transcript_api")
-    fake_mod.YouTubeTranscriptApi = FakeApi
-    monkeypatch.setitem(sys.modules, "youtube_transcript_api", fake_mod)
+    _install_fake_youtube_api(monkeypatch, [
+        _FakeSnip("Hello and welcome", 0.0),
+        _FakeSnip("to the talk", 5.0),
+        _FakeSnip("In the next part", 35.0),
+    ])
 
     async with httpx.AsyncClient() as http:
         md, title = await fetch_youtube_transcript(
@@ -199,6 +208,97 @@ async def test_fetch_youtube_transcript_renders_markdown(respx_mock, monkeypatch
     assert "Hello and welcome to the talk" in md
     assert "[00:35]" in md
     assert "In the next part" in md
+
+
+@pytest.mark.asyncio
+async def test_uncorrected_transcript_carries_warning_header(
+    respx_mock, monkeypatch,
+):
+    """Default (``correct_with_llm=False``) must prepend the
+    ``⚠️ Auto-generated`` warning + one-sentence context, so chunks
+    flowing into the KB inherit the "may be garbled" flag."""
+    respx_mock.get(url__regex=r"https://www\.youtube\.com/oembed.*").mock(
+        return_value=httpx.Response(200, json={
+            "title": "MS/MS Library Cleanup",
+            "author_name": "Dorrestein Lab",
+        })
+    )
+    _install_fake_youtube_api(monkeypatch, [
+        _FakeSnip("structure mast example", 0.0),
+    ])
+    async with httpx.AsyncClient() as http:
+        md, _t = await fetch_youtube_transcript(
+            "https://youtu.be/AbCdEfGhIjK",
+            http_client=http,
+            llm_client=None,
+            correct_with_llm=False,
+        )
+    assert "Auto-generated YouTube transcript" in md
+    assert "MS/MS Library Cleanup" in md
+    assert "Dorrestein Lab" in md
+    # Auto-captions get the alarming emoji prefix; corrected captions
+    # do not.
+    assert "⚠️" in md or "Auto-generated" in md
+
+
+@pytest.mark.asyncio
+async def test_corrected_transcript_uses_softer_note(
+    respx_mock, monkeypatch,
+):
+    """When ``correct_with_llm=True`` AND the LLM actually changed
+    something, the header switches to the milder
+    ``LLM-corrected auto-captions`` form."""
+    respx_mock.get(url__regex=r"https://www\.youtube\.com/oembed.*").mock(
+        return_value=httpx.Response(200, json={
+            "title": "Talk",
+            "author_name": "Channel",
+        })
+    )
+    _install_fake_youtube_api(monkeypatch, [
+        _FakeSnip("strukshur mast", 0.0),
+    ])
+
+    class FakeLLM:
+        async def complete(self, messages, **kw):
+            return "[00:00] StructureMASST"
+
+    async with httpx.AsyncClient() as http:
+        md, _t = await fetch_youtube_transcript(
+            "https://youtu.be/AbCdEfGhIjK",
+            http_client=http,
+            llm_client=FakeLLM(),
+            correct_with_llm=True,
+        )
+    assert "LLM-corrected auto-captions" in md
+    assert "StructureMASST" in md
+    assert "⚠️" not in md  # softer note has no warning emoji
+
+
+@pytest.mark.asyncio
+async def test_correct_with_llm_false_does_not_call_llm(
+    respx_mock, monkeypatch,
+):
+    """Cost guard: with ``correct_with_llm=False`` (default), the LLM
+    client's complete() must not be called even when one is provided."""
+    respx_mock.get(url__regex=r"https://www\.youtube\.com/oembed.*").mock(
+        return_value=httpx.Response(200, json={"title": "T", "author_name": "C"})
+    )
+    _install_fake_youtube_api(monkeypatch, [_FakeSnip("hi", 0.0)])
+
+    call_count = {"n": 0}
+    class CountingLLM:
+        async def complete(self, messages, **kw):
+            call_count["n"] += 1
+            return "[00:00] hi"
+
+    async with httpx.AsyncClient() as http:
+        await fetch_youtube_transcript(
+            "https://youtu.be/AbCdEfGhIjK",
+            http_client=http,
+            llm_client=CountingLLM(),
+            correct_with_llm=False,
+        )
+    assert call_count["n"] == 0
 
 
 @pytest.mark.asyncio

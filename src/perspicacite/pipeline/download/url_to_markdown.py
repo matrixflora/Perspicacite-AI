@@ -163,6 +163,7 @@ async def fetch_url_as_markdown(
     *,
     http_client: httpx.AsyncClient | None = None,
     llm_client: Any | None = None,
+    youtube_correct: bool = False,
 ) -> tuple[str, str]:
     """Fetch ``url`` and return ``(markdown_text, title)`` for KB ingest.
 
@@ -173,9 +174,10 @@ async def fetch_url_as_markdown(
     - **YouTube videos** ``youtube.com/watch?v=...`` /
       ``youtu.be/...`` → public transcript (manual or auto-captions)
       via ``youtube-transcript-api``. Requires the ``[youtube-ingest]``
-      extra. When ``llm_client`` is provided, the transcript is
-      LLM-corrected using the video title as context (jargon-heavy
-      videos benefit a lot — "MS/MS" stays "MS/MS").
+      extra. LLM correction is **opt-in** via ``youtube_correct=True``
+      (cost concern on long videos). When skipped, a warning header
+      is prepended to the markdown so downstream chunks carry the
+      "may be garbled" signal.
     - **Everything else** → HTML via trafilatura (or BS4 fallback).
 
     Raises ``httpx.HTTPError`` / ``ValueError`` for unreachable URLs
@@ -196,6 +198,7 @@ async def fetch_url_as_markdown(
         if is_youtube_url(url):
             return await fetch_youtube_transcript(
                 url, http_client=client, llm_client=llm_client,
+                correct_with_llm=youtube_correct,
             )
 
         gh = _parse_github_repo(url)
