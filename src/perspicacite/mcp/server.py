@@ -2543,6 +2543,153 @@ async def zotero_get_paper_resources(
 
 
 # =============================================================================
+# Tool 16: zotero_ingest_collection_to_kb
+# =============================================================================
+
+# Strong references to background tasks (prevent GC before completion)
+_zotero_ingest_tasks: set = set()
+
+
+@mcp.tool()
+async def zotero_ingest_collection_to_kb(
+    collection_id: str,
+    kb_name: str | None = None,
+    library_id: str | None = None,
+    force_reingest: bool = False,
+) -> dict:
+    """Ingest a Zotero collection into a Perspicacité KB.
+
+    If the server has a job registry (running under the full web server),
+    the ingest runs as a background task and the call returns immediately
+    with a ``job_id`` and ``poll_url``. Otherwise the ingest runs inline
+    and the finished result is returned directly.
+
+    Args:
+        collection_id: Zotero collection key (e.g. "ABC123").
+        kb_name: KB name override; defaults to a sanitized version of the
+            collection name.
+        library_id: Override the configured library_id.
+        force_reingest: Re-embed papers already in the KB (default False).
+
+    Returns (async mode):
+        {"job_id", "kb_name", "collection_id", "item_count", "status": "running", "poll_url"}
+    Returns (inline mode):
+        {"per_kb": [...]} from build_kbs_from_zotero
+    """
+    import asyncio
+    import httpx
+    from perspicacite.integrations.zotero import ZoteroClient
+    from perspicacite.integrations import zotero_ingest
+
+    cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
+    if not (cfg and cfg.enabled and cfg.api_key):
+        return {"error": "ZOTERO_NOT_CONFIGURED"}
+
+    eff_library_id = library_id or cfg.library_id
+    if not eff_library_id:
+        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "library_id required"}
+
+    base_url = getattr(cfg, "base_url", "") or None
+    client = ZoteroClient(
+        api_key=cfg.api_key,
+        library_id=eff_library_id,
+        library_type=cfg.library_type,
+        base_url=base_url,
+    )
+
+    try:
+        plan = await zotero_ingest.plan_kbs_from_zotero(
+            client,
+            top_level_collection_keys=[collection_id],
+            include_unfiled=False,
+            library_label=eff_library_id,
+        )
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 403:
+            return {"error": "ZOTERO_AUTH_FAILED"}
+        if status == 429:
+            ra = exc.response.headers.get("retry-after") or "60"
+            return {"error": "ZOTERO_RATE_LIMITED", "retry_after_s": float(ra)}
+        if status == 404:
+            return {"error": "COLLECTION_NOT_FOUND", "message": f"Collection {collection_id} not found"}
+        return {"error": "ZOTERO_ERROR", "message": str(exc)}
+
+    if not plan:
+        return {"error": "COLLECTION_NOT_FOUND", "message": f"Collection {collection_id} produced no plan entries"}
+
+    entry = plan[0]
+    effective_kb = kb_name or entry.kb_name
+
+    if kb_name:
+        entry = zotero_ingest.ZoteroKBPlanEntry(
+            kb_name=kb_name,
+            source_collection_key=entry.source_collection_key,
+            source_collection_name=entry.source_collection_name,
+            item_count=entry.item_count,
+            with_doi_count=entry.with_doi_count,
+            with_pdf_count=entry.with_pdf_count,
+            with_notes_count=entry.with_notes_count,
+        )
+
+    registry = getattr(mcp_state, "job_registry", None)
+
+    if registry is not None:
+        job_id = await registry.create("zotero_collection_ingest", total=entry.item_count)
+        task = asyncio.create_task(
+            zotero_ingest.build_kbs_from_zotero(
+                client,
+                plan=[entry],
+                app_state=mcp_state,
+                registry=registry,
+                job_id=job_id,
+            )
+        )
+        _zotero_ingest_tasks.add(task)
+        task.add_done_callback(_zotero_ingest_tasks.discard)
+        base_cfg = getattr(mcp_state.config, "server", None)
+        port = getattr(base_cfg, "port", 5468) if base_cfg else 5468
+        return {
+            "job_id": job_id,
+            "kb_name": effective_kb,
+            "collection_id": collection_id,
+            "item_count": entry.item_count,
+            "status": "running",
+            "poll_url": f"http://localhost:{port}/api/jobs/{job_id}/events",
+        }
+
+    # Inline mode (MCP-only context, no registry)
+    class _InlineReg:
+        def __init__(self) -> None:
+            self.result: dict[str, Any] | None = None
+            self.err: str | None = None
+
+        async def publish(self, jid: str, ev: dict[str, Any]) -> None:
+            return None
+
+        async def finish(self, jid: str, res: dict[str, Any]) -> None:
+            self.result = res
+
+        async def fail(self, jid: str, err: str) -> None:
+            self.err = err
+
+    reg = _InlineReg()
+    try:
+        await zotero_ingest.build_kbs_from_zotero(
+            client,
+            plan=[entry],
+            app_state=mcp_state,
+            registry=reg,
+            job_id="mcp-inline",
+        )
+    except Exception as exc:
+        return {"error": str(exc)}
+    if reg.err is not None:
+        return {"error": reg.err}
+    return reg.result or {"per_kb": []}
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -2574,6 +2721,7 @@ _TOOL_NAMES: list[str] = [
     "zotero_list_collections",
     "zotero_get_collection_items",
     "zotero_get_paper_resources",
+    "zotero_ingest_collection_to_kb",
 ]
 
 

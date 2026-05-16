@@ -229,3 +229,61 @@ async def test_get_paper_resources_returns_resources(monkeypatch):
     pdf = next(r for r in out["resources"] if r["role"] == "fulltext_pdf")
     doi_access = [a for a in pdf["access"] if a.get("via") == "doi_resolver"]
     assert len(doi_access) == 1
+
+
+# --- zotero_ingest_collection_to_kb ---
+
+@pytest.mark.asyncio
+async def test_ingest_collection_not_configured(monkeypatch):
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state(_zotero_cfg(enabled=False)))
+    out = await _unwrap(mcp_server.zotero_ingest_collection_to_kb)(collection_id="AAA")
+    assert out["error"] == "ZOTERO_NOT_CONFIGURED"
+
+
+@pytest.mark.asyncio
+async def test_ingest_collection_inline_mode(monkeypatch):
+    from perspicacite.integrations import zotero as zotero_mod
+    from perspicacite.integrations import zotero_ingest as zi
+
+    async def _fake_plan(client, *, top_level_collection_keys=None, **kw):
+        return [
+            zi.ZoteroKBPlanEntry(
+                kb_name="metabolomics",
+                source_collection_key="AAA",
+                source_collection_name="Metabolomics",
+                item_count=5,
+                with_doi_count=5,
+                with_pdf_count=0,
+                with_notes_count=0,
+            )
+        ]
+
+    async def _fake_build(client, *, plan, app_state, registry, job_id):
+        await registry.finish(job_id, {"per_kb": [{"kb": "metabolomics", "papers": 5}]})
+
+    monkeypatch.setattr(zi, "plan_kbs_from_zotero", _fake_plan)
+    monkeypatch.setattr(zi, "build_kbs_from_zotero", _fake_build)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+
+    out = await _unwrap(mcp_server.zotero_ingest_collection_to_kb)(
+        collection_id="AAA", kb_name="metabolomics"
+    )
+    # Inline mode returns the result directly (no job_id)
+    assert "per_kb" in out or "job_id" in out
+
+
+@pytest.mark.asyncio
+async def test_ingest_collection_not_found(monkeypatch):
+    import httpx
+    from perspicacite.integrations import zotero as zotero_mod
+    from perspicacite.integrations import zotero_ingest as zi
+
+    async def _bad_plan(client, **kw):
+        raise httpx.HTTPStatusError(
+            "404", request=httpx.Request("GET", "http://x"), response=httpx.Response(404)
+        )
+
+    monkeypatch.setattr(zi, "plan_kbs_from_zotero", _bad_plan)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+    out = await _unwrap(mcp_server.zotero_ingest_collection_to_kb)(collection_id="NOPE")
+    assert out["error"] == "COLLECTION_NOT_FOUND"
