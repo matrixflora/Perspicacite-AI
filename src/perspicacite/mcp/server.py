@@ -17,6 +17,10 @@ Tools exposed:
 - push_to_zotero: Push DOIs to the configured Zotero library
 - build_kbs_from_zotero: Build one KB per Zotero top-level collection
 - build_kb_from_search: Search SciLEx, filter, fetch PDFs, ingest into a KB
+- zotero_list_collections: List all Zotero collections with sub-collection tree
+- zotero_get_collection_items: Get papers in a collection with license classification
+- zotero_get_paper_resources: Get ordered file access options for a paper
+- zotero_ingest_collection_to_kb: Ingest a Zotero collection into a KB
 """
 
 from __future__ import annotations

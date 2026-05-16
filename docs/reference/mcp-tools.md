@@ -289,6 +289,84 @@ r = httpx.post("http://localhost:5468/mcp", json={
 
 ---
 
+## Zotero read path (for ASB integration)
+
+### `zotero_list_collections`
+
+List all Zotero library collections as a nested tree.
+
+**Parameters:**
+- `library_id` (str, optional) — override configured library_id
+- `include_subcollections` (bool, default true) — return nested tree
+
+**Returns:** `{collections: [{id, name, parent_id, item_count, subcollections}], library_id, library_type}`
+
+**Cache:** 1-hour in-memory cache keyed on (library_id, library_type).
+
+**Errors:** `ZOTERO_NOT_CONFIGURED`, `ZOTERO_AUTH_FAILED`, `ZOTERO_RATE_LIMITED`, `LIBRARY_NOT_FOUND`
+
+---
+
+### `zotero_get_collection_items`
+
+Return papers in a collection with metadata and per-paper license classification.
+
+**Parameters:**
+- `collection_id` (str) — Zotero collection key
+- `library_id` (str, optional)
+- `include_abstract` (bool, default true)
+- `limit` (int, default 200, max 500)
+- `cursor` (str, optional) — pagination token from previous call's `next_cursor`
+
+**Returns:** `{collection_id, items: [{zotero_key, doi, title, authors, year, abstract, item_type, tags, license: {spdx, classification, policy, source}, has_attachments}], total, next_cursor}`
+
+**License policy:** `classification=permissive` → `policy=verbatim` (text may be copied verbatim); `classification=closed|unknown` → `policy=reflavor` (must paraphrase).
+
+**License resolution chain:** Crossref → OpenAlex → Zotero tags → heuristic (is_oa flag).
+
+**Errors:** `ZOTERO_NOT_CONFIGURED`, `ZOTERO_AUTH_FAILED`, `ZOTERO_RATE_LIMITED`, `COLLECTION_NOT_FOUND`, `INVALID_CURSOR`
+
+---
+
+### `zotero_get_paper_resources`
+
+Return ordered file access options for a single paper. Local paths come first (Perspicacité's PDF cache and capsule supplementary-file storage); remote URLs follow.
+
+**Parameters:**
+- `doi` (str, optional) — the paper's DOI
+- `zotero_key` (str, optional) — Zotero item key; use when DOI is ambiguous
+- `library_id` (str, optional)
+
+Exactly one of `doi` or `zotero_key` must be provided.
+
+**Returns:** `{doi, zotero_key, license: {...}, resources: [{role, filename, access: [{type, path|url, via?}]}], notes: [str]}`
+
+`role` values: `fulltext_pdf`, `supplementary`, `note`. Access `type`: `local` (on-disk path) or `remote` (URL + `via` label: `publisher`, `doi_resolver`).
+
+**Errors:** `ZOTERO_NOT_CONFIGURED`, `ZOTERO_AUTH_FAILED`, `ZOTERO_RATE_LIMITED`, `PAPER_NOT_FOUND`, `AMBIGUOUS_DOI`
+
+---
+
+### `zotero_ingest_collection_to_kb`
+
+Ingest a Zotero collection into a Perspicacité KB. Returns immediately with a `job_id` when running under the full web server (poll `poll_url` for SSE completion events); runs inline in MCP-only mode.
+
+**Parameters:**
+- `collection_id` (str) — Zotero collection key
+- `kb_name` (str, optional) — KB name; defaults to sanitized collection name
+- `library_id` (str, optional)
+- `force_reingest` (bool, default false) — re-embed already-indexed papers
+
+**Returns (async mode):** `{job_id, kb_name, collection_id, item_count, status: "running", poll_url}`
+
+**Returns (inline mode):** `{per_kb: [...]}`
+
+After the job completes, use `search_knowledge_base` or `generate_report` with the returned `kb_name`.
+
+**Errors:** `ZOTERO_NOT_CONFIGURED`, `ZOTERO_AUTH_FAILED`, `ZOTERO_RATE_LIMITED`, `COLLECTION_NOT_FOUND`
+
+---
+
 ## Related topics
 
 - [reference/rest-api.md](rest-api.md) — REST equivalents
