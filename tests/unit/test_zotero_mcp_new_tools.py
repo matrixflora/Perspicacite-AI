@@ -169,3 +169,63 @@ async def test_get_collection_items_cursor_pagination(monkeypatch):
     )
     assert len(page2["items"]) == 1
     assert page2["next_cursor"] is None
+
+
+# --- zotero_get_paper_resources ---
+
+@pytest.mark.asyncio
+async def test_get_paper_resources_paper_not_found(monkeypatch):
+    from perspicacite.integrations import zotero as zotero_mod
+
+    async def _paginated_empty(self, path, params=None):
+        return []
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "_paginated", _paginated_empty)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+    out = await _unwrap(mcp_server.zotero_get_paper_resources)(doi="10.9999/missing")
+    assert out["error"] == "PAPER_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_get_paper_resources_ambiguous_doi(monkeypatch):
+    from perspicacite.integrations import zotero as zotero_mod
+
+    async def _two_items(self, path, params=None):
+        return [
+            {"key": "K1", "data": {"DOI": "10.1234/x", "title": "T1"}},
+            {"key": "K2", "data": {"DOI": "10.1234/x", "title": "T2"}},
+        ]
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "_paginated", _two_items)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+    out = await _unwrap(mcp_server.zotero_get_paper_resources)(doi="10.1234/x")
+    assert out["error"] == "AMBIGUOUS_DOI"
+
+
+@pytest.mark.asyncio
+async def test_get_paper_resources_returns_resources(monkeypatch):
+    from perspicacite.integrations import zotero as zotero_mod
+    from perspicacite.integrations import zotero_license as lic_mod
+    from perspicacite.integrations.zotero_license import LicenseInfo
+
+    async def _one_item(self, path, params=None):
+        return [{"key": "K1", "data": {"DOI": "10.1234/y", "title": "T"}}]
+
+    async def _no_attachments(self, item_key):
+        return []
+
+    async def _fake_classify(self, doi, **kw):
+        return LicenseInfo("CC-BY-4.0", "permissive", "verbatim", "crossref")
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "_paginated", _one_item)
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "get_item_attachments", _no_attachments)
+    monkeypatch.setattr(lic_mod.LicenseClassifier, "classify", _fake_classify)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+
+    out = await _unwrap(mcp_server.zotero_get_paper_resources)(doi="10.1234/y")
+    assert out.get("doi") == "10.1234/y"
+    assert "resources" in out
+    assert out["license"]["classification"] == "permissive"
+    pdf = next(r for r in out["resources"] if r["role"] == "fulltext_pdf")
+    doi_access = [a for a in pdf["access"] if a.get("via") == "doi_resolver"]
+    assert len(doi_access) == 1

@@ -2436,6 +2436,113 @@ async def zotero_get_collection_items(
 
 
 # =============================================================================
+# Tool 15: zotero_get_paper_resources
+# =============================================================================
+
+
+@mcp.tool()
+async def zotero_get_paper_resources(
+    doi: str | None = None,
+    zotero_key: str | None = None,
+    library_id: str | None = None,
+) -> dict:
+    """Return file access options for a paper (local path first, then remote URLs).
+
+    Exactly one of ``doi`` or ``zotero_key`` must be provided.
+
+    Args:
+        doi: The paper's DOI.
+        zotero_key: Zotero item key (use when DOI is ambiguous).
+        library_id: Override the configured library_id.
+
+    Returns:
+        {"doi", "zotero_key", "license": {...}, "resources": [...], "notes": []}
+        Each resource: {"role", "filename", "access": [{"type", "path"|"url", "via"?}]}
+    """
+    import asyncio
+    import httpx
+    from perspicacite.integrations.zotero import ZoteroClient
+    from perspicacite.integrations.zotero_license import LicenseClassifier
+    from perspicacite.integrations.zotero_resources import ResourceLocator
+
+    if not doi and not zotero_key:
+        return {"error": "INVALID_ARGUMENTS", "message": "Provide doi or zotero_key"}
+
+    cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
+    if not (cfg and cfg.enabled and cfg.api_key):
+        return {"error": "ZOTERO_NOT_CONFIGURED"}
+
+    eff_library_id = library_id or cfg.library_id
+    if not eff_library_id:
+        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "library_id required"}
+
+    base_url = getattr(cfg, "base_url", "") or None
+    client = ZoteroClient(
+        api_key=cfg.api_key,
+        library_id=eff_library_id,
+        library_type=cfg.library_type,
+        base_url=base_url,
+    )
+
+    try:
+        if zotero_key:
+            items = await client._paginated(f"/items/{zotero_key}")
+            zotero_item = items[0] if items else None
+            if zotero_item is None:
+                return {"error": "PAPER_NOT_FOUND", "message": f"Key {zotero_key} not found"}
+        else:
+            items = await client._paginated("/items", params={"q": doi, "qmode": "everything"})
+            matched = [
+                it for it in items
+                if (it.get("data") or {}).get("DOI", "").lower().strip() == doi.lower().strip()
+            ]
+            if not matched:
+                return {"error": "PAPER_NOT_FOUND", "message": f"DOI {doi} not in library"}
+            if len(matched) > 1:
+                return {
+                    "error": "AMBIGUOUS_DOI",
+                    "message": f"DOI {doi} matches {len(matched)} items; pass zotero_key",
+                    "keys": [it.get("key") for it in matched],
+                }
+            zotero_item = matched[0]
+
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if status == 403:
+            return {"error": "ZOTERO_AUTH_FAILED"}
+        if status == 429:
+            ra = exc.response.headers.get("retry-after") or "60"
+            return {"error": "ZOTERO_RATE_LIMITED", "retry_after_s": float(ra)}
+        return {"error": "ZOTERO_ERROR", "message": str(exc)}
+
+    item_doi = (zotero_item.get("data") or {}).get("DOI") or doi or ""
+    item_key = zotero_item.get("key") or zotero_key
+
+    clf = LicenseClassifier()
+    async with httpx.AsyncClient() as http:
+        attachments, lic = await asyncio.gather(
+            client.get_item_attachments(item_key),
+            clf.classify(item_doi, zotero_item=zotero_item, http_client=http),
+        )
+
+    rl = ResourceLocator(mcp_state.config)
+    resources = rl.build(doi=item_doi, zotero_item=zotero_item, attachments=attachments)
+
+    return {
+        "doi": item_doi,
+        "zotero_key": item_key,
+        "license": {
+            "spdx": lic.spdx,
+            "classification": lic.classification,
+            "policy": lic.policy,
+            "source": lic.source,
+        },
+        "resources": resources,
+        "notes": [],
+    }
+
+
+# =============================================================================
 # Resource
 # =============================================================================
 
@@ -2466,6 +2573,7 @@ _TOOL_NAMES: list[str] = [
     "enrich_kb_from_cite_graph_tool",
     "zotero_list_collections",
     "zotero_get_collection_items",
+    "zotero_get_paper_resources",
 ]
 
 
