@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from perspicacite.logging import get_logger
+from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 from perspicacite.rag.query_scope import PaperScopeResult, merge_scope_with_candidates
 from perspicacite.retrieval.chroma_store import _metadata_to_chunk
 
@@ -18,23 +19,6 @@ if TYPE_CHECKING:
     from perspicacite.models.search import SearchFilters
 
 logger = get_logger("perspicacite.rag.dynamic_kb")
-
-
-def _decode_paper_md(meta: Any) -> dict | None:
-    """Decode the ``paper_metadata_json`` blob carried on a chunk's metadata.
-
-    Accepts either a ``ChunkMetadata`` (or any object exposing the attribute)
-    and returns the decoded dict, or ``None`` if the blob is missing or
-    malformed. Used by ``search_two_pass`` to round-trip ASB-style
-    ``Paper.metadata`` payloads back onto paper-level result dicts.
-    """
-    blob = getattr(meta, "paper_metadata_json", None)
-    if not blob:
-        return None
-    try:
-        return json.loads(blob)
-    except (TypeError, ValueError):
-        return None
 
 
 @dataclass
@@ -477,7 +461,7 @@ Abstract:
                         "authors": getattr(hit["metadata"], "authors", None),
                         "year": getattr(hit["metadata"], "year", None),
                         "doi": getattr(hit["metadata"], "doi", None),
-                        "paper_metadata": _decode_paper_md(hit["metadata"]),
+                        "paper_metadata": decode_paper_metadata_json(hit["metadata"]),
                         "chunks": [{"chunk_index": 0, "text": hit["text"]}],
                         "full_text": hit["text"],
                     }
@@ -512,7 +496,7 @@ Abstract:
                 "authors": getattr(meta, "authors", None),
                 "year": getattr(meta, "year", None),
                 "doi": getattr(meta, "doi", None),
-                "paper_metadata": _decode_paper_md(meta),
+                "paper_metadata": decode_paper_metadata_json(meta),
                 "chunks": chunks_list,
                 "full_text": full_text,
             })

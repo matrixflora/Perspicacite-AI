@@ -31,6 +31,7 @@ from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
+from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     ASSESS_DOCUMENT_QUALITY_PROMPT,
@@ -2011,14 +2012,7 @@ Follow the system instructions for this situation."""
                 year = getattr(meta, "year", None)
                 doi = getattr(meta, "doi", None)
                 # Decode the ASB ``paper_metadata_json`` blob if present.
-                _pm_blob = getattr(meta, "paper_metadata_json", None)
-                _pm_dict: dict | None = None
-                if _pm_blob:
-                    try:
-                        import json as _json
-                        _pm_dict = _json.loads(_pm_blob)
-                    except Exception:
-                        _pm_dict = None
+                _pm_dict = decode_paper_metadata_json(meta)
             else:
                 continue
 
