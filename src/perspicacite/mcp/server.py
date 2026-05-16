@@ -338,6 +338,8 @@ async def search_literature(
     year_max: int | None = None,
     article_type: str | None = None,
     databases: list[str] | None = None,
+    min_relevance: float = 0.0,
+    relevance_method: str = "bm25",
 ) -> str:
     """
     Search academic databases for scientific papers matching a query.
@@ -349,6 +351,25 @@ async def search_literature(
         year_max: Latest publication year (inclusive)
         article_type: Filter by type ("review", "article", "conference")
         databases: Databases to search. Options: semantic_scholar, openalex, pubmed, arxiv
+        min_relevance: When > 0, post-filter results so only papers with
+            ``relevance_score >= min_relevance`` are returned. Score is
+            normalized to ``[0, 1]``. Default 0.0 keeps every hit
+            (current behavior). Try 0.3 to drop clearly-off-topic hits,
+            0.5+ for high precision.
+        relevance_method: How to score relevance when filtering. Three
+            tiers, in order of cost/accuracy:
+
+            - ``"bm25"`` (default, nearly free) — BM25 token overlap on
+              title+abstract vs query. Catches keyword-irrelevant hits.
+            - ``"rerank"`` (~5ms/paper, CPU) — cross-encoder model. More
+              accurate semantically; catches "wrong domain entirely"
+              hits that share surface keywords.
+            - ``"llm"`` (slowest, $ per paper) — LLM judge with reasons.
+              Best for ambiguous topic overlap; returns ``reason`` field
+              per paper.
+
+            Each returned paper gets a ``relevance_score`` field; ``llm``
+            also adds ``relevance_reason``.
 
     Returns:
         JSON with list of papers including title, authors, year, doi, abstract.
@@ -372,9 +393,13 @@ async def search_literature(
                 "generate_report on a pre-ingested KB instead.",
                 scilex_available=False,
             )
+        # When filtering by relevance, overfetch ~3x so the post-filter
+        # has enough candidates to actually return ``max_results``
+        # quality hits. Capped at SciLEx's per-DB ceiling.
+        fetch_n = min(max_results * 3, 100) if min_relevance > 0 else max_results
         papers = await adapter.search(
             query=query,
-            max_results=max_results,
+            max_results=fetch_n,
             year_min=year_min,
             year_max=year_max,
             apis=databases or ["semantic_scholar", "openalex", "pubmed"],
@@ -401,7 +426,51 @@ async def search_literature(
                 ]
             results.append(pd)
 
-        logger.info("mcp_search_literature", query=query, results=len(results))
+        # Optional relevance filtering (tiers A/B/C)
+        if min_relevance > 0.0 and results:
+            from perspicacite.search.screening import (
+                screen_papers,
+                screen_papers_llm,
+                screen_papers_rerank,
+            )
+            method = (relevance_method or "bm25").lower()
+            if method == "bm25":
+                scored = screen_papers(
+                    results, reference=query, threshold=min_relevance,
+                )
+            elif method == "rerank":
+                scored = await screen_papers_rerank(
+                    results, query=query, threshold=min_relevance,
+                )
+            elif method == "llm":
+                scored = await screen_papers_llm(
+                    results, query=query, llm=state.llm_client,
+                    threshold=min_relevance,
+                )
+            else:
+                return _json_error(
+                    f"unknown relevance_method '{relevance_method}'; "
+                    "use 'bm25', 'rerank', or 'llm'",
+                )
+            filtered = []
+            for r in scored:
+                if not r.kept:
+                    continue
+                item = dict(r.item)
+                item["relevance_score"] = round(r.score, 4)
+                if r.reason:
+                    item["relevance_reason"] = r.reason
+                filtered.append(item)
+                if len(filtered) >= max_results:
+                    break
+            results = filtered
+
+        logger.info(
+            "mcp_search_literature",
+            query=query, results=len(results),
+            min_relevance=min_relevance,
+            method=relevance_method if min_relevance > 0 else "none",
+        )
         return _json_ok({"query": query, "total_results": len(results), "papers": results})
 
     except Exception as e:

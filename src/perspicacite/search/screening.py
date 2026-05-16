@@ -169,6 +169,86 @@ def screen_papers(
     return results
 
 
+async def screen_papers_rerank(
+    candidates: Sequence[dict],
+    query: str,
+    threshold: float = 0.3,
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+) -> list[ScreenResult]:
+    """Cross-encoder rerank screening (tier B).
+
+    More accurate than BM25 (tier A) because the cross-encoder sees the
+    query + paper jointly and can score semantic similarity beyond
+    keyword overlap — catches "wrong domain entirely" hits that share
+    surface keywords (e.g. a "graph neural network" query that BM25
+    matches against combinatorial graph theory).
+
+    Requires ``sentence-transformers`` (already a project dep). The
+    default ``ms-marco-MiniLM-L-6-v2`` model is small (~80MB) and runs
+    on CPU at ~5ms per pair. First call loads + caches the model.
+
+    Raw model scores are logit-shaped (roughly -10..+10 for the
+    ms-marco family); we apply a sigmoid to normalize them to [0,1]
+    so the ``threshold`` parameter is consistent with the BM25 and LLM
+    paths.
+
+    Args:
+        candidates: List of paper dicts with at least ``title`` and/or ``abstract``.
+        query: Free-text relevance query.
+        threshold: Normalized score >= threshold means kept=True.
+        model_name: Override the default cross-encoder.
+
+    Returns:
+        List of ``ScreenResult`` sorted by score descending.
+    """
+    candidates_list = list(candidates)
+    if not candidates_list:
+        return []
+
+    try:
+        from sentence_transformers import CrossEncoder
+    except ImportError as exc:
+        raise ImportError(
+            "sentence-transformers required for rerank screening. "
+            "Install with: pip install sentence-transformers"
+        ) from exc
+
+    import asyncio
+    import math
+
+    loop = asyncio.get_event_loop()
+    model = await loop.run_in_executor(None, lambda: CrossEncoder(model_name))
+
+    pairs = [
+        (query, _candidate_text(c)[:2000])  # cap each input for throughput
+        for c in candidates_list
+    ]
+    raw_scores = await loop.run_in_executor(None, lambda: model.predict(pairs))
+
+    # Sigmoid -> [0,1]. ms-marco family is trained with logit outputs.
+    norm_scores = [1.0 / (1.0 + math.exp(-float(s))) for s in raw_scores]
+
+    results = [
+        ScreenResult(
+            item=candidates_list[i],
+            score=norm_scores[i],
+            kept=norm_scores[i] >= threshold,
+        )
+        for i in range(len(candidates_list))
+    ]
+    results.sort(key=lambda r: r.score, reverse=True)
+
+    kept_count = sum(r.kept for r in results)
+    logger.info(
+        "screen_papers_rerank",
+        n=len(candidates_list),
+        kept=kept_count,
+        threshold=threshold,
+        model=model_name,
+    )
+    return results
+
+
 async def screen_papers_llm(
     candidates: Sequence[dict],
     query: str,
