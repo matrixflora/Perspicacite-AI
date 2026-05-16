@@ -139,9 +139,19 @@ def _build_snapshot_html(
     )
 
 
-def _doi_slug(doi: str) -> str:
-    """Filesystem-safe slug derived from the DOI."""
-    return re.sub(r"[^a-zA-Z0-9.]+", "_", (doi or "no-doi").lower())[:120]
+def _doi_slug(doi: str, fallback: str = "") -> str:
+    """Filesystem-safe slug derived from the DOI, with a URL fallback.
+
+    For URL-route items (no DOI), every entry would otherwise collide
+    on ``no_doi.html`` — a problem when ``push_to_zotero`` processes
+    multiple URL-only items in one call. Pass the landing URL as
+    ``fallback`` and the slug becomes URL-derived instead.
+    """
+    if doi:
+        return re.sub(r"[^a-zA-Z0-9.]+", "_", doi.lower())[:120]
+    if fallback:
+        return re.sub(r"[^a-zA-Z0-9.]+", "_", fallback.lower())[:120]
+    return "no_doi"
 
 
 def _build_stub_html(
@@ -311,7 +321,7 @@ async def capture_landing_html(
         tier=tier,
     )
 
-    dest = out_dir / f"{_doi_slug(doi)}.html"
+    dest = out_dir / f"{_doi_slug(doi, fallback=landing_url or '')}.html"
     dest.write_text(snapshot, encoding="utf-8")
     logger.info(
         "html_capture_saved",

@@ -201,23 +201,7 @@ async def retrieve_paper_content(
             except Exception as e:
                 logger.warning("crossref_enrich_skipped", doi=clean, error=str(e))
 
-        # ── STEP 2: ALTERNATIVE ENDPOINT (before structured/PDF) ──────
-        if alternative_endpoint and pdf_parser is not None:
-            alt_pdf = await download_from_alternative_endpoint(clean, alternative_endpoint, client)
-            if alt_pdf:
-                text = await _parse_pdf_bytes(alt_pdf, pdf_parser)
-                if text:
-                    return PaperContent(
-                        success=True,
-                        doi=clean,
-                        content_type="full_text",
-                        full_text=text,
-                        abstract=disc.abstract,
-                        content_source="alternative",
-                        metadata=_metadata_from_discovery(disc, clean),
-                    )
-
-        # ── STEP 3: STRUCTURED FULL TEXT ────────────────────────────────
+        # ── STEP 2: STRUCTURED FULL TEXT ────────────────────────────────
 
         # 2a. PMC JATS XML (sections + references)
         if disc.pmcid:
@@ -349,6 +333,30 @@ async def retrieve_paper_content(
                     content_source="elsevier",
                     metadata=_metadata_from_discovery(disc, clean),
                 )
+
+        # ── STEP 3b: ALTERNATIVE ENDPOINT (last-resort PDF fallback) ────
+        # User-configured private/institutional repository. Demoted to
+        # the very bottom of the PDF chain so it only fires when every
+        # OA path (PMC, Europe PMC, arXiv HTML, biorxiv JATS) and every
+        # publisher PDF tier has missed. Useful for paywalled papers
+        # the user has rights to via an institutional cache, without
+        # competing with structured-text sources for OA content.
+        if alternative_endpoint and pdf_parser is not None:
+            alt_pdf = await download_from_alternative_endpoint(
+                clean, alternative_endpoint, client,
+            )
+            if alt_pdf:
+                text = await _parse_pdf_bytes(alt_pdf, pdf_parser)
+                if text:
+                    return PaperContent(
+                        success=True,
+                        doi=clean,
+                        content_type="full_text",
+                        full_text=text,
+                        abstract=disc.abstract,
+                        content_source="alternative",
+                        metadata=_metadata_from_discovery(disc, clean),
+                    )
 
         # ── STEP 4: ABSTRACT ONLY ───────────────────────────────────────
         if disc.abstract and len(disc.abstract.strip()) > 20:
