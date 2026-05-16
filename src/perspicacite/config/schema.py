@@ -993,12 +993,26 @@ class GitHubConfig(BaseModel):
     docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md.
     """
 
-    token_env_var: str = "GITHUB_TOKEN"
+    token_env_var: str = Field(default="GITHUB_TOKEN", min_length=1)
     cache_dir: Path = Path("data/github_cache")
-    cache_max_mb: int = 2048
-    default_branch: str = "HEAD"
-    user_agent: str = "Perspicacite/2.0"
+    cache_max_mb: int = Field(default=2048, gt=0)
+    default_branch: str = Field(default="HEAD", min_length=1)
+    user_agent: str = Field(default="Perspicacite/2.0", min_length=1)
     api_base: str = "https://api.github.com"
+
+    @field_validator("api_base")
+    @classmethod
+    def _api_base_must_be_http(cls, v: str) -> str:
+        """Reject non-HTTP(S) bases. ``AnyHttpUrl`` coerces to a URL
+        object and breaks downstream string concatenation; a regex on
+        ``str`` keeps the field shape stable."""
+        if not isinstance(v, str) or not (
+            v.startswith("https://") or v.startswith("http://")
+        ):
+            raise ValueError(
+                f"api_base must start with http:// or https://, got {v!r}"
+            )
+        return v
 
 
 class BundlesConfig(BaseModel):
@@ -1012,6 +1026,30 @@ class BundlesConfig(BaseModel):
 
     default_kb_name_template: str = "{name}"  # for per-skill mode
     composite_kb_name_template: str = "composite-{domain}"
+
+    @field_validator("default_kb_name_template")
+    @classmethod
+    def _per_skill_template_requires_name(cls, v: str) -> str:
+        """Per-skill mode formats this with ``name=<bundle.name>``. A
+        template without ``{name}`` would silently produce the same KB
+        name for every bundle and collapse them all into one collection."""
+        if "{name}" not in v:
+            raise ValueError(
+                f"default_kb_name_template must contain '{{name}}', got {v!r}"
+            )
+        return v
+
+    @field_validator("composite_kb_name_template")
+    @classmethod
+    def _composite_template_requires_domain(cls, v: str) -> str:
+        """Composite mode formats this with ``domain=<user-supplied>``.
+        Without ``{domain}`` the template can't differentiate composites
+        for different research domains."""
+        if "{domain}" not in v:
+            raise ValueError(
+                f"composite_kb_name_template must contain '{{domain}}', got {v!r}"
+            )
+        return v
 
 
 class LoggingConfig(BaseModel):
