@@ -24,7 +24,7 @@ _PERMISSIVE_SPDX_PREFIXES = (
 _CLOSED_SPDX_PATTERNS = ("CC-BY-NC", "CC-BY-ND")
 
 _CC_URL_SLUG_RE = re.compile(
-    r"creativecommons\.org/licenses/([a-z0-9\-]+)/",
+    r"creativecommons\.org/licenses/([a-z0-9\-]+)/([0-9.]+)/",
     re.I,
 )
 _CC_PD_RE = re.compile(r"creativecommons\.org/publicdomain/zero/", re.I)
@@ -50,10 +50,10 @@ def _url_to_spdx(url: str) -> str | None:
     m = _CC_URL_SLUG_RE.search(url)
     if m:
         slug = m.group(1).upper()
-        # Normalise "BY" alone → CC-BY-4.0, otherwise prefix with CC-
+        ver = m.group(2)
         if slug == "BY":
-            return "CC-BY-4.0"
-        return f"CC-{slug}"
+            return f"CC-BY-{ver}"
+        return f"CC-{slug}-{ver}"
     if "opensource.org/licenses/MIT" in url or url.lower().endswith("/mit"):
         return "MIT"
     if "apache.org/licenses/LICENSE-2.0" in url:
@@ -99,6 +99,9 @@ class LicenseClassifier:
             for t in ((zotero_item.get("data") or {}).get("tags") or [])
         ]
         for tag in tags:
+            # Check restrictive CC-BY variants BEFORE the generic cc-by check
+            if any(tag.startswith(r) for r in ("cc-by-nc", "cc-by-nd")):
+                return LicenseInfo(spdx=None, classification="closed", policy="reflavor", source="zotero_tag")
             if tag in _KNOWN_OPEN_TAGS or tag.startswith("cc-by"):
                 return LicenseInfo(spdx=None, classification="permissive", policy="verbatim", source="zotero_tag")
             if tag in _KNOWN_CLOSED_TAGS:
@@ -209,7 +212,8 @@ class LicenseClassifier:
             body = r.json()
             oa = body.get("open_access") or {}
             is_oa = bool(oa.get("is_oa"))
-            lic = oa.get("license") or ""
+            best_loc = body.get("best_oa_location") or {}
+            lic = best_loc.get("license") or ""
             if lic:
                 info = self.classify_spdx(lic)
                 info.source = "openalex"
