@@ -294,3 +294,150 @@ async def test_ingest_asb_run_validates_mode(tmp_path):
             mode="bogus",
             app_state=None,
         )
+
+
+# ---------------------------------------------------------------------------
+# Live end-to-end (gated)
+# ---------------------------------------------------------------------------
+
+import os  # noqa: E402 — intentional late import for clarity
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.environ.get("PERSPICACITE_E2E_ASB") != "1",
+    reason="Set PERSPICACITE_E2E_ASB=1 to run the live ingest test",
+)
+async def test_ingest_asb_run_against_real_chroma(tmp_path):
+    """Full pipeline against the real chunker + Chroma. Gated so it
+    doesn't run in CI by default (requires the embedding provider
+    env variables + a chroma backend reachable from this process).
+    """
+    from perspicacite.pipeline.asb.run_ingest import ingest_asb_run
+    from perspicacite.web.app_state import AppState
+
+    target = tmp_path / "run"
+    shutil.copytree(METLINKR, target)
+
+    # Boot the real AppState — same path the CLI uses.
+    app_state = AppState()
+    await app_state.initialize()
+
+    try:
+        result = await ingest_asb_run(
+            asb_run_dir=str(target),
+            kb_name="asb_e2e_test",
+            include=("skills", "workflows"),
+            mode="composite",
+            update_skill_kb_json=True,
+            app_state=app_state,
+        )
+    finally:
+        shutdown = getattr(app_state, "shutdown", None)
+        if shutdown is not None:
+            if hasattr(shutdown, "__await__"):
+                await shutdown()
+            else:
+                shutdown()
+
+    assert result["skills_ingested"] == 1
+    assert result["workflows_ingested"] == 2
+    # papers_ingested counts skill body + each card; backing-paper DOIs
+    # ingest through a separate path with its own counter
+    assert result["papers_ingested"] >= 3
+    assert result["workflow_dag"]
+    assert result["workflow_dag"]["nodes"]
+
+
+# ---------------------------------------------------------------------------
+# Response payload regression
+# ---------------------------------------------------------------------------
+
+
+def test_chat_response_includes_asb_blocks_when_chunks_match():
+    """If the chat/MCP response builder receives chunks with
+    content_kind=skill_* or workflow_card, the response carries
+    skill_metadata / workflow_metadata blocks via the helper from D10."""
+    from perspicacite.pipeline.asb.response import build_asb_response_metadata
+
+    chunks = [
+        {"metadata": {
+            "content_kind": "skill_body", "skill_id": "x",
+            "skill_name": "X", "tools": [], "environment": [], "parameters": [],
+        }},
+        {"metadata": {
+            "content_kind": "workflow_card", "task_id": "t1",
+            "task_card_title": "T1",
+            "task_objective": "Do the thing",
+            "executable": {"cmd": ["bash", "-c", "echo hi"]},
+            "execution_profile": {"compute_tier": "fast"},
+        }},
+        {"metadata": {"content_kind": "literature_chunk"}},  # unrelated — ignored
+    ]
+    out = build_asb_response_metadata(chunks)
+    assert len(out["skill_metadata"]) == 1
+    assert out["skill_metadata"][0]["skill_id"] == "x"
+    assert len(out["workflow_metadata"]) == 1
+    assert out["workflow_metadata"][0]["task_id"] == "t1"
+    # 2026-05-16 fields surface
+    assert out["workflow_metadata"][0]["task_objective"] == "Do the thing"
+    assert out["workflow_metadata"][0]["executable"] == {"cmd": ["bash", "-c", "echo hi"]}
+
+
+def test_end_to_end_orchestrator_output_feeds_response_metadata(tmp_path):
+    """Smoke: an orchestrator pass produces Papers whose metadata
+    would, after retrieval, feed build_asb_response_metadata correctly."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from perspicacite.pipeline.asb.run_ingest import ingest_asb_run
+    from perspicacite.pipeline.asb.response import build_asb_response_metadata
+
+    target = tmp_path / "run"
+    shutil.copytree(METLINKR, target)
+
+    added_papers: list = []
+    fake_kb = MagicMock()
+    fake_kb.name = "kb"
+    fake_kb.description = ""
+
+    async def fake_add_papers(papers, **kw):
+        added_papers.extend(papers)
+        return len(papers)
+
+    fake_kb.add_papers = fake_add_papers
+
+    async def fake_make_or_get_kb(name, description="", **kw):
+        fake_kb.name = name
+        fake_kb.description = description
+        return fake_kb
+
+    async def fake_ingest_backing_dois(*, kb, dois, app_state):
+        return {"added": 0, "failed": []}
+
+    async def run():
+        with patch(
+            "perspicacite.pipeline.asb.run_ingest._make_or_get_kb",
+            side_effect=fake_make_or_get_kb,
+        ), patch(
+            "perspicacite.pipeline.asb.run_ingest._ingest_backing_paper_dois",
+            side_effect=fake_ingest_backing_dois,
+        ):
+            await ingest_asb_run(
+                asb_run_dir=str(target),
+                kb_name="kb",
+                include=("skills", "workflows"),
+                mode="composite",
+                app_state=None,
+            )
+
+    asyncio.run(run())
+
+    # Simulate the retrieval layer surfacing chunks: each Paper.metadata
+    # becomes a chunk metadata dict for our purposes here.
+    chunks = [{"metadata": p.metadata} for p in added_papers]
+    out = build_asb_response_metadata(chunks)
+    skill_ids = {s["skill_id"] for s in out["skill_metadata"]}
+    task_ids = {w["task_id"] for w in out["workflow_metadata"]}
+    assert "cross-identifier-reconciliation" in skill_ids
+    assert {"task_001", "task_002"}.issubset(task_ids)
