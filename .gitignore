@@ -142,6 +142,13 @@ QUICKSTART.md
 todo.md
 config.minimax.yml
 config.yml
+
+# Cookies (browser exports for institutional/paywall access). Never commit.
+cookies.txt
+*cookies.txt
+.cookies/
+cookies/
+
 test_lotus.py
 uv.lock
 Untitled

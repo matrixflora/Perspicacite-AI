@@ -178,9 +178,11 @@ pdf_download:
   # Get one at: https://unpaywall.org/products/api
   unpaywall_email: "you@example.com"
 
-  # Alternative endpoint for PDF downloads (e.g., Sci-Hub mirror)
-  # User must provide their own endpoint URL
-  # Example: "https://sci-hub.se/"
+  # Alternative endpoint for PDF downloads — a private or institutional
+  # repository you maintain (campus proxy, internal aggregator of
+  # pre-cleared PDFs, on-prem PDF cache, etc.). User-provided; left
+  # empty by default. The endpoint receives ``<base>/<doi>`` and is
+  # expected to return the PDF bytes.
   alternative_endpoint: ""
 
   # Wiley TDM (Text and Data Mining) API Token

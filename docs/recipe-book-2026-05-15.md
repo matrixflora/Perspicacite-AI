@@ -28,8 +28,8 @@ perspicacite create-kb my-kb \
 What happens:
 1. Each `@article` in the BibTeX gets resolved to a DOI (via Crossref
    if missing).
-2. PDFs are fetched (Unpaywall → publisher → SciHub fallback chain;
-   the chain order is in `config.yml`).
+2. PDFs are fetched (Unpaywall → publisher → user-configured
+   `alternative_endpoint` fallback; the chain order is in `config.yml`).
 3. Each PDF is parsed (text + figures/tables if Wave 4.1 multimodal is
    enabled).
 4. Chunks are embedded and persisted to the `my-kb` Chroma collection.

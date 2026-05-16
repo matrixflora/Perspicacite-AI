@@ -1,7 +1,13 @@
-"""Alternative endpoints (e.g., Sci-Hub mirrors).
+"""Alternative endpoint downloader for user-maintained PDF sources.
 
-WARNING: Using alternative endpoints may violate terms of service or
-copyright laws in your jurisdiction. Use at your own risk.
+This module fetches a PDF from a base URL the user controls — typically a
+private or institutional repository: a campus proxy, an on-prem PDF cache,
+an internal aggregator of pre-cleared PDFs, or similar. The endpoint is
+expected to accept ``<base>/<doi>`` and return either an HTML page with
+PDF links/embeds or the PDF bytes directly.
+
+The endpoint URL is user-provided and empty by default. Users are
+responsible for the legality of any endpoint they configure.
 """
 
 from urllib.parse import urljoin
@@ -18,19 +24,20 @@ async def download_from_alternative_endpoint(
     base_url: str,
     http_client: httpx.AsyncClient | None = None,
 ) -> bytes | None:
-    """
-    Try to get PDF from an alternative endpoint (e.g., Sci-Hub).
+    """Fetch a PDF from a user-configured private/institutional endpoint.
 
-    The alternative endpoint should accept a DOI appended to the base URL
-    and return an HTML page containing a PDF link or embed.
+    The endpoint should accept ``<base_url>/<doi>`` and return either
+    the PDF bytes inline or an HTML page that embeds/links the PDF
+    (``<embed>``, ``<iframe>``, or ``<a href="*.pdf">``).
 
     Args:
-        doi: DOI to lookup
-        base_url: Base URL of alternative endpoint (e.g., "https://example.com/")
-        http_client: Optional HTTP client
+        doi: DOI to fetch.
+        base_url: Base URL of the user's endpoint (e.g.,
+            ``https://pdfs.internal.example.org/``).
+        http_client: Optional shared HTTP client.
 
     Returns:
-        PDF bytes or None if not found
+        PDF bytes, or ``None`` if not found / unreachable.
     """
     client = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     should_close = http_client is None
@@ -50,7 +57,7 @@ async def download_from_alternative_endpoint(
         # Parse HTML to find PDF links
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Look for PDF in <embed> tags (most common in Sci-Hub-like sites)
+        # Look for PDF in <embed> tags
         embeds = soup.find_all("embed", type="application/pdf")
         for embed in embeds:
             src = embed.get("src")

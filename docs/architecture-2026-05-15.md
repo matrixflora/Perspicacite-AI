@@ -23,7 +23,7 @@ flowchart LR
         Export[Export<br>BibTeX / CSL JSON / RIS]
     end
 
-    Ingest --> Fetchers[Paper fetchers<br>SciLEx · Crossref · OpenAlex · Unpaywall · publisher · SciHub]
+    Ingest --> Fetchers[Paper fetchers<br>SciLEx · Crossref · OpenAlex · Unpaywall · publisher · alt-endpoint]
     Ingest --> Parsers[Parsers<br>pdf · multimodal LLM<br>chunking]
     Ingest --> KB[(Dynamic KB<br>Chroma + SQLite metadata)]
     Capsule --> KB
