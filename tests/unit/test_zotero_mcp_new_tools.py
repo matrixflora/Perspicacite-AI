@@ -287,3 +287,137 @@ async def test_ingest_collection_not_found(monkeypatch):
     monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
     out = await _unwrap(mcp_server.zotero_ingest_collection_to_kb)(collection_id="NOPE")
     assert out["error"] == "COLLECTION_NOT_FOUND"
+
+
+# --- zotero_get_collection_items: attachment_keys field ---
+
+@pytest.mark.asyncio
+async def test_get_collection_items_populates_attachment_keys(monkeypatch):
+    """The hardcoded `has_attachments: False` stub is replaced with real
+    attachment_keys discovery. Closes the audit-finding gap that prevented
+    the ASB↔Perspicacité bridge from fetching attachment bytes."""
+    from perspicacite.integrations import zotero as zotero_mod
+    from perspicacite.integrations import zotero_license as lic_mod
+    from perspicacite.integrations.zotero_license import LicenseInfo
+
+    async def _fake_items(self, coll_key, *, include_subcollections=True):
+        return [{
+            "key": "ITEM1",
+            "data": {
+                "DOI": "10.1234/x", "title": "T", "creators": [],
+                "date": "2024", "abstractNote": "", "itemType": "journalArticle", "tags": [],
+            },
+        }]
+
+    async def _fake_attachments(self, item_key):
+        assert item_key == "ITEM1"
+        return [
+            {"key": "ATT_PDF",
+             "data": {"itemType": "attachment", "filename": "main.pdf"}},
+            {"key": "ATT_HTML",
+             "data": {"itemType": "attachment", "filename": "landing.html"}},
+        ]
+
+    async def _fake_classify(self, doi, **kw):
+        return LicenseInfo(spdx="CC-BY-4.0", classification="permissive",
+                            policy="verbatim", source="crossref")
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "list_items_in_collection", _fake_items)
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "get_item_attachments", _fake_attachments)
+    monkeypatch.setattr(lic_mod.LicenseClassifier, "classify", _fake_classify)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+
+    out = await _unwrap(mcp_server.zotero_get_collection_items)(collection_id="AAA")
+    item = out["items"][0]
+    assert item["attachment_keys"] == ["ATT_PDF", "ATT_HTML"]
+    assert item["has_attachments"] is True
+
+
+# --- zotero_get_attachment_bytes ---
+
+@pytest.mark.asyncio
+async def test_get_attachment_bytes_returns_base64(monkeypatch):
+    import base64
+    from perspicacite.integrations import zotero as zotero_mod
+
+    # Fake the metadata GET (returns a minimal attachment item with filename + tags).
+    class _FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": {
+                "filename": "paper.pdf",
+                "contentType": "application/pdf",
+                "tags": [
+                    {"tag": "role:main_article"},
+                    {"tag": "license:CC-BY-4.0"},
+                ],
+            }}
+
+    class _FakeHttp:
+        async def get(self, url, **kw):
+            return _FakeResp()
+
+    async def _fake_client(self):
+        return _FakeHttp()
+
+    async def _fake_download(self, attachment_key):
+        assert attachment_key == "ATT1"
+        return b"%PDF-1.4 fake bytes"
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "_client", _fake_client)
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "download_attachment_bytes", _fake_download)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+
+    out = await _unwrap(mcp_server.zotero_get_attachment_bytes)(attachment_key="ATT1")
+    assert out["filename"] == "paper.pdf"
+    assert out["content_type"] == "application/pdf"
+    assert out["role_hint"] == "main_article"
+    assert out["license_spdx"] == "CC-BY-4.0"
+    assert base64.b64decode(out["content_b64"]) == b"%PDF-1.4 fake bytes"
+    assert out["size_bytes"] == len(b"%PDF-1.4 fake bytes")
+
+
+@pytest.mark.asyncio
+async def test_get_attachment_bytes_404(monkeypatch):
+    from perspicacite.integrations import zotero as zotero_mod
+
+    class _FakeResp:
+        status_code = 404
+        def json(self): return {}
+
+    class _FakeHttp:
+        async def get(self, url, **kw): return _FakeResp()
+
+    async def _fake_client(self):
+        return _FakeHttp()
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "_client", _fake_client)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+
+    out = await _unwrap(mcp_server.zotero_get_attachment_bytes)(attachment_key="MISSING")
+    assert out["error"] == "ATTACHMENT_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_get_attachment_bytes_bytes_unavailable(monkeypatch):
+    """Metadata fetch succeeds but bytes fetch returns None (linked file
+    or quota issue)."""
+    from perspicacite.integrations import zotero as zotero_mod
+
+    class _FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": {"filename": "linked.pdf", "contentType": "application/pdf"}}
+
+    class _FakeHttp:
+        async def get(self, url, **kw): return _FakeResp()
+
+    async def _fake_client(self): return _FakeHttp()
+    async def _fake_download(self, attachment_key): return None
+
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "_client", _fake_client)
+    monkeypatch.setattr(zotero_mod.ZoteroClient, "download_attachment_bytes", _fake_download)
+    monkeypatch.setattr(mcp_server, "mcp_state", _fake_state())
+
+    out = await _unwrap(mcp_server.zotero_get_attachment_bytes)(attachment_key="LINKED")
+    assert out["error"] == "ATTACHMENT_BYTES_UNAVAILABLE"
