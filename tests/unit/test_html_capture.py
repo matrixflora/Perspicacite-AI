@@ -118,3 +118,50 @@ async def test_capture_uses_doi_redirect_when_no_landing(respx_mock, tmp_path):
         )
     assert cap is not None
     assert cap.tier == "extended_abstract"
+
+
+@pytest.mark.asyncio
+async def test_capture_builds_stub_when_live_fetch_403s(respx_mock, tmp_path):
+    """Live-discovered (2026-05-16): Cloudflare-gated publishers
+    (preprints.org, royalsocietypublishing.org, ACS, etc.) return 403
+    to non-browser HTTP clients even with a realistic UA + cookie jar.
+    When the live fetch fails but the caller has metadata (title +
+    abstract from OpenAlex/Crossref), the capture function must
+    synthesize a ``bibliographic_stub`` rather than silently returning
+    None — that's the only way the push_to_zotero(attach_pdf=True)
+    flow leaves *anything* in Zotero for Cloudflare-blocked items."""
+    respx_mock.get("https://www.preprints.org/manuscript/abc").mock(
+        return_value=httpx.Response(403, text="Forbidden by Cloudflare")
+    )
+    async with httpx.AsyncClient() as http:
+        cap = await capture_landing_html(
+            doi="10.20944/preprints.abc",
+            landing_url="https://www.preprints.org/manuscript/abc",
+            title="Building MCP-Native Hierarchical AI Scientist Ecosystems",
+            abstract="This work introduces a framework for ...",
+            http_client=http,
+            cache_dir=str(tmp_path),
+        )
+    assert cap is not None
+    assert cap.tier == "bibliographic_stub"
+    saved = cap.path.read_text()
+    assert "Building MCP-Native" in saved
+    assert "framework for" in saved
+    assert "HTTP 403" in saved  # reason field surfaces the cause
+
+
+@pytest.mark.asyncio
+async def test_capture_returns_none_when_403_and_no_metadata(respx_mock, tmp_path):
+    """Symmetric to the stub-fallback test: if neither title nor
+    abstract is supplied, there's nothing to stub — return None."""
+    respx_mock.get("https://example.org/q").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
+    async with httpx.AsyncClient() as http:
+        cap = await capture_landing_html(
+            doi="10.x/q",
+            landing_url="https://example.org/q",
+            http_client=http,
+            cache_dir=str(tmp_path),
+        )
+    assert cap is None

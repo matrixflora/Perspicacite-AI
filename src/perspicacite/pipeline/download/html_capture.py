@@ -144,6 +144,28 @@ def _doi_slug(doi: str) -> str:
     return re.sub(r"[^a-zA-Z0-9.]+", "_", (doi or "no-doi").lower())[:120]
 
 
+def _build_stub_html(
+    *, doi: str, title: str, abstract: str, landing_url: str, reason: str,
+) -> tuple[str, int]:
+    """Synthesize a bibliographic-stub HTML when the live landing-page
+    fetch is blocked (Cloudflare 403, paywall, etc.). Returns the HTML
+    body and the extracted-text char count for tier classification."""
+    safe_title = re.sub(r"[<>&]", "", title or doi or "Bibliographic stub")
+    body_html = (
+        f"<h1>{safe_title}</h1>"
+        f"<p><strong>DOI:</strong> <code>{doi}</code></p>"
+        + (f"<p><strong>Landing URL:</strong> <a href='{landing_url}'>{landing_url}</a></p>"
+           if landing_url else "")
+        + (f"<section><h2>Abstract</h2><p>{abstract}</p></section>"
+           if abstract else "<p><em>No abstract available from OpenAlex/Crossref.</em></p>")
+        + f"<p><small>This is a synthesized stub — the live publisher page was "
+          f"not reachable ({reason}). Source metadata: OpenAlex + Crossref via "
+          f"Perspicacité unified discovery.</small></p>"
+    )
+    chars = len(safe_title) + len(abstract or "")
+    return body_html, chars
+
+
 async def capture_landing_html(
     *,
     doi: str,
@@ -160,14 +182,16 @@ async def capture_landing_html(
     snapshot is written to ``<cache_dir>/html/<doi-slug>.html`` and
     classified into one of three tiers by extracted body length.
 
-    Returns ``None`` when:
-    - No landing URL is available (no DOI redirect possible, no
-      caller-supplied URL).
-    - The landing page returns non-2xx.
-    - The fetched body is empty or non-HTML.
+    When the live publisher page is unreachable (4xx, network error,
+    non-HTML response) but the caller supplied at least a ``title`` or
+    ``abstract`` from upstream discovery, a synthesized
+    ``bibliographic_stub`` is written instead. This is the
+    "worse than HTML, better than nothing" tier — gives the user a
+    Zotero attachment with whatever metadata we could gather, even when
+    Cloudflare blocks the live fetch.
 
-    Falls back gracefully on transient errors so it never breaks the
-    parent push_to_zotero flow — surfaces ``None`` instead.
+    Returns ``None`` only when nothing usable is available — no URL, no
+    title, and no abstract.
     """
     out_dir = (
         Path(cache_dir).expanduser() / "html"
@@ -176,56 +200,108 @@ async def capture_landing_html(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     url = landing_url or (f"https://doi.org/{doi}" if doi else "")
-    if not url:
-        logger.debug("html_capture_no_url", doi=doi)
+    if not url and not (title or abstract):
+        logger.debug("html_capture_no_url_and_no_meta", doi=doi)
         return None
 
-    try:
-        r = await http_client.get(
-            url, timeout=timeout_s, follow_redirects=True,
-            headers={"User-Agent": "Perspicacite/0.1 (HTML-fallback capture)"},
+    # Publisher landing pages (preprints.org, royalsocietypublishing.org,
+    # nature.com, doi.org redirect targets) gate non-browser UAs with
+    # HTTP 403. Send a realistic Chrome/Mac UA — matches what the rest
+    # of the pipeline uses (see pipeline/download/supplementary.py).
+    # Even with a browser UA + cookie jar, Cloudflare-protected publishers
+    # (ACS, AAAS, RSC) return 403 to non-browser clients — we still fall
+    # back to a synthesized stub from upstream metadata in that case.
+    fetch_failure_reason: str | None = None
+    body_html = ""
+    if url:
+        try:
+            r = await http_client.get(
+                url, timeout=timeout_s, follow_redirects=True,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/131.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": (
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                        "image/avif,image/webp,*/*;q=0.8"
+                    ),
+                },
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("html_capture_fetch_error", url=url, error=str(exc))
+            fetch_failure_reason = f"network error: {exc.__class__.__name__}"
+        else:
+            if r.status_code >= 400:
+                logger.info("html_capture_status_error", url=url, status=r.status_code)
+                fetch_failure_reason = f"HTTP {r.status_code}"
+            elif "html" not in r.headers.get("content-type", "").lower():
+                logger.debug("html_capture_not_html", url=url,
+                             content_type=r.headers.get("content-type"))
+                fetch_failure_reason = (
+                    f"non-HTML response ({r.headers.get('content-type','?')})"
+                )
+            elif not (r.text or "").strip():
+                fetch_failure_reason = "empty body"
+            else:
+                body_html = r.text
+    else:
+        fetch_failure_reason = "no landing URL"
+
+    # Live HTML capture path
+    if not fetch_failure_reason:
+        ext = _TextExtractor()
+        try:
+            ext.feed(body_html)
+        except Exception as exc:
+            logger.warning("html_capture_parse_error", url=url, error=str(exc))
+            fetch_failure_reason = f"parse error: {exc}"
+        else:
+            text = ext.get_text()
+            if not text:
+                fetch_failure_reason = "no extractable text"
+
+    # Stub fallback when the live fetch failed but we have metadata.
+    if fetch_failure_reason:
+        if not (title or abstract):
+            logger.info(
+                "html_capture_stub_skipped_no_meta",
+                doi=doi, url=url, reason=fetch_failure_reason,
+            )
+            return None
+        body_html, stub_chars = _build_stub_html(
+            doi=doi, title=title, abstract=abstract,
+            landing_url=url, reason=fetch_failure_reason,
         )
-    except httpx.HTTPError as exc:
-        logger.warning("html_capture_fetch_error", url=url, error=str(exc))
-        return None
-    if r.status_code >= 400:
-        logger.info("html_capture_status_error", url=url, status=r.status_code)
-        return None
-    content_type = r.headers.get("content-type", "").lower()
-    if "html" not in content_type:
-        logger.debug("html_capture_not_html", url=url, content_type=content_type)
-        return None
+        text = (title or "") + " " + (abstract or "")
+        ext_title = title or doi or url
+        tier = "bibliographic_stub"
+        extracted_title = ext_title
+        logger.info(
+            "html_capture_stub_built",
+            doi=doi, reason=fetch_failure_reason, chars=stub_chars,
+        )
+    else:
+        tier = _classify_tier(len(text))
+        extracted_title = ext.title or title or doi or url
 
-    body_html = r.text or ""
-    if not body_html.strip():
-        return None
-
-    ext = _TextExtractor()
-    try:
-        ext.feed(body_html)
-    except Exception as exc:
-        logger.warning("html_capture_parse_error", url=url, error=str(exc))
-        return None
-    text = ext.get_text()
-    if not text:
-        return None
-
-    tier = _classify_tier(len(text))
-
-    # When the page is a paywalled stub but the caller supplied an
+    # When the live page is a paywalled stub but the caller supplied an
     # abstract from OpenAlex/Crossref discovery, splice it in so the
-    # KB chunker has *something* to retrieve.
+    # KB chunker has *something* to retrieve. (The synthesized-stub path
+    # already embeds the abstract in body_html.)
     augmented_body = body_html
-    if tier == "bibliographic_stub" and abstract and abstract.strip() not in text:
-        # Append the abstract block to the body so the file we write
-        # contains it. Doesn't change the live page, just our snapshot.
+    if (
+        not fetch_failure_reason
+        and tier == "bibliographic_stub"
+        and abstract and abstract.strip() not in text
+    ):
         augmented_body = body_html + (
             "<section data-source='openalex-abstract'>"
             "<h2>Abstract (from OpenAlex/Crossref discovery)</h2>"
             f"<p>{abstract}</p></section>"
         )
 
-    extracted_title = ext.title or title or doi or url
     snapshot = _build_snapshot_html(
         title=extracted_title,
         doi=doi,
