@@ -180,6 +180,8 @@ async def search_literature(
     """
     Search academic databases for scientific papers matching a query.
 
+    **Latency:** ~5-15s with parallel 3-backend fan-out (Phase B2); 15-50s on legacy serial path. Use >=60s HTTP timeout in clients.
+
     Args:
         query: Search query (keywords, phrases, or natural language)
         max_results: Maximum number of results to return (1-50)
@@ -838,6 +840,8 @@ async def generate_report(
     Uses Perspicacité's RAG pipeline (retrieval + LLM synthesis) to answer
     a research question using papers in the specified KB.
 
+    **Latency:** 30-120s depending on KB size + LLM. Use >=180s HTTP timeout.
+
     Args:
         query: Research question to answer
         kb_name: Knowledge base to query (single-KB path)
@@ -1108,6 +1112,8 @@ async def add_dois_to_kb(
 
     For each DOI the tool fetches full text via the unified download pipeline,
     deduplicates against existing KB content, and indexes the result.
+
+    **Latency:** 5-30s per DOI (resolve + fetch + embed). Scale with batch size; use >=120s for small batches.
 
     Args:
         kb_name: Target knowledge base name
@@ -1590,6 +1596,8 @@ async def build_capsule(
     Enumerates papers in ``kb_name``'s vector-store collection, finds the row
     matching ``paper_id``, reconstructs a Paper, locates a cached PDF (if any),
     and calls ``capsule_builder.build_capsule``.
+
+    **Latency:** 5-60s per paper (figures + SI + code fetch). Scale with paper artifact count.
     """
     from perspicacite.pipeline.capsule_builder import (
         build_capsule as _build,
@@ -1620,6 +1628,8 @@ async def build_capsules_for_kb(
     """Build capsules for every paper in ``kb_name``.
 
     Returns ``{total, built, skipped, errored, per_paper: [...]}``.
+
+    **Latency:** minutes for a full KB. Prefer async job dispatch.
     """
     from perspicacite.pipeline.capsule_builder import (
         build_capsule as _build,
@@ -1664,6 +1674,8 @@ async def fetch_paper_resources(
     Resources fetched per ``kinds`` (default = all supported: github/zenodo/doi).
     With ``ingest=True``, fetched text-like files are routed into the KB as
     ``is_external=True`` chunks tagged with ``parent_paper_id=<paper_id>``.
+
+    **Latency:** 5-30s (network-bound; PDF + figures + SI).
     """
     from perspicacite.pipeline.capsule_builder import (
         capsule_dir_for,
@@ -1732,6 +1744,8 @@ async def fetch_supplementary(
     fetches each file, writes them to
     ``<capsule>/supplementary/files/<filename>``, and records a summary
     at ``<capsule>/supplementary/fetched.json``.
+
+    **Latency:** 5-30s (publisher SI fetch).
 
     Args:
         kb_name: Knowledge base containing the paper.
@@ -1893,6 +1907,8 @@ async def build_kb_from_search(
     Use this when an agent wants to spin up a focused KB for a topic
     before doing real RAG over it — one tool call gets you from
     "query string" to "queryable KB" without manual DOI shuffling.
+
+    **Latency:** minutes to tens of minutes (fan-out + per-paper enrichment). Run async via /api/jobs/* or use long client timeouts.
 
     Args:
         query: Free-text research question (used verbatim by SciLEx).
@@ -2057,6 +2073,8 @@ async def expand_kb_via_citations(
     Optionally screens candidates by BM25 / LLM relevance against
     ``query`` (or the KB description) before ingest.
 
+    **Latency:** minutes (cite-graph traversal + per-paper fetching). Prefer async job dispatch.
+
     Args:
         kb_name: Target KB. Must already exist.
         direction: ``"forward"`` / ``"backward"`` / ``"both"``.
@@ -2182,6 +2200,8 @@ async def enrich_kb_from_cite_graph_tool(
     them, and returns a ranked list of CiteHit records.
 
     v1: dry-run only. Returns ranked CiteHit records as dicts.
+
+    **Latency:** minutes (cite-graph + per-paper fetch). Prefer async job dispatch.
 
     Args:
         kb_name: Target KB name (used for context; no ingest in v1).
