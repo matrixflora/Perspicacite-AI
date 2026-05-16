@@ -255,7 +255,24 @@ async def extract_generic_html(url: str, *, http_client: httpx.AsyncClient) -> d
     journal = _first(parser.meta, "citation_journal_title", "citation_conference_title", "og:site_name")
     pdf_url = _first(parser.meta, "citation_pdf_url")
 
-    return {
+    # arXiv pages don't emit citation_doi, but they do emit citation_arxiv_id.
+    # The arxiv→DOI mapping is the standard 10.48550/arXiv.<id> form, which
+    # downstream code (push_to_zotero item_type routing) already handles
+    # as a preprint.
+    arxiv_id = _first(parser.meta, "citation_arxiv_id")
+    repository = None
+    archive_id = None
+    item_type = "journalArticle" if doi else "webpage"
+    if arxiv_id and not doi:
+        doi = f"10.48550/arXiv.{arxiv_id}"
+        repository = "arXiv"
+        archive_id = arxiv_id
+        item_type = "preprint"
+    elif arxiv_id:
+        repository = "arXiv"
+        archive_id = arxiv_id
+
+    out: dict[str, Any] = {
         "url": url,
         "title": title,
         "authors": [a for a in authors_raw if a],
@@ -263,10 +280,15 @@ async def extract_generic_html(url: str, *, http_client: httpx.AsyncClient) -> d
         "year": (pub_date or "")[:4],
         "doi": doi or "",
         "journal": journal,
-        "item_type": "journalArticle" if doi else "webpage",
+        "item_type": item_type,
         "pdf_url": pdf_url,
         "ingest_format": "html_meta_tags",
     }
+    if repository:
+        out["repository"] = repository
+    if archive_id:
+        out["archive_id"] = archive_id
+    return out
 
 
 async def extract_preprints_org(url: str, *, http_client: httpx.AsyncClient) -> dict[str, Any]:

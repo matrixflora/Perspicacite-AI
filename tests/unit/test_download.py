@@ -782,3 +782,80 @@ class TestBioRxivInUnifiedPipeline:
         # Must NOT route through bioRxiv; falls through to discovery abstract
         assert result.content_source != "biorxiv"
         assert result.abstract == "An abstract longer than twenty chars here."
+
+
+class TestDownloadPaperPDF:
+    """Tests for download_paper_pdf — the PDF-only fetch that
+    push_to_zotero(attach_pdf=True) uses when retrieve_paper_content
+    has already cached structured HTML at a higher-priority tier."""
+
+    @pytest.mark.asyncio
+    async def test_download_paper_pdf_fetches_arxiv_pdf_when_structured_succeeds(
+        self, monkeypatch, tmp_path
+    ):
+        """Live-discovered (2026-05-16): for arXiv DOIs, the unified
+        pipeline returns at the structured HTML tier and never caches
+        a PDF. download_paper_pdf must bypass that and fetch the PDF
+        directly."""
+        from perspicacite.pipeline.download.unified import download_paper_pdf
+
+        async def _disc(*a, **k):
+            return PaperDiscovery(
+                doi="10.48550/arxiv.2510.09901",
+                title="T", authors=["A"], year=2025, abstract="abs",
+                is_oa=True, work_type=None, pmcid=None,
+                arxiv_id="2510.09901",
+                oa_url=None, unpaywall_pdf_url=None,
+            )
+
+        async def _fake_arxiv_pdf(*, doi, url, http_client):
+            # ≥1024 bytes — pdf_cache rejects shorter content as corrupt
+            # to avoid caching truncated error responses.
+            return b"%PDF-1.7 " + b"x" * 2048
+
+        monkeypatch.setattr(
+            "perspicacite.pipeline.download.unified.discover_paper_sources", _disc,
+        )
+        monkeypatch.setattr(
+            "perspicacite.pipeline.download.unified.download_from_arxiv", _fake_arxiv_pdf,
+        )
+
+        result = await download_paper_pdf(
+            "10.48550/arxiv.2510.09901",
+            pdf_cache_dir=str(tmp_path),
+        )
+        assert result is not None
+        pdf_bytes, source = result
+        assert pdf_bytes.startswith(b"%PDF")
+        assert source == "arxiv_pdf"
+        # Was stored to the cache_dir so the next call is free.
+        cached_files = list(tmp_path.glob("*.pdf"))
+        assert len(cached_files) == 1
+
+    @pytest.mark.asyncio
+    async def test_download_paper_pdf_uses_cache_when_present(
+        self, monkeypatch, tmp_path
+    ):
+        """When the PDF is already cached, no network calls are made
+        and the cache hit is returned with source="pdf_cache"."""
+        from perspicacite.pipeline.download.unified import download_paper_pdf
+        from perspicacite.pipeline.download.pdf_cache import store_pdf
+
+        # ≥1024 bytes so the cache module accepts it.
+        store_pdf("10.1/cached", b"%PDF-cached " + b"y" * 2048,
+                    str(tmp_path), source="test")
+
+        # discover_paper_sources should never get called.
+        async def _disc(*a, **k):
+            raise AssertionError("discovery should not run on cache hit")
+        monkeypatch.setattr(
+            "perspicacite.pipeline.download.unified.discover_paper_sources", _disc,
+        )
+
+        result = await download_paper_pdf(
+            "10.1/cached", pdf_cache_dir=str(tmp_path),
+        )
+        assert result is not None
+        pdf_bytes, source = result
+        assert pdf_bytes.startswith(b"%PDF")
+        assert source == "pdf_cache"

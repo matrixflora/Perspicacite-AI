@@ -1516,6 +1516,26 @@ async def push_to_zotero(
                             pdf_path = (
                                 cached_pdf_path(doi, cache_dir) if cache_dir else None
                             )
+                        if pdf_path is None and cache_dir:
+                            # retrieve_paper_content returned at the
+                            # structured-text tier (e.g. arXiv HTML) before
+                            # reaching the PDF tier — never caching a PDF.
+                            # When the caller specifically asked for a PDF
+                            # attachment, force a PDF-only fetch.
+                            from perspicacite.pipeline.download.unified import (
+                                download_paper_pdf,
+                            )
+                            await download_paper_pdf(
+                                doi,
+                                http_client=http_client,
+                                unpaywall_email=pdf_config.unpaywall_email,
+                                wiley_tdm_token=pdf_config.wiley_tdm_token,
+                                aaas_api_key=pdf_config.aaas_api_key,
+                                rsc_api_key=pdf_config.rsc_api_key,
+                                springer_api_key=pdf_config.springer_api_key,
+                                pdf_cache_dir=cache_dir,
+                            )
+                            pdf_path = cached_pdf_path(doi, cache_dir)
                         # Size-cap check (Priority 3b extension): if the
                         # PDF exceeds the configured max_pdf_attach_bytes,
                         # skip the upload and fall through to HTML capture.

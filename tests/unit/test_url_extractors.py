@@ -137,6 +137,35 @@ async def test_extract_generic_html_mines_citation_tags(respx_mock):
 
 
 @pytest.mark.asyncio
+async def test_extract_generic_html_arxiv_id_constructs_doi(respx_mock):
+    """Live-discovered (2026-05-16): arxiv.org pages emit
+    ``citation_arxiv_id`` but not ``citation_doi``. The extractor must
+    construct the standard arXiv DOI form ``10.48550/arXiv.<id>`` so the
+    push pipeline routes the item as ``preprint`` instead of ``webpage``."""
+    body = """
+    <html><head>
+      <title>arXiv:2510.09901</title>
+      <meta name="citation_title" content="Autonomous Agents for Sci Discovery">
+      <meta name="citation_author" content="Zhou, Lianhao">
+      <meta name="citation_arxiv_id" content="2510.09901">
+      <meta name="citation_pdf_url" content="https://arxiv.org/pdf/2510.09901">
+    </head></html>
+    """
+    respx_mock.get("https://arxiv.org/abs/2510.09901").mock(
+        return_value=httpx.Response(200, text=body,
+                                      headers={"content-type": "text/html"})
+    )
+    async with httpx.AsyncClient() as http:
+        paper = await extract_generic_html(
+            "https://arxiv.org/abs/2510.09901", http_client=http,
+        )
+    assert paper["doi"] == "10.48550/arXiv.2510.09901"
+    assert paper["item_type"] == "preprint"
+    assert paper["repository"] == "arXiv"
+    assert paper["archive_id"] == "2510.09901"
+
+
+@pytest.mark.asyncio
 async def test_extract_generic_html_no_doi_falls_back_to_webpage(respx_mock):
     body = """
     <html><head>
