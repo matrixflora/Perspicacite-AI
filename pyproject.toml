@@ -96,6 +96,18 @@ html-ingest = [
   "trafilatura>=1.6",
 ]
 
+# Optional YouTube transcript ingest. Pulls public captions (manual or
+# auto-generated) via youtube-transcript-api. No API key required.
+# When this extra is installed, ``push_to_zotero`` and
+# ``ingest_urls_to_kb`` recognize YouTube URLs and fetch + LLM-correct
+# their transcripts for ingest.
+#
+# Install with:
+#   uv pip install -e ".[youtube-ingest]"
+youtube-ingest = [
+  "youtube-transcript-api>=0.6",
+]
+
 # Optional headless Chromium for last-resort title->DOI discovery and
 # bot-walled HTML capture. Enabled with `pdf_download.headless_browser:
 # true` in config.yml. When absent, the title_resolver and html_capture
