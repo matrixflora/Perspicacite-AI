@@ -231,8 +231,20 @@ async def _resolve_push_input(
             and promoted_title
             and (not bib_url or _re.search(r"(github\.com|docs?\.)", bib_url))
         ):
+            import os as _os
+
             from perspicacite.pipeline.download.title_resolver import (
                 resolve_doi_from_title,
+            )
+            # Headless Chromium tier 5 is opt-in via env var. Avoids
+            # ImportError + 150MB Chromium download for the common
+            # case where the four HTTP tiers are enough. Agents with
+            # a browser MCP available (e.g. ``claude-in-chrome``)
+            # can pre-resolve the title themselves and pass the DOI
+            # to ``push_to_zotero`` directly — see tool docstring.
+            enable_browser = (
+                _os.getenv("PERSPICACITE_HEADLESS_BROWSER", "").strip().lower()
+                in ("1", "true", "yes", "on")
             )
             try:
                 resolved_doi = await resolve_doi_from_title(
@@ -240,6 +252,7 @@ async def _resolve_push_input(
                     promoted_authors,
                     e.get("year"),
                     http_client=http_client,
+                    enable_browser=enable_browser,
                 )
             except Exception:
                 resolved_doi = None
@@ -1446,7 +1459,18 @@ async def push_to_zotero(
 
     3. **BibTeX route** — ``{"bibtex": "@misc{key, title={...}, ...}"}``.
        Parsed locally via bibtexparser; treated like the DOI route
-       when a ``doi`` field is present, else URL route.
+       when a ``doi`` field is present, else URL route. For entries
+       with no DOI and no usable URL, a title-based resolver walks
+       OpenAlex -> Crossref -> Semantic Scholar -> arXiv to recover a
+       DOI. Setting ``PERSPICACITE_HEADLESS_BROWSER=1`` adds a fifth
+       Chromium -> Google Scholar tier (requires the ``[browser]``
+       extra + ``playwright install chromium``).
+
+    **Agent-side hint:** if you have a browser MCP available (e.g.,
+    ``claude-in-chrome``), you can pre-resolve a title to a DOI yourself
+    by searching Google Scholar in the browser, then pass the DOI
+    directly to this tool. That works without the optional Chromium
+    extra and lets you confirm ambiguous matches visually.
 
     Optionally attaches the cached PDF and/or supplementary files (only
     works for DOI-route items today; URL-route items get HTML capture

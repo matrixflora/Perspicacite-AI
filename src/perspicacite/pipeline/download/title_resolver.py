@@ -13,14 +13,26 @@ Tiers (cheapest -> broadest):
 2. Crossref   ``works?query.bibliographic=<title>&query.author=<lastname>``
 3. Semantic Scholar ``paper/search?query=<title>``
 4. arXiv      ``query?search_query=ti:"<title>"`` (returns arXiv DOI)
+5. Headless Chromium -> Google Scholar (opt-in; needs the ``browser``
+   extra and ``playwright install chromium``). Used when HTTP tiers
+   miss — e.g., bib entries with title typos that defeat fuzzy match,
+   or very-new papers not yet indexed by the JSON APIs. Each DOI
+   scraped from the Scholar SERP is verified via Crossref before
+   being accepted.
 
 Each tier validates the top hits against the bib entry:
 
 - first-author last-name overlap (case-insensitive substring),
-- year ±1 (when both sides have one),
+- year +/-1 (when both sides have one),
 - candidate title length within 60-150% of the bib title.
 
 Returns the first DOI that passes validation, or ``None``.
+
+Agent-side note: clients with a browser MCP available (e.g. the
+``claude-in-chrome`` server) can also pre-resolve a title to a DOI
+themselves and pass it to ``push_to_zotero`` directly. The Chromium
+tier here exists for non-agent server-side callers (batch ingest,
+``build_kbs_from_zotero``, CLI flows) that can't reach an agent.
 """
 from __future__ import annotations
 
@@ -231,18 +243,132 @@ async def _try_arxiv(
     return None
 
 
+async def _try_chromium_scholar(
+    title: str,
+    first_lastname: str,
+    year: int | None,
+    *,
+    http_client: Any,
+) -> str | None:
+    """Headless Chromium -> Google Scholar -> DOI extraction + Crossref verify.
+
+    Opt-in tier. Returns ``None`` immediately when ``playwright`` is
+    not importable. When Chromium isn't installed either, the
+    ``async_playwright`` launch raises and the tier logs + returns
+    ``None``.
+
+    Strategy: render the Scholar SERP for ``"<title> <year> <author>"``,
+    extract DOI patterns from the rendered HTML (max 5 unique), then
+    confirm each via Crossref ``/works/<doi>`` and validate the
+    returned metadata against the bib entry. The Crossref verify step
+    is essential — Scholar SERP DOIs can come from neighboring
+    "cited by" / "related works" links, not the actual hit.
+    """
+    try:
+        from playwright.async_api import async_playwright  # type: ignore[import-not-found]
+    except ImportError:
+        logger.info(
+            "title_resolver_chromium_skipped",
+            reason="playwright_not_installed",
+        )
+        return None
+
+    from urllib.parse import quote
+
+    query_parts = [title]
+    if year:
+        query_parts.append(str(year))
+    if first_lastname:
+        query_parts.append(first_lastname)
+    scholar_url = (
+        "https://scholar.google.com/scholar?q=" + quote(" ".join(query_parts))
+    )
+
+    html = ""
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                ctx = await browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                )
+                page = await ctx.new_page()
+                await page.goto(
+                    scholar_url, wait_until="domcontentloaded", timeout=30000,
+                )
+                html = await page.content()
+            finally:
+                await browser.close()
+    except Exception as exc:
+        logger.info("title_resolver_chromium_failed", error=str(exc))
+        return None
+
+    # Pull DOI candidates from the rendered HTML. The pattern is
+    # deliberately conservative — Crossref's syntactically valid set
+    # is wider, but this catches everything we'd ever match against.
+    doi_pattern = re.compile(r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+")
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for raw in doi_pattern.findall(html):
+        cleaned = raw.rstrip('.,;)"\'')
+        if cleaned not in seen:
+            seen.add(cleaned)
+            candidates.append(cleaned)
+        if len(candidates) >= 5:
+            break
+
+    for doi in candidates:
+        try:
+            r = await http_client.get(
+                f"https://api.crossref.org/works/{doi}",
+                timeout=15.0,
+            )
+            if r.status_code != 200:
+                continue
+            msg = ((r.json() or {}).get("message") or {})
+            cand_title = ((msg.get("title") or [""])[0]).strip()
+            cand_authors = [
+                f"{a.get('given', '')} {a.get('family', '')}".strip()
+                for a in (msg.get("author") or [])
+                if a.get("family")
+            ]
+            cand_year: int | None = None
+            date_parts = (
+                (msg.get("issued") or {}).get("date-parts") or [[None]]
+            )[0]
+            if date_parts and date_parts[0]:
+                try:
+                    cand_year = int(date_parts[0])
+                except (TypeError, ValueError):
+                    cand_year = None
+            if _validate_match(
+                cand_title, cand_authors, cand_year, title, first_lastname, year,
+            ):
+                return doi
+        except Exception:
+            continue
+    return None
+
+
 async def resolve_doi_from_title(
     title: str,
     authors: list[str] | None,
     year: int | str | None,
     *,
     http_client: Any,
+    enable_browser: bool = False,
 ) -> str | None:
     """Try to discover a DOI from a paper title via scholarly metadata APIs.
 
     Walks OpenAlex -> Crossref -> Semantic Scholar -> arXiv; first
-    validated match wins. A match requires first-author last-name
-    overlap, year within +/-1, and title length 60-150% of the bib entry.
+    validated match wins. With ``enable_browser=True``, appends a
+    headless-Chromium Google-Scholar tier as the final fallback. A
+    match requires first-author last-name overlap, year within +/-1,
+    and title length 60-150% of the bib entry.
 
     Returns the discovered DOI bare (``"10.1234/abc"``), or ``None``
     if no tier produced a validated hit. Network/HTTP errors at any
@@ -261,12 +387,16 @@ async def resolve_doi_from_title(
         except (TypeError, ValueError):
             year_int = None
 
-    for tier_name, fn in (
+    tiers: list[tuple[str, Any]] = [
         ("openalex", _try_openalex),
         ("crossref", _try_crossref),
         ("semantic_scholar", _try_semantic_scholar),
         ("arxiv", _try_arxiv),
-    ):
+    ]
+    if enable_browser:
+        tiers.append(("chromium_scholar", _try_chromium_scholar))
+
+    for tier_name, fn in tiers:
         try:
             doi = await fn(
                 title, first_lastname, year_int, http_client=http_client,
@@ -291,5 +421,6 @@ async def resolve_doi_from_title(
         title=title[:80],
         first_lastname=first_lastname,
         year=year_int,
+        browser_used=enable_browser,
     )
     return None

@@ -376,3 +376,244 @@ async def test_empty_title_short_circuits():
             await resolve_doi_from_title("short", [], 2024, http_client=http)
             is None
         )
+
+
+# ---------------------------------------------------------------------------
+# Tier 5: headless Chromium (opt-in via enable_browser=True)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_browser_tier_skipped_when_disabled(respx_mock):
+    """With ``enable_browser=False`` (default), Chromium tier never
+    runs even when all four HTTP tiers miss."""
+    respx_mock.get(url__regex=r"https://api\.openalex\.org/works.*").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+    respx_mock.get(url__regex=r"https://api\.crossref\.org/works.*").mock(
+        return_value=httpx.Response(200, json={"message": {"items": []}})
+    )
+    respx_mock.get(
+        url__regex=r"https://api\.semanticscholar\.org/graph/v1/paper/search.*"
+    ).mock(return_value=httpx.Response(200, json={"data": []}))
+    respx_mock.get(url__regex=r"https://export\.arxiv\.org/api/query.*").mock(
+        return_value=httpx.Response(200, text="<feed></feed>")
+    )
+    async with httpx.AsyncClient() as http:
+        doi = await resolve_doi_from_title(
+            "Some Title That Doesn't Match Anywhere",
+            ["Author, X"],
+            2024,
+            http_client=http,
+            enable_browser=False,
+        )
+    assert doi is None
+
+
+@pytest.mark.asyncio
+async def test_browser_tier_returns_none_when_playwright_missing(monkeypatch):
+    """Tier 5 short-circuits to ``None`` when playwright isn't
+    importable, never blowing up the resolver."""
+    import builtins
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "playwright.async_api":
+            raise ImportError("playwright not installed in CI")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    from perspicacite.pipeline.download.title_resolver import (
+        _try_chromium_scholar,
+    )
+    async with httpx.AsyncClient() as http:
+        doi = await _try_chromium_scholar(
+            "Some Title",
+            "vaswani",
+            2017,
+            http_client=http,
+        )
+    assert doi is None
+
+
+@pytest.mark.asyncio
+async def test_browser_tier_scrapes_doi_and_verifies_via_crossref(
+    monkeypatch, respx_mock,
+):
+    """Happy path: Chromium renders Scholar HTML, we extract a DOI,
+    Crossref confirms title + author + year match."""
+    # Fake playwright API: returns a chunk of HTML containing the DOI.
+    scholar_html = """
+    <html><body>
+      <div class="gs_r">
+        <h3><a href="https://doi.org/10.48550/arXiv.1706.03762">
+          Attention Is All You Need
+        </a></h3>
+        <p>10.48550/arXiv.1706.03762 — Vaswani et al., 2017</p>
+      </div>
+    </body></html>
+    """
+    # Use a fake playwright module that yields ``scholar_html``.
+    class _FakePage:
+        async def goto(self, *a, **kw):
+            return None
+
+        async def content(self):
+            return scholar_html
+
+    class _FakeContext:
+        async def new_page(self):
+            return _FakePage()
+
+    class _FakeBrowser:
+        async def new_context(self, **kw):
+            return _FakeContext()
+
+        async def close(self):
+            return None
+
+    class _FakeChromium:
+        async def launch(self, **kw):
+            return _FakeBrowser()
+
+    class _FakePlaywrightCtx:
+        chromium = _FakeChromium()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+    def _fake_async_playwright():
+        return _FakePlaywrightCtx()
+
+    import sys
+    import types
+
+    fake_mod = types.ModuleType("playwright.async_api")
+    fake_mod.async_playwright = _fake_async_playwright
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.async_api", fake_mod)
+
+    # Crossref verification step
+    respx_mock.get(
+        url__regex=r"https://api\.crossref\.org/works/.*"
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "message": {
+                    "DOI": "10.48550/arXiv.1706.03762",
+                    "title": ["Attention Is All You Need"],
+                    "issued": {"date-parts": [[2017]]},
+                    "author": [{"given": "Ashish", "family": "Vaswani"}],
+                }
+            },
+        )
+    )
+
+    from perspicacite.pipeline.download.title_resolver import (
+        _try_chromium_scholar,
+    )
+    async with httpx.AsyncClient() as http:
+        doi = await _try_chromium_scholar(
+            "Attention Is All You Need",
+            "vaswani",
+            2017,
+            http_client=http,
+        )
+    assert doi == "10.48550/arXiv.1706.03762"
+
+
+@pytest.mark.asyncio
+async def test_browser_tier_rejects_when_crossref_metadata_doesnt_match(
+    monkeypatch, respx_mock,
+):
+    """Scholar SERP often contains DOIs from neighbouring 'related work'
+    citations. If Crossref shows a different author or wildly different
+    title, we must reject and try the next DOI."""
+    scholar_html = "Found 10.1234/wrong-paper and 10.5678/right-paper here."
+
+    class _FakePage:
+        async def goto(self, *a, **kw):
+            return None
+
+        async def content(self):
+            return scholar_html
+
+    class _FakeContext:
+        async def new_page(self):
+            return _FakePage()
+
+    class _FakeBrowser:
+        async def new_context(self, **kw):
+            return _FakeContext()
+
+        async def close(self):
+            return None
+
+    class _FakeChromium:
+        async def launch(self, **kw):
+            return _FakeBrowser()
+
+    class _FakeCtx:
+        chromium = _FakeChromium()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return None
+
+    import sys
+    import types
+
+    fake_mod = types.ModuleType("playwright.async_api")
+    fake_mod.async_playwright = lambda: _FakeCtx()
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.async_api", fake_mod)
+
+    # Crossref returns wildly-wrong metadata for first DOI, correct for second
+    def _crossref_response(request):
+        url = str(request.url)
+        if "wrong-paper" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "DOI": "10.1234/wrong-paper",
+                        "title": ["A Totally Different Paper About Cats"],
+                        "issued": {"date-parts": [[2010]]},
+                        "author": [{"given": "Wrong", "family": "Person"}],
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "DOI": "10.5678/right-paper",
+                    "title": ["Attention Is All You Need"],
+                    "issued": {"date-parts": [[2017]]},
+                    "author": [{"given": "Ashish", "family": "Vaswani"}],
+                }
+            },
+        )
+
+    respx_mock.get(
+        url__regex=r"https://api\.crossref\.org/works/.*"
+    ).mock(side_effect=_crossref_response)
+
+    from perspicacite.pipeline.download.title_resolver import (
+        _try_chromium_scholar,
+    )
+    async with httpx.AsyncClient() as http:
+        doi = await _try_chromium_scholar(
+            "Attention Is All You Need",
+            "vaswani",
+            2017,
+            http_client=http,
+        )
+    assert doi == "10.5678/right-paper"

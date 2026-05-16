@@ -85,6 +85,20 @@ code-parsing = [
   "tree-sitter-languages>=1.10",
 ]
 
+# Optional headless Chromium for last-resort title->DOI discovery and
+# bot-walled HTML capture. Enabled with `pdf_download.headless_browser:
+# true` in config.yml. When absent, the title_resolver and html_capture
+# modules silently skip the Chromium tier and use only HTTP-based
+# fallbacks.
+#
+# After installing the extra, also run `playwright install chromium`
+# to download the browser binary (~150MB):
+#   uv pip install -e ".[browser]"
+#   playwright install chromium
+browser = [
+  "playwright>=1.40",
+]
+
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
 
