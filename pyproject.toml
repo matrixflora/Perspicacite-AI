@@ -85,6 +85,17 @@ code-parsing = [
   "tree-sitter-languages>=1.10",
 ]
 
+# Optional HTML -> Markdown conversion for URL-to-KB ingest. Without
+# this extra the ``ingest_urls_to_kb`` tool falls back to a basic
+# BeautifulSoup text extraction (lower quality — boilerplate not
+# stripped, no structural awareness).
+#
+# Install with:
+#   uv pip install -e ".[html-ingest]"
+html-ingest = [
+  "trafilatura>=1.6",
+]
+
 # Optional headless Chromium for last-resort title->DOI discovery and
 # bot-walled HTML capture. Enabled with `pdf_download.headless_browser:
 # true` in config.yml. When absent, the title_resolver and html_capture
