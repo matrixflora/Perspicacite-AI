@@ -169,6 +169,10 @@ coverage.xml
 !tests/audit/**/*.py
 !tests/audit/**/*.json
 !tests/audit/**/*.md
+# Sample-bundle fixtures (skill-bundle ingest e2e tests) — keep all
+# nested .md files. The top-level *.md rule above would otherwise drop
+# docs/*.md, the intro doc that exercises the docs/**/*.md walker path.
+!tests/data/sample_bundle/**/*.md
 # Audit harnesses write transient KB sidecars (symbols.jsonl etc) under
 # tests/audit/results/audit_kb/. These are run-specific and shouldn't be
 # tracked (the symbol_index gets re-derived from live code on every run).
