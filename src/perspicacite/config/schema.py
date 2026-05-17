@@ -1027,6 +1027,38 @@ class UIConfig(BaseModel):
     citation_format: Literal["nature", "apa", "mla", "ieee"] = "nature"
 
 
+class SearchConfig(BaseModel):
+    """Search provider routing configuration."""
+
+    provider_timeout_s: float = Field(
+        default=20.0, ge=1.0,
+        description=(
+            "Timeout (seconds) for 'reliable' tier providers. "
+            "external = 1.5×, flaky = 2.25× this value."
+        ),
+    )
+    max_results_per_provider: int = Field(
+        default=25, ge=1, le=200,
+        description="Max results fetched per provider before merge.",
+    )
+    enabled_providers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Allowlist of provider names. Empty list = all registered "
+            "providers enabled. Options: scilex, pubmed, europepmc, "
+            "pubchem, core, inspire, ads."
+        ),
+    )
+    core_api_key: str = Field(
+        default="",
+        description="CORE API v3 key (optional; raises rate limit when set).",
+    )
+    ads_api_key: str = Field(
+        default="",
+        description="NASA ADS token (required for ADS provider; skipped if absent).",
+    )
+
+
 class Config(BaseModel):
     """Main configuration for Perspicacité v2."""
 
@@ -1051,6 +1083,7 @@ class Config(BaseModel):
     multimodal: MultimodalConfig = Field(default_factory=MultimodalConfig)
     external_resources: ExternalResourcesConfig = Field(default_factory=ExternalResourcesConfig)
     copyright_filter: CopyrightFilterConfig = Field(default_factory=CopyrightFilterConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":
