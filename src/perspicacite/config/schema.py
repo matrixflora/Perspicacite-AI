@@ -1068,6 +1068,24 @@ class SearchConfig(BaseModel):
     )
 
 
+class GitHubConfig(BaseModel):
+    """GitHub integration configuration."""
+
+    token_env_var: str = "GITHUB_TOKEN"
+    cache_dir: Path = Path("data/github_cache")
+    cache_max_mb: int = 2048
+    default_branch: str = "HEAD"
+    user_agent: str = "Perspicacite/2.0"
+    api_base: str = "https://api.github.com"
+
+
+class BundlesConfig(BaseModel):
+    """Skill bundle ingestion configuration."""
+
+    default_kb_name_template: str = "{name}"
+    composite_kb_name_template: str = "composite-{domain}"
+
+
 class Config(BaseModel):
     """Main configuration for Perspicacité v2."""
 
@@ -1093,6 +1111,8 @@ class Config(BaseModel):
     external_resources: ExternalResourcesConfig = Field(default_factory=ExternalResourcesConfig)
     copyright_filter: CopyrightFilterConfig = Field(default_factory=CopyrightFilterConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
+    github: GitHubConfig = Field(default_factory=GitHubConfig)
+    bundles: BundlesConfig = Field(default_factory=BundlesConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":

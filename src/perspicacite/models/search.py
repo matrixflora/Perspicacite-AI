@@ -17,6 +17,7 @@ class SearchFilters(BaseModel):
     journals: Optional[list[str]] = None
     sources: Optional[list[PaperSource]] = None
     has_full_text: Optional[bool] = None
+    source_skill: Optional[str] = None
 
     def __repr__(self) -> str:
         filters = []
@@ -39,6 +40,7 @@ class SearchFilters(BaseModel):
             self.journals is None,
             self.sources is None,
             self.has_full_text is None,
+            self.source_skill is None,
         ])
 
 
