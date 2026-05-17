@@ -75,6 +75,15 @@ class CiteGraphConfig(BaseModel):
     w_recency:   float = Field(default=0.20, ge=0.0, le=1.0)
     w_oa:        float = Field(default=0.20, ge=0.0, le=1.0)
     w_match:     float = Field(default=0.30, ge=0.0, le=1.0)
+    multi_source_bonus: float = Field(
+        default=0.15, ge=0.0, le=0.5,
+        description=(
+            "Score bonus for citing papers confirmed by ≥2 of the three "
+            "citation-graph sources (OpenAlex, Semantic Scholar, COCI). "
+            "Rewards cross-validated citations without penalising COCI's "
+            "lower recall."
+        ),
+    )
 
 
 class KnowledgeBaseConfig(BaseModel):

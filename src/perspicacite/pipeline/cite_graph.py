@@ -160,8 +160,9 @@ def score_cite_hit(
     config: CiteGraphConfig,
     *,
     now_year: int,
+    source_count: int = 1,
 ) -> float:
-    """Compute hit.score from the four signal components."""
+    """Compute hit.score from the four signal components plus optional multi-source bonus."""
     cit = _normalize_citations(hit.citation_count)
     rec = _recency_score(hit.year, now_year=now_year)
     oa = 1.0 if hit.is_oa else 0.5
@@ -172,12 +173,15 @@ def score_cite_hit(
         + config.w_oa        * oa
         + config.w_match     * match
     )
+    if source_count >= 2:
+        s = min(s + config.multi_source_bonus, 1.0)
     hit.score = round(s, 4)
     hit.score_breakdown = {
         "citations": round(cit, 4),
         "recency": round(rec, 4),
         "oa": round(oa, 4),
         "match": round(match, 4),
+        "multi_source_bonus": config.multi_source_bonus if source_count >= 2 else 0.0,
     }
     return hit.score
 
@@ -363,9 +367,31 @@ async def enrich_kb_from_cite_graph(
             client=client,
             max_results=cfg.max_papers * 4,
         )
+
+        # Fetch COCI citations concurrently when we have a DOI
+        coci_works: list[dict] = []
+        if seed_doi:
+            from perspicacite.pipeline.download.opencitations import (
+                fetch_opencitations_citations,
+            )
+            coci_works = await fetch_opencitations_citations(seed_doi, http_client=client)
+
+    # Build DOI→source_count map for multi-source bonus
+    doi_source_counts: dict[str, int] = {}
+    for w in works:
+        raw_doi = (w.get("doi") or "").replace("https://doi.org/", "")
+        if raw_doi:
+            doi_source_counts[raw_doi] = doi_source_counts.get(raw_doi, 0) + 1
+    for w in coci_works:
+        raw_doi = (w.get("doi") or "").replace("https://doi.org/", "")
+        if raw_doi:
+            doi_source_counts[raw_doi] = doi_source_counts.get(raw_doi, 0) + 1
+
+    all_works = works + coci_works
+
     raw_hits: list[CiteHit] = []
     work_by_doi: dict[str, dict] = {}
-    for w in works:
+    for w in all_works:
         h = _hit_from_oa_work(w)
         if h is not None:
             raw_hits.append(h)
@@ -377,7 +403,8 @@ async def enrich_kb_from_cite_graph(
 
     synonyms = tool_synonyms_from_seed(tool=tool, seed_title=seed_title)
     for h in filtered:
-        score_cite_hit(h, synonyms, cfg, now_year=now_year)
+        sc = doi_source_counts.get(h.doi, 1)
+        score_cite_hit(h, synonyms, cfg, now_year=now_year, source_count=sc)
 
     filtered.sort(key=lambda h: h.score, reverse=True)
     top = filtered[: cfg.max_papers]
