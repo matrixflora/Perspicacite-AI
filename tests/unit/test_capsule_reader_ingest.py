@@ -35,7 +35,7 @@ def _app_state(chunk_size=500, chunk_overlap=50, embed_dim=3):
     app_state.embedding_provider.embed = AsyncMock(
         side_effect=lambda texts: [[0.0] * embed_dim for _ in texts]
     )
-    app_state.vector_store.add_chunks = AsyncMock()
+    app_state.vector_store.add_documents = AsyncMock()
     app_state.config.knowledge_base.chunk_size = chunk_size
     app_state.config.knowledge_base.chunk_overlap = chunk_overlap
     return app_state, kb
@@ -73,8 +73,8 @@ async def test_ingest_chunks_blocks_jsonl(tmp_path):
     assert result["added_chunks"] > 0
     registry.finish.assert_awaited_once()
 
-    # The chunks passed to vector_store.add_chunks should include figure_refs
-    add_calls = app_state.vector_store.add_chunks.call_args_list
+    # The chunks passed to vector_store.add_documents should include figure_refs
+    add_calls = app_state.vector_store.add_documents.call_args_list
     assert add_calls
     all_chunks = [c for call in add_calls for c in call.args[1]]
     assert any("pdf_p2_i0" in (c.metadata.figure_refs or []) for c in all_chunks)
@@ -106,7 +106,7 @@ async def test_ingest_propagates_resource_ids(tmp_path):
     )
 
     all_chunks = [
-        c for call in app_state.vector_store.add_chunks.call_args_list
+        c for call in app_state.vector_store.add_documents.call_args_list
         for c in call.args[1]
     ]
     assert all_chunks

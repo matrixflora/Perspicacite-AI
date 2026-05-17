@@ -24,7 +24,7 @@ def _app_state():
     s.embedding_provider.embed = AsyncMock(
         side_effect=lambda texts: [[0.0, 0.1, 0.2] for _ in texts]
     )
-    s.vector_store.add_chunks = AsyncMock()
+    s.vector_store.add_documents = AsyncMock()
     s.config.knowledge_base.chunk_size = 500
     s.config.knowledge_base.chunk_overlap = 50
     s.config.capsule.auto_build_on_ingest = False
@@ -61,7 +61,7 @@ async def test_external_metadata_annotates_chunks(tmp_path):
         },
     )
 
-    calls = app_state.vector_store.add_chunks.call_args_list
+    calls = app_state.vector_store.add_documents.call_args_list
     assert calls, "no chunks written"
     chunks = [c for call in calls for c in call.args[1]]
     assert chunks
@@ -88,7 +88,7 @@ async def test_no_external_metadata_leaves_chunks_unflagged(tmp_path):
         recursive=False,
     )
     chunks = [
-        c for call in app_state.vector_store.add_chunks.call_args_list
+        c for call in app_state.vector_store.add_documents.call_args_list
         for c in call.args[1]
     ]
     for c in chunks:
@@ -133,7 +133,7 @@ async def test_ipynb_outputs_stripped_before_chunking(tmp_path):
         external_metadata={"parent_paper_id": "doi:10.1/x"},
     )
     chunks = [
-        c for call in app_state.vector_store.add_chunks.call_args_list
+        c for call in app_state.vector_store.add_documents.call_args_list
         for c in call.args[1]
     ]
     assert chunks

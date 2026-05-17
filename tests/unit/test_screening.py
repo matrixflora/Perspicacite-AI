@@ -89,7 +89,7 @@ async def test_rerank_screening_with_mocked_model(monkeypatch):
         def predict(self, pairs):
             # First pair is the on-topic paper -> high positive logit
             # Second pair is the off-topic paper -> high negative logit
-            return [5.0 if i == 0 else -5.0 for i in range(len(pairs))]
+            return [20.0 if i == 0 else -20.0 for i in range(len(pairs))]
 
     import sys
     import types

@@ -417,8 +417,9 @@ class TestRetrievePaperContent:
 
         assert disc.authors == ["Solo Author"]
         assert disc.year == 2025
-        # OpenAlex was the only call — Atom API was not invoked.
-        assert mock_client.get.await_count == 1
+        # Atom fallback (authors/year fill-in) is skipped when OpenAlex is
+        # complete, but the title cross-check still fires for arXiv DOIs.
+        assert mock_client.get.await_count == 2
 
     @pytest.mark.asyncio
     async def test_arxiv_atom_enriches_stale_cache(self, monkeypatch, tmp_path):
