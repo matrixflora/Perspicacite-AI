@@ -153,7 +153,9 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         self.sessions: dict[str, SurveySession] = {}
 
         # Injected by RAGEngine when a SessionStore is available.
-        # Used by _store_references_to_all_kbs to write reference rows.
+        # Used by _store_references_to_all_kbs (Task 3) to write reference rows.
+        # _prepare_kb_context (Task 2) and _store_references_to_all_kbs (Task 3)
+        # are called from execute() / execute_stream() in Task 4.
         self.session_store: Any = None
 
     async def execute(
@@ -388,7 +390,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
 
 
 
-    async def _broad_search(self, query: str, databases: list[str] = None) -> list[Any]:
+    async def _broad_search(self, query: str, databases: list[str] | None = None) -> list[Any]:
         """
         Broad search across multiple APIs.
         
@@ -490,9 +492,10 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 seen_pids: set[str] = set()
                 for r in results:
                     pid = r.get("paper_id") or ""
-                    if pid in seen_pids:
+                    if pid and pid in seen_pids:
                         continue
-                    seen_pids.add(pid)
+                    if pid:
+                        seen_pids.add(pid)
                     meta = r.get("metadata")
                     title = (getattr(meta, "title", None) or "Unknown title")
                     year = getattr(meta, "year", None) or ""
