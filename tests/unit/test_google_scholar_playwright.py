@@ -159,3 +159,130 @@ async def test_provider_passes_year_filters_to_url():
     assert captured_urls
     assert "as_ylo=2020" in captured_urls[0]
     assert "as_yhi=2023" in captured_urls[0]
+
+
+# ── CAPTCHA sentinel + OpenRouter fallback tests ──────────────────────────────
+
+def test_captcha_sentinel_is_module_level_object():
+    """Sentinel is a unique list identity, not a new [] each call."""
+    from perspicacite.search.google_scholar_playwright import _CAPTCHA_SENTINEL as s1
+    from perspicacite.search.google_scholar_playwright import _CAPTCHA_SENTINEL as s2
+    assert s1 is s2
+
+
+async def test_captcha_triggers_openrouter_fallback():
+    """When _render_and_extract_cards returns _CAPTCHA_SENTINEL, search() calls fallback."""
+    from perspicacite.search.google_scholar_playwright import (
+        GoogleScholarPlaywrightProvider,
+        _CAPTCHA_SENTINEL,
+    )
+    from perspicacite.models.papers import Paper, PaperSource
+
+    fallback_paper = Paper(
+        id="10.1/test",
+        title="Fallback Paper",
+        doi="10.1/test",
+        source=PaperSource.OPENROUTER_WEB,
+    )
+
+    async def fake_render(url, *, delay, headless, user_agent):
+        return _CAPTCHA_SENTINEL
+
+    async def fake_openrouter(query, *, api_key, model, max_results, allowed_domains):
+        return [fallback_paper]
+
+    with patch(
+        "perspicacite.search.google_scholar_playwright._render_and_extract_cards",
+        new=fake_render,
+    ):
+        with patch(
+            "perspicacite.search.openrouter_fallback.openrouter_academic_search",
+            new=fake_openrouter,
+        ):
+            provider = GoogleScholarPlaywrightProvider(
+                delay_seconds=0.0,
+                openrouter_fallback_enabled=True,
+                openrouter_api_key="sk-test",
+            )
+            papers = await provider.search("CRISPR", max_results=5)
+
+    assert len(papers) == 1
+    assert papers[0].title == "Fallback Paper"
+    assert papers[0].source == PaperSource.OPENROUTER_WEB
+
+
+async def test_captcha_fallback_disabled_returns_empty():
+    """When openrouter_fallback_enabled=False, CAPTCHA → [] without calling fallback."""
+    from perspicacite.search.google_scholar_playwright import (
+        GoogleScholarPlaywrightProvider,
+        _CAPTCHA_SENTINEL,
+    )
+
+    fallback_called = []
+
+    async def fake_render(url, *, delay, headless, user_agent):
+        return _CAPTCHA_SENTINEL
+
+    async def fake_openrouter(*a, **kw):
+        fallback_called.append(True)
+        return []
+
+    with patch(
+        "perspicacite.search.google_scholar_playwright._render_and_extract_cards",
+        new=fake_render,
+    ):
+        with patch(
+            "perspicacite.search.openrouter_fallback.openrouter_academic_search",
+            new=fake_openrouter,
+        ):
+            provider = GoogleScholarPlaywrightProvider(
+                delay_seconds=0.0,
+                openrouter_fallback_enabled=False,
+            )
+            papers = await provider.search("test", max_results=5)
+
+    assert papers == []
+    assert not fallback_called
+
+
+async def test_captcha_fallback_passes_correct_args():
+    """search() passes query, api_key, model, max_results, domains to fallback."""
+    from perspicacite.search.google_scholar_playwright import (
+        GoogleScholarPlaywrightProvider,
+        _CAPTCHA_SENTINEL,
+    )
+
+    captured: dict = {}
+
+    async def fake_render(url, *, delay, headless, user_agent):
+        return _CAPTCHA_SENTINEL
+
+    async def fake_openrouter(query, *, api_key, model, max_results, allowed_domains):
+        captured.update(
+            query=query, api_key=api_key, model=model,
+            max_results=max_results, domains=allowed_domains,
+        )
+        return []
+
+    with patch(
+        "perspicacite.search.google_scholar_playwright._render_and_extract_cards",
+        new=fake_render,
+    ):
+        with patch(
+            "perspicacite.search.openrouter_fallback.openrouter_academic_search",
+            new=fake_openrouter,
+        ):
+            provider = GoogleScholarPlaywrightProvider(
+                delay_seconds=0.0,
+                openrouter_fallback_enabled=True,
+                openrouter_api_key="sk-abc",
+                openrouter_fallback_model="openai/gpt-4o-mini",
+                openrouter_fallback_domains=["arxiv.org"],
+            )
+            await provider.search("deep learning", max_results=7)
+
+    assert captured["query"] == "deep learning"
+    assert captured["api_key"] == "sk-abc"
+    assert captured["model"] == "openai/gpt-4o-mini"
+    assert captured["max_results"] == 7
+    assert captured["domains"] == ["arxiv.org"]

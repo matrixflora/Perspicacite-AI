@@ -17,12 +17,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import re
 from typing import Any, ClassVar
 from urllib.parse import quote
 
 from perspicacite.logging import get_logger
 from perspicacite.models.papers import Author, Paper, PaperSource
+
+# Module-level sentinel returned by _render_and_extract_cards on CAPTCHA detection.
+# Lets search() distinguish "CAPTCHA block" from "genuinely no results"
+# via identity check (cards is _CAPTCHA_SENTINEL).
+_CAPTCHA_SENTINEL: list[dict[str, str]] = []
 
 logger = get_logger("perspicacite.search.google_scholar_playwright")
 
@@ -114,7 +120,7 @@ async def _render_and_extract_cards(
                 html = await page.content()
                 if "captcha" in html.lower() or "unusual traffic" in html.lower():
                     logger.warning("google_scholar_captcha_detected", url=url[:100])
-                    return []
+                    return _CAPTCHA_SENTINEL
 
                 cards: list[dict[str, str]] = []
                 for card_el in await page.query_selector_all(".gs_ri"):
@@ -162,7 +168,7 @@ class GoogleScholarPlaywrightProvider:
     CORESearchProvider, etc. — drop it into DomainAwareAggregator.
 
     Uses ``tier = "flaky"`` so the aggregator gives it a 45-second
-    timeout (2.25 × 20 s default) and does not count a single failure
+    timeout (2.25x 20 s default) and does not count a single failure
     as fatal.
     """
 
@@ -171,7 +177,7 @@ class GoogleScholarPlaywrightProvider:
         "Google Scholar via headless Chromium (browser extra required)"
     )
     domains: ClassVar[list[str]] = ["general"]  # broad coverage across all domains
-    tier: ClassVar[str] = "flaky"  # slow + rate-limited → flaky tier (2.25× timeout)
+    tier: ClassVar[str] = "flaky"  # slow + rate-limited -> flaky tier (2.25x timeout)
     retry: ClassVar[int] = 0  # no retry; CAPTCHA risk on multiple attempts
 
     def __init__(
@@ -184,10 +190,18 @@ class GoogleScholarPlaywrightProvider:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/120.0.0.0 Safari/537.36"
         ),
+        openrouter_fallback_enabled: bool = False,
+        openrouter_api_key: str = "",
+        openrouter_fallback_model: str = "deepseek/deepseek-chat",
+        openrouter_fallback_domains: list[str] | None = None,
     ) -> None:
         self._delay = delay_seconds
         self._headless = headless
         self._user_agent = user_agent
+        self._openrouter_enabled = openrouter_fallback_enabled
+        self._openrouter_api_key = openrouter_api_key
+        self._openrouter_model = openrouter_fallback_model
+        self._openrouter_domains = openrouter_fallback_domains
 
     async def search(
         self,
@@ -209,6 +223,21 @@ class GoogleScholarPlaywrightProvider:
             logger.warning("google_scholar_search_error", error=str(exc))
             return []
 
+        # CAPTCHA detected — fall back to OpenRouter web search if configured
+        if cards is _CAPTCHA_SENTINEL:
+            if self._openrouter_enabled:
+                from perspicacite.search.openrouter_fallback import (
+                    openrouter_academic_search,
+                )
+                return await openrouter_academic_search(
+                    query,
+                    api_key=self._openrouter_api_key,
+                    model=self._openrouter_model,
+                    max_results=max_results,
+                    allowed_domains=self._openrouter_domains,
+                )
+            return []
+
         papers: list[Paper] = []
         for card in cards[:max_results]:
             doi = _extract_doi_from_url(card.get("url", ""))
@@ -222,7 +251,7 @@ class GoogleScholarPlaywrightProvider:
                     authors.append(Author(name=name))
 
             title = card.get("title") or "Untitled"
-            paper_id = doi or f"scholar:{hash(title) & 0xFFFFFF:06x}"
+            paper_id = doi or "scholar:" + hashlib.sha256(title.encode()).hexdigest()[:8]
 
             papers.append(
                 Paper(
