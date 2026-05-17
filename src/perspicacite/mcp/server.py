@@ -77,7 +77,8 @@ class MCPState:
 
         from pathlib import Path
 
-        from perspicacite.llm import AsyncLLMClient, LiteLLMEmbeddingProvider
+        from perspicacite.llm import AsyncLLMClient
+        from perspicacite.llm.embeddings import create_embedding_provider
         from perspicacite.memory.session_store import SessionStore
         from perspicacite.pipeline.parsers.pdf import PDFParser
         from perspicacite.retrieval import ChromaVectorStore
@@ -87,8 +88,13 @@ class MCPState:
         # LLM client
         self.llm_client = AsyncLLMClient(config.llm)
 
-        # Embedding provider
-        self.embedding_provider = LiteLLMEmbeddingProvider(
+        # Embedding provider — same factory the web app uses, so when the
+        # primary OpenAI embedding fails (no OPENAI_API_KEY in env),
+        # vectors transparently fall back to a local sentence-transformers
+        # model instead of crashing the whole MCP tool call. Without
+        # this, MCP `generate_report` and other retrieval tools die at
+        # the embed step on dev boxes that haven't exported the key.
+        self.embedding_provider = create_embedding_provider(
             model=config.knowledge_base.embedding_model,
         )
 
@@ -562,10 +568,16 @@ async def get_paper_content(
             )
 
         if result.success and result.content_type in ("structured", "full_text"):
+            # F-26 (audit 2026-05-17): include the full text body so callers
+            # can actually consume the content. The previous shape only
+            # exposed full_text_length, which let consumers see "the paper
+            # exists" but not read it. We do still expose the length for
+            # quick budgeting.
             resp: dict[str, Any] = {
                 "doi": doi,
                 "content_type": result.content_type,
                 "content_source": result.content_source,
+                "full_text": result.full_text or "",
                 "full_text_length": len(result.full_text or ""),
             }
             if include_sections and result.sections:
@@ -828,19 +840,46 @@ async def search_knowledge_base(
 
         results = await dkb.search(query, top_k=top_k, filters=filters)
 
+        # ``DynamicKnowledgeBase.search`` returns plain dicts shaped as
+        # {"text", "score", "paper_id", "metadata", "kb_name"} — not the
+        # RetrievedChunk objects this serializer previously assumed.
+        # Treating them as objects produced empty paper_id/title/doi and
+        # stuffed the entire dict-repr into chunk_text (audit R-18).
         chunks = []
         for r in results:
-            meta = r.metadata if hasattr(r, "metadata") else {}
-            chunks.append(
-                {
-                    "paper_id": meta.get("paper_id"),
-                    "title": meta.get("title"),
-                    "section": meta.get("section"),
-                    "chunk_text": r.text if hasattr(r, "text") else str(r),
-                    "relevance_score": r.score if hasattr(r, "score") else None,
-                    "doi": meta.get("doi"),
-                }
-            )
+            if isinstance(r, dict):
+                meta_obj = r.get("metadata") or {}
+                meta_dict = (
+                    meta_obj.__dict__ if hasattr(meta_obj, "__dict__")
+                    else dict(meta_obj) if isinstance(meta_obj, dict) else {}
+                )
+                chunks.append(
+                    {
+                        "paper_id": r.get("paper_id") or meta_dict.get("paper_id"),
+                        "title": meta_dict.get("title"),
+                        "section": meta_dict.get("section"),
+                        "chunk_text": r.get("text", ""),
+                        "relevance_score": r.get("score"),
+                        "doi": meta_dict.get("doi"),
+                        "kb_name": r.get("kb_name"),
+                        "year": meta_dict.get("year"),
+                        "content_type": meta_dict.get("content_type"),
+                    }
+                )
+            else:
+                meta = getattr(r, "metadata", None) or {}
+                if hasattr(meta, "__dict__"):
+                    meta = meta.__dict__
+                chunks.append(
+                    {
+                        "paper_id": meta.get("paper_id") if isinstance(meta, dict) else None,
+                        "title": meta.get("title") if isinstance(meta, dict) else None,
+                        "section": meta.get("section") if isinstance(meta, dict) else None,
+                        "chunk_text": getattr(r, "text", str(r)),
+                        "relevance_score": getattr(r, "score", None),
+                        "doi": meta.get("doi") if isinstance(meta, dict) else None,
+                    }
+                )
 
         return _json_ok(
             {
