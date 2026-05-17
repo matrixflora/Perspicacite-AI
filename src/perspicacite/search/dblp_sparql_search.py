@@ -187,22 +187,46 @@ def _parse_semoa_response(data: dict[str, Any]) -> dict[str, str]:
 
 
 async def _query_dblp(sparql: str) -> list[dict[str, Any]]:
-    """POST SPARQL to DBLP QLever endpoint; return parsed records or [] on error."""
+    """POST SPARQL to DBLP QLever endpoint; return parsed records or [] on error.
+
+    Retries once on httpx.ReadTimeout — QLever's first call can hit a cold cache
+    (~25s+) and then respond in <500ms on retry.
+    """
     async with httpx.AsyncClient(timeout=25.0) as client:
-        try:
-            resp = await client.post(
-                _DBLP_SPARQL_URL,
-                headers={
-                    "Accept": "application/qlever-results+json",
-                    "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                },
-                data={"query": sparql},
-            )
-            resp.raise_for_status()
-            return _parse_dblp_response(resp.json())
-        except Exception as exc:
-            logger.warning("dblp_sparql_query_error", error=str(exc))
-            return []
+        for attempt in range(2):
+            try:
+                resp = await client.post(
+                    _DBLP_SPARQL_URL,
+                    headers={
+                        "Accept": "application/qlever-results+json",
+                        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                    },
+                    data={"query": sparql},
+                )
+                resp.raise_for_status()
+                return _parse_dblp_response(resp.json())
+            except httpx.ReadTimeout as exc:
+                if attempt == 0:
+                    logger.info(
+                        "dblp_sparql_query_retry",
+                        error=f"{type(exc).__name__}: {exc!r}",
+                        timeout_s=25.0,
+                    )
+                    continue
+                logger.warning(
+                    "dblp_sparql_query_error",
+                    error=f"{type(exc).__name__}: {exc!r}",
+                    timeout_s=25.0,
+                )
+                return []
+            except Exception as exc:
+                logger.warning(
+                    "dblp_sparql_query_error",
+                    error=f"{type(exc).__name__}: {exc!r}",
+                    timeout_s=25.0,
+                )
+                return []
+        return []
 
 
 async def _enrich_semoa(dois: list[str]) -> dict[str, str]:
@@ -224,7 +248,9 @@ async def _enrich_semoa(dois: list[str]) -> dict[str, str]:
             return _parse_semoa_response(resp.json())
         except Exception as exc:
             logger.warning(
-                "semopenalex_enrich_failed", error=str(exc), n_dois=len(dois)
+                "semopenalex_enrich_failed",
+                error=f"{type(exc).__name__}: {exc!r}",
+                n_dois=len(dois),
             )
             return {}
 

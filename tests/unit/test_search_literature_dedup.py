@@ -87,3 +87,56 @@ async def test_search_literature_no_exclude_kb_returns_all():
 
     result = json.loads(result_json)
     assert len(result.get("papers", [])) == 2
+
+
+@pytest.mark.asyncio
+async def test_search_literature_surfaces_metadata_sources():
+    """Per-provider attribution: metadata.sources from the aggregator's merge
+    must be surfaced in the MCP response payload so callers can see every
+    provider that contributed a given paper."""
+    from perspicacite.mcp.server import search_literature
+    from perspicacite.models.papers import Paper, PaperSource
+
+    multi_source = Paper(
+        id="10.1/multi",
+        title="Cross-DB hit",
+        doi="10.1/multi",
+        source=PaperSource.SCILEX,
+        metadata={"sources": ["scilex", "dblp_sparql"]},
+    )
+    single_source = Paper(
+        id="10.2/solo",
+        title="Single-DB hit",
+        doi="10.2/solo",
+        source=PaperSource.OPENALEX,
+        metadata={"sources": ["openalex"]},
+    )
+    no_metadata = Paper(
+        id="10.3/none",
+        title="No metadata",
+        doi="10.3/none",
+        source=PaperSource.OPENALEX,
+    )
+
+    mock_aggregator = MagicMock()
+    mock_aggregator.available = True
+    mock_aggregator.search = AsyncMock(
+        return_value=[multi_source, single_source, no_metadata]
+    )
+    mock_aggregator.last_errors_by_database = {}
+
+    mock_state = MagicMock()
+    mock_state.config = MagicMock()
+
+    with patch("perspicacite.mcp.server._require_state", return_value=mock_state), \
+         patch(
+             "perspicacite.search.domain_aggregator.build_aggregator",
+             return_value=mock_aggregator,
+         ):
+        result_json = await search_literature(query="x", max_results=10)
+
+    result = json.loads(result_json)
+    by_doi = {p["doi"]: p for p in result["papers"]}
+    assert by_doi["10.1/multi"]["metadata"]["sources"] == ["scilex", "dblp_sparql"]
+    assert by_doi["10.2/solo"]["metadata"]["sources"] == ["openalex"]
+    assert "metadata" not in by_doi["10.3/none"]
