@@ -281,6 +281,17 @@ class KnowledgeBaseConfig(BaseModel):
         ),
     )
     cite_graph: CiteGraphConfig = Field(default_factory=CiteGraphConfig)
+    ingest_mode: Literal["auto", "full_text", "abstract_only"] = Field(
+        default="auto",
+        description=(
+            "Content acquisition mode for KB ingestion.\n"
+            "  'auto'          — current behaviour: try structured → PDF → abstract.\n"
+            "  'full_text'     — fail papers that have no full text.\n"
+            "  'abstract_only' — skip PDF/structured fetches entirely; use abstract\n"
+            "                    from OpenAlex/Crossref discovery. ~80% faster for\n"
+            "                    large corpora; retrieval depth is shallower."
+        ),
+    )
 
 
 class CopyrightFilterConfig(BaseModel):
@@ -1068,6 +1079,38 @@ class SearchConfig(BaseModel):
     )
 
 
+class GoogleScholarConfig(BaseModel):
+    """Google Scholar search via headless Chromium (optional [browser] dep)."""
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable Google Scholar provider. Requires `playwright` optional dep: "
+            "`uv pip install -e \".[browser]\" && playwright install chromium`."
+        ),
+    )
+    headless: bool = Field(
+        default=True,
+        description="Run Chromium headless. Set False for debugging.",
+    )
+    delay_seconds: float = Field(
+        default=2.0, ge=0.5, le=30.0,
+        description="Polite delay between requests (seconds). Do not lower below 1.0.",
+    )
+    max_results: int = Field(
+        default=20, ge=1, le=50,
+        description="Hard cap on results per search call.",
+    )
+    user_agent: str = Field(
+        default=(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        description="Browser User-Agent string sent to Scholar.",
+    )
+
+
 class GitHubConfig(BaseModel):
     """GitHub integration configuration."""
 
@@ -1113,6 +1156,7 @@ class Config(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     github: GitHubConfig = Field(default_factory=GitHubConfig)
     bundles: BundlesConfig = Field(default_factory=BundlesConfig)
+    google_scholar: GoogleScholarConfig = Field(default_factory=GoogleScholarConfig)
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":
