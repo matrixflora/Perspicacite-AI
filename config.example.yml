@@ -390,6 +390,7 @@ search:
     - inspire      # INSPIRE-HEP physics bibliography (free, no key)
     - ads          # NASA ADS astronomy (requires ads_api_key below)
     # - google_scholar  # Google Scholar via Playwright (requires [browser] dep + google_scholar.enabled: true below)
+    # - dblp_sparql     # DBLP citation-ranked titles + SemOpenAlex abstracts (free, no key)
 
   # CORE API key (optional — raises rate limit from 10 to unlimited req/min)
   # Register at https://core.ac.uk/api-keys/register

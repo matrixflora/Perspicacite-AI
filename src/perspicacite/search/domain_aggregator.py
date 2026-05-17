@@ -306,6 +306,13 @@ def build_aggregator(config: Any) -> DomainAwareAggregator:
         except Exception as exc:
             logger.warning("build_aggregator_scholar_unavailable", error=str(exc))
 
+    if "dblp_sparql" in enabled:
+        try:
+            from perspicacite.search.dblp_sparql_search import DBLPSPARQLSearchProvider
+            providers.append(DBLPSPARQLSearchProvider())
+        except Exception as exc:
+            logger.warning("build_aggregator_dblp_sparql_unavailable", error=str(exc))
+
     logger.info(
         "build_aggregator_ready",
         n_providers=len(providers),
