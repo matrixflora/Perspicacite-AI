@@ -113,6 +113,7 @@ packages_to_use/
 !docs/orcid-disambiguation-*.md
 !docs/mcp-resources-prompts-*.md
 !docs/e2e-validation-*.md
+!docs/github-skill-bundle-*.md
 !docs/recipe-book-*.md
 !docs/architecture-*.md
 !docs/upstream-prompts/**/*.md

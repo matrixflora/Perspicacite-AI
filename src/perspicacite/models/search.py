@@ -1,6 +1,6 @@
 """Search and retrieval models."""
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -11,13 +11,13 @@ from perspicacite.models.papers import PaperSource
 class SearchFilters(BaseModel):
     """Filters for search queries."""
 
-    year_min: Optional[int] = None
-    year_max: Optional[int] = None
-    authors: Optional[list[str]] = None
-    journals: Optional[list[str]] = None
-    sources: Optional[list[PaperSource]] = None
-    has_full_text: Optional[bool] = None
-    source_skill: Optional[str] = None
+    year_min: int | None = None
+    year_max: int | None = None
+    authors: list[str] | None = None
+    journals: list[str] | None = None
+    sources: list[PaperSource] | None = None
+    has_full_text: bool | None = None
+    source_skill: str | None = None
 
     def __repr__(self) -> str:
         filters = []
@@ -67,7 +67,7 @@ class SearchQuery(BaseModel):
     text: str
     kb_name: str = "default"
     mode: Literal["vector", "bm25", "hybrid"] = "hybrid"
-    filters: Optional[SearchFilters] = None
+    filters: SearchFilters | None = None
     top_k: int = Field(default=10, ge=1, le=100)
     rerank: bool = True
 

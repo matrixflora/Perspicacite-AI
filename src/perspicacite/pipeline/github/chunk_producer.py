@@ -8,7 +8,7 @@ For v1 these content types are handled:
 from __future__ import annotations
 
 import ast
-from pathlib import Path  # noqa: TC003
+from pathlib import Path
 
 from perspicacite.logging import get_logger
 from perspicacite.models.papers import Paper, PaperSource

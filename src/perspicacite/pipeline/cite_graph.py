@@ -16,16 +16,14 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 from perspicacite.config.schema import CiteGraphConfig
 from perspicacite.pipeline.external.fetch_github import fetch_github_repo
 
-
 _GITHUB_REPO_RE = re.compile(r"github\.com/([\w.-]+/[\w.-]+)", re.IGNORECASE)
 
 
-def _github_repo_for_work(_client, oa_work: dict, *, headers: dict) -> Optional[str]:
+def _github_repo_for_work(_client, oa_work: dict, *, headers: dict) -> str | None:
     """Best-effort extraction of ``owner/repo`` from an OpenAlex work record.
 
     Scans DOI, primary_location.landing_page_url, and alternate landing-page
@@ -54,11 +52,11 @@ class CiteHit:
     doi: str
     title: str
     year: int
-    venue: Optional[str]
+    venue: str | None
     citation_count: int
     is_oa: bool
-    abstract: Optional[str] = None
-    github_url: Optional[str] = None
+    abstract: str | None = None
+    github_url: str | None = None
     score: float = 0.0
     score_breakdown: dict = field(default_factory=dict)
     scripts: list[dict] = field(default_factory=list)
@@ -91,8 +89,8 @@ _TITLE_STOPWORDS = frozenset({
 
 def tool_synonyms_from_seed(
     *,
-    tool: Optional[str],
-    seed_title: Optional[str],
+    tool: str | None,
+    seed_title: str | None,
 ) -> list[str]:
     """Build a synonyms list for cite-graph ranking.
 
@@ -122,7 +120,7 @@ def tool_synonyms_from_seed(
     return syns
 
 
-def _keyword_match(text: Optional[str], synonyms: list[str]) -> float:
+def _keyword_match(text: str | None, synonyms: list[str]) -> float:
     """Score how well the abstract text matches the tool synonym list.
 
     Each synonym is matched either as a whole token or — for hyphenated
@@ -141,10 +139,7 @@ def _keyword_match(text: Optional[str], synonyms: list[str]) -> float:
             continue
         sl = syn.lower()
         # Exact word-token match
-        if sl in tokens:
-            hits += 1
-        # Substring match (handles hyphenated names present verbatim)
-        elif sl in text_lower:
+        if sl in tokens or sl in text_lower:
             hits += 1
         else:
             # All word-parts of the synonym appear as tokens
@@ -212,7 +207,6 @@ def apply_cite_graph_filters(
 
 # --- Orchestrator (Task 6) -----------------------------------------
 
-from typing import Optional as _Optional
 
 import httpx
 
@@ -227,13 +221,13 @@ from perspicacite.pipeline.snowball import (
 
 async def _resolve_and_fetch(
     *,
-    tool: _Optional[str],
-    doi: _Optional[str],
-    openalex_id: _Optional[str],
+    tool: str | None,
+    doi: str | None,
+    openalex_id: str | None,
     headers: dict[str, str],
     client: httpx.AsyncClient,
     max_results: int,
-) -> tuple[list[dict], _Optional[str]]:
+) -> tuple[list[dict], str | None]:
     """Resolve the library to a seed work, then fetch OpenAlex citing works.
 
     Returns a (citing_works, seed_title) tuple. The title — when known —
@@ -262,7 +256,7 @@ async def _resolve_and_fetch(
         )
         return works, seed_title
 
-    seed_doi: _Optional[str] = doi
+    seed_doi: str | None = doi
     if seed_doi is None:
         if not tool:
             return ([], None)
@@ -279,7 +273,7 @@ async def _resolve_and_fetch(
     return (works, seed_title)
 
 
-def _hit_from_oa_work(work: dict) -> _Optional["CiteHit"]:
+def _hit_from_oa_work(work: dict) -> CiteHit | None:
     """Project an OpenAlex work dict into a CiteHit. Returns None when
     the work has no DOI."""
     doi = (work.get("doi") or "").replace("https://doi.org/", "")
@@ -313,13 +307,13 @@ def _hit_from_oa_work(work: dict) -> _Optional["CiteHit"]:
 
 async def enrich_kb_from_cite_graph(
     *,
-    tool: _Optional[str] = None,
-    doi: _Optional[str] = None,
-    openalex_id: _Optional[str] = None,
+    tool: str | None = None,
+    doi: str | None = None,
+    openalex_id: str | None = None,
     kb_config,
     existing_dois: set[str],
     dry_run: bool = False,
-    now_year: _Optional[int] = None,
+    now_year: int | None = None,
 ) -> list[CiteHit]:
     """Resolve library/DOI/OpenAlex-id → fetch citing works → filter+score → top-N.
 
@@ -346,7 +340,7 @@ async def enrich_kb_from_cite_graph(
     # When only a tool name is given, resolve it to a DOI here so
     # ``_resolve_and_fetch`` can stay narrowly focused on the OpenAlex
     # round-trip (and easy to mock in tests).
-    seed_doi: _Optional[str] = doi
+    seed_doi: str | None = doi
     if openalex_id is None and seed_doi is None and tool:
         paper = await resolve_library_paper(
             tool,
@@ -427,7 +421,7 @@ async def enrich_kb_from_cite_graph(
                 if isinstance(blob, dict):
                     scripts = (blob.get("scripts") or [])[:3]
                     h.scripts = list(scripts)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
 
     return top
