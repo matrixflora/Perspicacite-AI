@@ -65,6 +65,20 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS kb_paper_references (
+    id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+    kb_name      TEXT NOT NULL,
+    doi          TEXT,
+    title        TEXT NOT NULL,
+    authors_json TEXT DEFAULT '[]',
+    year         INTEGER,
+    abstract     TEXT,
+    survey_query TEXT,
+    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(kb_name, doi)
+);
+CREATE INDEX IF NOT EXISTS idx_kb_paper_refs_kb ON kb_paper_references(kb_name);
+
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id);
 """
@@ -386,6 +400,55 @@ class SessionStore:
                 )
                 for r in rows
             ]
+
+    async def store_paper_reference(
+        self,
+        kb_name: str,
+        doi: str | None,
+        title: str,
+        authors: list[str],
+        year: int | None,
+        abstract: str | None,
+        survey_query: str | None = None,
+    ) -> bool:
+        """Store a paper reference in the kb_paper_references table.
+
+        Returns True if the row was inserted (new), False if it was a duplicate
+        (same kb_name + doi already exists). Papers without a DOI are stored but
+        do NOT participate in the UNIQUE constraint — callers that want to avoid
+        duplicates for DOI-less papers must check before calling.
+        """
+        import json as _json
+
+        async with aiosqlite.connect(self.db_path) as db:
+            cur = await db.execute(
+                "INSERT OR IGNORE INTO kb_paper_references "
+                "(kb_name, doi, title, authors_json, year, abstract, survey_query) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (kb_name, doi, title, _json.dumps(authors), year, abstract, survey_query),
+            )
+            await db.commit()
+            return (cur.rowcount or 0) > 0
+
+    async def get_paper_references(self, kb_name: str) -> list[dict]:
+        """Return all paper references stored for a KB, newest first.
+
+        Each dict contains all columns plus an ``authors`` key (list[str]) decoded
+        from ``authors_json``.
+        """
+        import json as _json
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT * FROM kb_paper_references WHERE kb_name = ? ORDER BY created_at DESC",
+                (kb_name,),
+            )
+            rows = await cur.fetchall()
+        return [
+            {**dict(r), "authors": _json.loads(r["authors_json"] or "[]")}
+            for r in rows
+        ]
 
     async def delete_kb_metadata(self, name: str) -> bool:
         """Delete a KB row from ``kb_metadata``.
