@@ -1,6 +1,7 @@
 """Tests for DomainClassifier — regex-based query→domain routing."""
 
 import pytest
+
 from perspicacite.search.domain_classifier import DomainClassifier
 
 
