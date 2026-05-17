@@ -82,3 +82,25 @@ async def test_get_paper_references_filters_by_kb(store):
     assert refs_kb1[0]["doi"] == "10.1/x"
     assert len(refs_kb2) == 1
     assert refs_kb2[0]["doi"] == "10.1/y"
+
+
+async def test_store_null_doi_allows_multiple_rows(store):
+    """Papers without a DOI are not deduplicated — each call inserts a new row.
+
+    SQLite's UNIQUE constraint treats NULL != NULL, so (kb_name, doi=NULL) pairs
+    are never considered duplicates. Callers that want DOI-less deduplication
+    must handle it themselves before calling store_paper_reference.
+    """
+    r1 = await store.store_paper_reference(
+        kb_name="kb1", doi=None, title="No DOI Paper",
+        authors=[], year=None, abstract=None, survey_query=None,
+    )
+    r2 = await store.store_paper_reference(
+        kb_name="kb1", doi=None, title="No DOI Paper",
+        authors=[], year=None, abstract=None, survey_query=None,
+    )
+    # Both return True because NULLs are not equal in SQL UNIQUE constraints
+    assert r1 is True
+    assert r2 is True
+    refs = await store.get_paper_references("kb1")
+    assert len(refs) == 2
