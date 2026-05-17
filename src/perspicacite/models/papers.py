@@ -28,6 +28,12 @@ class PaperSource(str, Enum):
     ARXIV = "arxiv"
     CROSSREF = "crossref"
     SEMANTIC_SCHOLAR = "semantic_scholar"
+    EUROPE_PMC = "europe_pmc"
+    PUBCHEM = "pubchem"
+    CORE = "core"
+    INSPIRE_HEP = "inspire_hep"
+    ADS = "ads"
+    OPENCITATIONS = "opencitations"
 
 
 class Author(BaseModel):
