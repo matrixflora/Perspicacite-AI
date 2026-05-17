@@ -120,3 +120,29 @@ def test_detect_input_type_name():
     from perspicacite.search.pubchem_search import _detect_input_type
     assert _detect_input_type("aspirin") == "name"
     assert _detect_input_type("glucose") == "name"
+
+
+@pytest.mark.asyncio
+async def test_papers_retagged_as_pubchem_source(monkeypatch):
+    """Papers returned by PubMedSearchAdapter must be re-tagged as PaperSource.PUBCHEM."""
+    import perspicacite.search.pubchem_search as mod
+
+    async def mock_get_cid(input_value, input_type, client):
+        return 2244
+
+    async def mock_get_pmids(cid, client):
+        return [11234567]
+
+    async def mock_pmids_to_papers(pmids, email, max_results):
+        # Simulate a paper returned by PubMed with PUBMED source
+        return [Paper(id="10.1000/t", title="T", source=PaperSource.PUBMED)]
+
+    monkeypatch.setattr(mod, "_get_cid", mock_get_cid)
+    monkeypatch.setattr(mod, "_get_pmids_for_cid", mock_get_pmids)
+    monkeypatch.setattr(mod, "_pmids_to_papers", mock_pmids_to_papers)
+
+    from perspicacite.search.pubchem_search import PubChemSearchProvider
+    provider = PubChemSearchProvider()
+    papers = await provider.search("aspirin")
+    assert len(papers) == 1
+    assert papers[0].source == PaperSource.PUBCHEM

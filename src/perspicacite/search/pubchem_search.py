@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import httpx
 
 from perspicacite.logging import get_logger
+from perspicacite.models.papers import PaperSource
 
 if TYPE_CHECKING:
     from perspicacite.models.papers import Paper
@@ -129,6 +130,8 @@ class PubChemSearchProvider:
             return []
 
         papers = await _pmids_to_papers(pmids, self._email, max_results)
+        for p in papers:
+            p.source = PaperSource.PUBCHEM
         logger.info(
             "pubchem_search",
             query=query[:80],
