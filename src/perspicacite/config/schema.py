@@ -1110,7 +1110,7 @@ class GoogleScholarConfig(BaseModel):
         description="Browser User-Agent string sent to Scholar.",
     )
     openrouter_fallback_enabled: bool = Field(
-        default=True,
+        default=False,
         description=(
             "Call OpenRouter web_search when Scholar returns a CAPTCHA. "
             "Requires openrouter_api_key or OPENROUTER_API_KEY env var."
@@ -1121,11 +1121,11 @@ class GoogleScholarConfig(BaseModel):
         description="OpenRouter API key. Also read from OPENROUTER_API_KEY env var.",
     )
     openrouter_fallback_model: str = Field(
-        default="deepseek/deepseek-v2-fast",
+        default="deepseek/deepseek-chat",
         description=(
-            "OpenRouter model for CAPTCHA fallback. Use 'deepseek/deepseek-v2-fast' "
-            "for cheap Exa-backed search. For native search: 'anthropic/claude-haiku-4-5' "
-            "or 'openai/gpt-4o-mini' (omit engine override in that case)."
+            "OpenRouter model for CAPTCHA fallback. 'deepseek/deepseek-chat' (DeepSeek-V3) "
+            "is cheap and works with Exa-backed search. For native search use: "
+            "'anthropic/claude-haiku-4-5' or 'openai/gpt-4o-mini'."
         ),
     )
     openrouter_fallback_domains: list[str] = Field(
