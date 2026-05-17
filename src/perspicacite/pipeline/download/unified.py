@@ -16,9 +16,10 @@ from typing import Any
 import httpx
 
 from perspicacite.logging import get_logger
-from .base import PaperContent, PaperDiscovery, PDFDownloader
-from .discovery import discover_paper_sources
-from .pmc import get_fulltext_from_pmc
+
+from .aaas import download_from_aaas, is_aaas_doi
+from .acs import download_from_acs, is_acs_doi
+from .alternative import download_from_alternative_endpoint
 from .arxiv import (
     download_from_arxiv,
     fetch_arxiv_html,
@@ -26,16 +27,16 @@ from .arxiv import (
     is_arxiv_doi,
     is_arxiv_url,
 )
-from .openalex_oa import download_pdf_from_openalex_oa
-from .acs import download_from_acs, is_acs_doi
-from .rsc import download_from_rsc, is_rsc_doi
-from .aaas import download_from_aaas, is_aaas_doi
-from .springer import download_from_springer, is_springer_doi
-from .wiley import download_from_wiley_tdm, download_from_wiley_direct
+from .base import PaperContent, PaperDiscovery, PDFDownloader
+from .biorxiv import get_content_from_biorxiv, is_biorxiv_doi
+from .discovery import discover_paper_sources
 from .elsevier import get_content_from_elsevier
-from .alternative import download_from_alternative_endpoint
-from .biorxiv import is_biorxiv_doi, get_content_from_biorxiv
 from .europepmc import get_content_from_europepmc
+from .openalex_oa import download_pdf_from_openalex_oa
+from .pmc import get_fulltext_from_pmc
+from .rsc import download_from_rsc, is_rsc_doi
+from .springer import download_from_springer, is_springer_doi
+from .wiley import download_from_wiley_direct, download_from_wiley_tdm
 
 logger = get_logger("perspicacite.pipeline.download.unified")
 
@@ -109,6 +110,7 @@ async def retrieve_paper_content(
     cookies_path: str | None = None,
     cookie_domains: list[str] | None = None,
     pdf_cache_dir: str | None = None,
+    abstract_only: bool = False,
 ) -> PaperContent:
     """Retrieve paper content using the unified priority pipeline.
 
@@ -204,6 +206,20 @@ async def retrieve_paper_content(
                     disc.journal = patch["journal"]
             except Exception as e:
                 logger.warning("crossref_enrich_skipped", doi=clean, error=str(e))
+
+        # ── ABSTRACT-ONLY FAST PATH ────────────────────────────────────────
+        if abstract_only:
+            if disc.abstract:
+                return PaperContent(
+                    success=True,
+                    doi=clean,
+                    content_type="abstract",
+                    full_text=None,
+                    abstract=disc.abstract,
+                    content_source="discovery",
+                    metadata=_metadata_from_discovery(disc, clean),
+                )
+            return _none_result(doi)
 
         # ── STEP 2: STRUCTURED FULL TEXT ────────────────────────────────
 
