@@ -1,3 +1,9 @@
+# Audit / scratch artifacts — must never appear in the GitHub repo
+audit_*/
+mimosa_html_*.json
+*.bak.*
+config.yml.bak*
+
 # Python
 __pycache__/
 *.py[cod]
