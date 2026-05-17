@@ -226,16 +226,21 @@ class GoogleScholarPlaywrightProvider:
         # CAPTCHA detected — fall back to OpenRouter web search if configured
         if cards is _CAPTCHA_SENTINEL:
             if self._openrouter_enabled:
-                from perspicacite.search.openrouter_fallback import (
-                    openrouter_academic_search,
-                )
-                return await openrouter_academic_search(
-                    query,
-                    api_key=self._openrouter_api_key,
-                    model=self._openrouter_model,
-                    max_results=max_results,
-                    allowed_domains=self._openrouter_domains,
-                )
+                try:
+                    from perspicacite.search.openrouter_fallback import (
+                        openrouter_academic_search,
+                    )
+                    return await openrouter_academic_search(
+                        query,
+                        api_key=self._openrouter_api_key,
+                        model=self._openrouter_model,
+                        max_results=max_results,
+                        allowed_domains=self._openrouter_domains,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "google_scholar_openrouter_fallback_error", error=str(exc)
+                    )
             return []
 
         papers: list[Paper] = []
