@@ -36,6 +36,7 @@ class PaperSource(str, Enum):
     OPENCITATIONS = "opencitations"
     GOOGLE_SCHOLAR = "google_scholar"
     DBLP_SPARQL = "dblp_sparql"
+    OPENROUTER_WEB = "openrouter_web"
 
 
 class Author(BaseModel):
