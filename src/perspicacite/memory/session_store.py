@@ -446,6 +446,19 @@ class SessionStore:
             for r in rows
         ]
 
+    async def delete_paper_references(self, kb_name: str) -> int:
+        """Delete all paper reference rows for a KB.
+
+        Returns the number of rows deleted.  Called automatically by
+        ``delete_kb_metadata`` so that KB teardown leaves no orphaned rows.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cur = await db.execute(
+                "DELETE FROM kb_paper_references WHERE kb_name = ?", (kb_name,)
+            )
+            await db.commit()
+            return cur.rowcount or 0
+
     async def delete_kb_metadata(self, name: str) -> bool:
         """Delete a KB row from ``kb_metadata``.
 
@@ -457,6 +470,9 @@ class SessionStore:
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(
                 "DELETE FROM kb_metadata WHERE name = ?", (name,)
+            )
+            await db.execute(
+                "DELETE FROM kb_paper_references WHERE kb_name = ?", (name,)
             )
             await db.commit()
             return (cur.rowcount or 0) > 0
