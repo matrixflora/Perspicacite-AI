@@ -115,6 +115,7 @@ packages_to_use/
 !docs/e2e-validation-*.md
 !docs/github-skill-bundle-*.md
 !docs/google-scholar-abstract-only-*.md
+!docs/handoff-*.md
 !docs/recipe-book-*.md
 !docs/architecture-*.md
 !docs/upstream-prompts/**/*.md
