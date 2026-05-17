@@ -524,6 +524,72 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         )
         return context_block, all_known_ids
 
+    async def _store_references_to_all_kbs(
+        self,
+        papers: list[Any],
+        kb_names: list[str],
+        survey_query: str,
+    ) -> int:
+        """Store reference rows in SQLite for every KB beyond the first.
+
+        ``kb_names[0]`` (the primary KB) already receives full ingestion via the
+        existing ``add_paper_to_kb`` path.  Indices 1..n receive a lightweight
+        ``kb_paper_references`` row per paper so a future ``add_dois_to_kb`` /
+        rebuild can fully ingest them.
+
+        Only papers with a non-null ``doi`` are stored (papers without a DOI
+        cannot be looked up by a future ingestion command anyway).
+
+        Returns the total number of NEW rows written.
+        Never raises.
+        """
+        if self.session_store is None or len(kb_names) < 2:
+            return 0
+
+        extra_kbs = kb_names[1:]
+        total = 0
+        query_snippet = str(survey_query)[:200]
+
+        for kb_name in extra_kbs:
+            for paper in papers:
+                doi = getattr(paper, "doi", None)
+                if not doi:
+                    continue  # skip: no DOI means can't re-ingest via add_dois_to_kb
+                try:
+                    authors = list(getattr(paper, "authors", []) or [])
+                    abstract_raw = getattr(paper, "abstract", None)
+                    abstract = abstract_raw[:500] if abstract_raw else None
+                    new = await self.session_store.store_paper_reference(
+                        kb_name=kb_name,
+                        doi=doi,
+                        title=str(getattr(paper, "title", "") or "Untitled"),
+                        authors=authors,
+                        year=getattr(paper, "year", None),
+                        abstract=abstract,
+                        survey_query=query_snippet,
+                    )
+                    if new:
+                        total += 1
+                        logger.info(
+                            "survey_reference_stored",
+                            kb=kb_name,
+                            doi=doi,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "survey_reference_store_error",
+                        kb=kb_name,
+                        paper=str(getattr(paper, "title", "?"))[:50],
+                        error=str(exc),
+                    )
+
+        logger.info(
+            "survey_references_complete",
+            extra_kbs=extra_kbs,
+            total_new=total,
+        )
+        return total
+
     async def _analyze_abstracts_batch(
         self,
         papers: list[PaperCandidate],
