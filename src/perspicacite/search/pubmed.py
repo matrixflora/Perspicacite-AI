@@ -131,6 +131,12 @@ def _parse_efetch(handle: Any) -> list[dict[str, Any]]:
 class PubMedSearchAdapter:
     """Search PubMed via NCBI Entrez (esearch → efetch), returning Paper models."""
 
+    name = "pubmed"
+    description = "Direct NCBI PubMed search via Biopython Entrez (esearch → efetch)"
+    domains: list[str] = ["biomedical"]
+    tier: str = "reliable"
+    retry: int = 0
+
     def __init__(
         self,
         email: str,

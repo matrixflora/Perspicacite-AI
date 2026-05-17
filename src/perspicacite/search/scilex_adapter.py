@@ -28,6 +28,9 @@ class SciLExAdapter:
         "SciLEx multi-database academic literature search "
         "(Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP)"
     )
+    domains: list[str] = ["general", "biomedical", "cs"]
+    tier: str = "reliable"
+    retry: int = 0
 
     def __init__(self, api_config: dict[str, Any] | None = None):
         self._scilex_available = self._check_scilex()
