@@ -258,7 +258,9 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         # Return interim response - user needs to select papers
         summary = self._generate_interim_summary(session, known_context=kb_context_block)
 
-        # Store references to extra KBs (indices 1..n) for future re-ingestion
+        # Store references to extra KBs (indices 1..n) for future re-ingestion.
+        # Falls back to [request.kb_name] when kb_names is absent; in that case
+        # len(all_kb_names) == 1 so _store_references_to_all_kbs is a no-op.
         all_kb_names = list(request.kb_names or [request.kb_name])
         recommended_papers = [p for p in session.papers if p.recommended]
         await self._store_references_to_all_kbs(
@@ -386,7 +388,9 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             })
         )
 
-        # Store references to extra KBs
+        # Store references to extra KBs.
+        # Falls back to [request.kb_name] when kb_names is absent; in that case
+        # len(all_kb_names) == 1 so _store_references_to_all_kbs is a no-op.
         all_kb_names = list(request.kb_names or [request.kb_name])
         recommended_papers = [p for p in session.papers if p.recommended]
         await self._store_references_to_all_kbs(
@@ -567,8 +571,9 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
     ) -> int:
         """Store reference rows in SQLite for every KB beyond the first.
 
-        ``kb_names[0]`` (the primary KB) already receives full ingestion via the
-        existing ``add_paper_to_kb`` path.  Indices 1..n receive a lightweight
+        ``kb_names[0]`` (the primary KB) is intentionally skipped here — callers
+        are expected to invoke ``add_dois_to_kb`` directly for it using the DOIs
+        from ``response.sources``.  Indices 1..n receive a lightweight
         ``kb_paper_references`` row per paper so a future ``add_dois_to_kb`` /
         rebuild can fully ingest them.
 
@@ -593,7 +598,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 try:
                     authors = [str(a) for a in (getattr(paper, "authors", []) or [])]
                     abstract_raw = getattr(paper, "abstract", None)
-                    abstract = abstract_raw[:500] if abstract_raw else None
+                    abstract = abstract_raw[:500] if abstract_raw else None  # cap to avoid DB bloat
                     new = await self.session_store.store_paper_reference(
                         kb_name=kb_name,
                         doi=doi,

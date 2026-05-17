@@ -296,3 +296,45 @@ async def test_execute_stream_calls_prepare_kb_context_and_store_references():
 
     assert prepare_called, "_prepare_kb_context was not called in execute_stream()"
     assert store_called, "_store_references_to_all_kbs was not called in execute_stream()"
+
+
+# ── _filter_known_papers ─────────────────────────────────────────────────────
+
+def test_filter_known_papers_excludes_by_id():
+    mode = _make_mode()
+    papers = [
+        MagicMock(id="doi:10.1/a", doi="10.1/a"),
+        MagicMock(id="doi:10.1/b", doi="10.1/b"),
+    ]
+    result = mode._filter_known_papers(papers, {"doi:10.1/a"})
+    assert len(result) == 1
+    assert result[0].id == "doi:10.1/b"
+
+
+def test_filter_known_papers_excludes_by_doi():
+    mode = _make_mode()
+    # paper has a different id but a doi that is known
+    papers = [
+        MagicMock(id="openalex:W123", doi="10.1/a"),
+        MagicMock(id="openalex:W456", doi="10.1/b"),
+    ]
+    result = mode._filter_known_papers(papers, {"10.1/a"})
+    assert len(result) == 1
+    assert result[0].id == "openalex:W456"
+
+
+def test_filter_known_papers_keeps_papers_with_no_identifiers():
+    mode = _make_mode()
+    papers = [
+        MagicMock(id=None, doi=None),
+        MagicMock(id="", doi=""),
+    ]
+    result = mode._filter_known_papers(papers, {"doi:10.1/a", "10.1/b"})
+    assert len(result) == 2  # no identifiers → not matched → kept
+
+
+def test_filter_known_papers_noop_with_empty_known_ids():
+    mode = _make_mode()
+    papers = [MagicMock(id="doi:10.1/a", doi="10.1/a")]
+    result = mode._filter_known_papers(papers, set())
+    assert len(result) == 1
