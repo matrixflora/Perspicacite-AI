@@ -286,3 +286,34 @@ async def test_captcha_fallback_passes_correct_args():
     assert captured["model"] == "openai/gpt-4o-mini"
     assert captured["max_results"] == 7
     assert captured["domains"] == ["arxiv.org"]
+
+
+async def test_captcha_fallback_raises_returns_empty():
+    """If the fallback itself raises (e.g. ImportError), search() still returns []."""
+    from perspicacite.search.google_scholar_playwright import (
+        GoogleScholarPlaywrightProvider,
+        _CAPTCHA_SENTINEL,
+    )
+
+    async def fake_render(url, *, delay, headless, user_agent):
+        return _CAPTCHA_SENTINEL
+
+    async def fake_openrouter(*a, **kw):
+        raise RuntimeError("fallback module broken")
+
+    with patch(
+        "perspicacite.search.google_scholar_playwright._render_and_extract_cards",
+        new=fake_render,
+    ):
+        with patch(
+            "perspicacite.search.openrouter_fallback.openrouter_academic_search",
+            new=fake_openrouter,
+        ):
+            provider = GoogleScholarPlaywrightProvider(
+                delay_seconds=0.0,
+                openrouter_fallback_enabled=True,
+                openrouter_api_key="sk-test",
+            )
+            papers = await provider.search("test", max_results=5)
+
+    assert papers == []
