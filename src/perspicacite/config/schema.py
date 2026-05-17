@@ -2,7 +2,7 @@
 
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -649,8 +649,8 @@ class RAGModeSettings(BaseModel):
         default=10, ge=1, le=50
     )  # Max papers to include in response (agentic mode)
     # v1 core: optional separate model for refine_response / evaluate_response
-    evaluator_provider: Optional[str] = None
-    evaluator_model: Optional[str] = None
+    evaluator_provider: str | None = None
+    evaluator_model: str | None = None
     # v1 core refine_response / profonde (clamped in mode code to 1–3 where applicable)
     refinement_iterations: int = Field(default=2, ge=1, le=5)
     # v1 profonde: mid-cycle plan review after consecutive step failures
@@ -760,7 +760,7 @@ class SciLexConfig(BaseModel):
     """SciLEx integration configuration."""
 
     enabled: bool = True
-    config_path: Optional[Path] = None
+    config_path: Path | None = None
     pubmed_email: str = ""
 
     apis: dict[str, SciLexAPIConfig] = Field(
@@ -905,10 +905,10 @@ class ExternalResourcesConfig(BaseModel):
 class PDFDownloadConfig(BaseModel):
     """PDF download configuration."""
 
-    unpaywall_email: Optional[str] = Field(
+    unpaywall_email: str | None = Field(
         default=None, description="Email for Unpaywall API. Required for querying open access PDFs."
     )
-    alternative_endpoint: Optional[str] = Field(
+    alternative_endpoint: str | None = Field(
         default=None,
         description=(
             "Alternative endpoint for PDF downloads — a private or "
@@ -923,28 +923,28 @@ class PDFDownloadConfig(BaseModel):
     # - arXiv: fully open, no registration needed
 
     # Institutional access (API keys needed)
-    wiley_tdm_token: Optional[str] = Field(
+    wiley_tdm_token: str | None = Field(
         default=None,
         description="Wiley TDM (Text and Data Mining) API client token. Register at https://developer.wiley.com/",
     )
-    elsevier_api_key: Optional[str] = Field(
+    elsevier_api_key: str | None = Field(
         default=None,
         description="Elsevier ScienceDirect API key. Register at https://dev.elsevier.com/",
     )
-    aaas_api_key: Optional[str] = Field(
+    aaas_api_key: str | None = Field(
         default=None, description="AAAS (Science) API key for institutional access."
     )
-    rsc_api_key: Optional[str] = Field(
+    rsc_api_key: str | None = Field(
         default=None,
         description="Royal Society of Chemistry API key. Register at https://api.rsc.org/",
     )
-    springer_api_key: Optional[str] = Field(
+    springer_api_key: str | None = Field(
         default=None,
         description="Springer Nature API key. Register at https://dev.springernature.com/",
     )
     # ACS typically uses IP-based access, no API key
 
-    semantic_scholar_api_key: Optional[str] = Field(
+    semantic_scholar_api_key: str | None = Field(
         default=None,
         description="Semantic Scholar API key. Register at https://www.semanticscholar.org/product/api#api-key",
     )
@@ -961,7 +961,7 @@ class PDFDownloadConfig(BaseModel):
     # This is the server-side equivalent of what the Zotero Connector
     # extension does in the browser. Cookies expire — re-export as
     # needed.
-    cookies_path: Optional[str] = Field(
+    cookies_path: str | None = Field(
         default=None,
         description="Path to Netscape-format cookies.txt for institutional PDF access.",
     )
@@ -1026,7 +1026,7 @@ class AuthConfig(BaseModel):
     """Authentication configuration."""
 
     enabled: bool = True
-    token: Optional[str] = None  # Set via env: PERSPICACITE_AUTH_TOKEN
+    token: str | None = None  # Set via env: PERSPICACITE_AUTH_TOKEN
 
 
 class UIConfig(BaseModel):

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path  # noqa: TC003
+from pathlib import Path
 
 DEFAULT_INCLUDE_GLOBS: list[str] = ["**/*.py", "**/*.md", "**/*.ipynb", "**/*.rst"]
 DEFAULT_EXCLUDE_GLOBS: list[str] = [
