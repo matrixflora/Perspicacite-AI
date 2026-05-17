@@ -418,26 +418,22 @@ class SessionStore:
         do NOT participate in the UNIQUE constraint — callers that want to avoid
         duplicates for DOI-less papers must check before calling.
         """
-        import json as _json
-
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute(
                 "INSERT OR IGNORE INTO kb_paper_references "
                 "(kb_name, doi, title, authors_json, year, abstract, survey_query) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (kb_name, doi, title, _json.dumps(authors), year, abstract, survey_query),
+                (kb_name, doi, title, json.dumps(authors), year, abstract, survey_query),
             )
             await db.commit()
             return (cur.rowcount or 0) > 0
 
-    async def get_paper_references(self, kb_name: str) -> list[dict]:
+    async def get_paper_references(self, kb_name: str) -> list[dict[str, Any]]:
         """Return all paper references stored for a KB, newest first.
 
         Each dict contains all columns plus an ``authors`` key (list[str]) decoded
         from ``authors_json``.
         """
-        import json as _json
-
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cur = await db.execute(
@@ -446,7 +442,7 @@ class SessionStore:
             )
             rows = await cur.fetchall()
         return [
-            {**dict(r), "authors": _json.loads(r["authors_json"] or "[]")}
+            {**dict(r), "authors": json.loads(r["authors_json"] or "[]")}
             for r in rows
         ]
 
