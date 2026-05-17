@@ -165,3 +165,21 @@ async def test_store_references_returns_correct_count():
         papers, ["primary", "extra-1", "extra-2"], "q"
     )
     assert result == 4
+
+
+async def test_store_references_counts_only_new_rows():
+    """store_paper_reference returning False (duplicate) should not increment the count."""
+    mode = _make_mode()
+    mock_store = AsyncMock()
+    # 2 papers x 2 extra KBs = 4 calls; first and third return True, second and fourth return False
+    mock_store.store_paper_reference = AsyncMock(side_effect=[True, False, True, False])
+    mode.session_store = mock_store
+
+    papers = [
+        MagicMock(doi="10.1/a", title="A", authors=[], year=2020, abstract=""),
+        MagicMock(doi="10.1/b", title="B", authors=[], year=2021, abstract=""),
+    ]
+    result = await mode._store_references_to_all_kbs(
+        papers, ["primary", "extra-1", "extra-2"], "q"
+    )
+    assert result == 2  # only 2 new rows, 2 were duplicates

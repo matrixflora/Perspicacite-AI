@@ -556,7 +556,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 if not doi:
                     continue  # skip: no DOI means can't re-ingest via add_dois_to_kb
                 try:
-                    authors = list(getattr(paper, "authors", []) or [])
+                    authors = [str(a) for a in (getattr(paper, "authors", []) or [])]
                     abstract_raw = getattr(paper, "abstract", None)
                     abstract = abstract_raw[:500] if abstract_raw else None
                     new = await self.session_store.store_paper_reference(
