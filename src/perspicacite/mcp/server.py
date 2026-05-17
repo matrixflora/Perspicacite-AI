@@ -3700,6 +3700,81 @@ async def zotero_ingest_collection_to_kb(
 # =============================================================================
 
 
+@mcp.tool()
+async def ingest_github_repo(
+    url_or_path: str,
+    kb_name: str,
+    ingest_linked_papers: bool = True,
+) -> dict:
+    """Ingest a GitHub repository or local path into a knowledge base.
+
+    Args:
+        url_or_path: GitHub URL (https://github.com/org/repo) or local filesystem path.
+        kb_name: Target knowledge base name.
+        ingest_linked_papers: If True, also ingest DOIs referenced in the bundle.
+
+    Returns:
+        Summary with files_added, chunks_added, linked_papers_added.
+    """
+    from perspicacite.pipeline.github_kb import ingest_github_repo as _ingest
+    state = mcp_state.app_state if hasattr(mcp_state, "app_state") else mcp_state
+    summary = await _ingest(
+        source=url_or_path,
+        kb_name=kb_name,
+        config=state.config,
+        vector_store=state.vector_store,
+        embedding_service=state.embedding_provider,
+        session_store=state.session_store,
+        ingest_linked_papers=ingest_linked_papers,
+    )
+    return {
+        "bundle_name": summary.bundle_name,
+        "files_added": summary.files_added,
+        "chunks_added": summary.chunks_added,
+        "linked_papers_added": summary.linked_papers_added,
+        "errors": summary.errors,
+    }
+
+
+@mcp.tool()
+async def ingest_skill_bundle(
+    path: str,
+    kb_name: str | None = None,
+    ingest_linked_papers: bool = True,
+) -> dict:
+    """Ingest a skill bundle directory into a knowledge base.
+
+    Args:
+        path: Local filesystem path to the skill bundle directory.
+        kb_name: Target KB name. Defaults to the bundle's name from bundle.yml.
+        ingest_linked_papers: If True, also ingest DOIs referenced in the bundle.
+
+    Returns:
+        Summary with bundle_name, files_added, chunks_added, linked_papers_added.
+    """
+    from pathlib import Path as _Path
+
+    from perspicacite.pipeline.github_kb import ingest_skill_bundle as _ingest
+
+    state = mcp_state.app_state if hasattr(mcp_state, "app_state") else mcp_state
+    summary = await _ingest(
+        source=_Path(path),
+        kb_name=kb_name,
+        config=state.config,
+        vector_store=state.vector_store,
+        embedding_service=state.embedding_provider,
+        session_store=state.session_store,
+        ingest_linked_papers=ingest_linked_papers,
+    )
+    return {
+        "bundle_name": summary.bundle_name,
+        "files_added": summary.files_added,
+        "chunks_added": summary.chunks_added,
+        "linked_papers_added": summary.linked_papers_added,
+        "errors": summary.errors,
+    }
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
@@ -3728,6 +3803,8 @@ _TOOL_NAMES: list[str] = [
     "zotero_get_collection_items",
     "zotero_get_paper_resources",
     "zotero_ingest_collection_to_kb",
+    "ingest_github_repo",
+    "ingest_skill_bundle",
 ]
 
 
