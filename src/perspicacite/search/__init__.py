@@ -1,6 +1,7 @@
 """Literature search providers."""
 
 from perspicacite.search.ads_search import ADSSearchProvider
+from perspicacite.search.dblp_sparql_search import DBLPSPARQLSearchProvider
 from perspicacite.search.core_search import CORESearchProvider
 from perspicacite.search.doi_resolver import resolve_doi, resolve_dois_batch
 from perspicacite.search.domain_aggregator import DomainAwareAggregator, build_aggregator
@@ -18,6 +19,7 @@ __all__ = [
     "ADSSearchProvider",
     "CORESearchProvider",
     "DomainAwareAggregator",
+    "DBLPSPARQLSearchProvider",
     "DomainClassifier",
     "EuropePMCSearchProvider",
     "GoogleScholarPlaywrightProvider",
