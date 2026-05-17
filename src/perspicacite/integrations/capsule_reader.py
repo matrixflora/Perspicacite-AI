@@ -200,7 +200,7 @@ async def ingest_capsule(
         embeds = await app_state.embedding_provider.embed(texts)
         for c, e in zip(all_chunks, embeds, strict=True):
             c.embedding = e
-        await app_state.vector_store.add_chunks(kb.collection_name, all_chunks)
+        await app_state.vector_store.add_documents(kb.collection_name, all_chunks)
         total = len(all_chunks)
 
     kb.chunk_count += total
