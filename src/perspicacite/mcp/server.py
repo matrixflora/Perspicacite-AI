@@ -1243,6 +1243,8 @@ async def generate_report(
             "basic": RAGMode.BASIC,
             "advanced": RAGMode.ADVANCED,
             "profound": RAGMode.PROFOUND,
+            "agentic": RAGMode.AGENTIC,
+            "literature_survey": RAGMode.LITERATURE_SURVEY,
             "contradiction": RAGMode.CONTRADICTION,
         }
         rag_mode = mode_map.get(mode, RAGMode.ADVANCED)
