@@ -145,15 +145,21 @@ def screen_papers(
             if s > raw_scores[i]:
                 raw_scores[i] = float(s)
 
-    max_score = max(raw_scores) if raw_scores else 0.0
-    normalizer = max_score if max_score > 0.0 else 1.0
-    norm_scores = [s / normalizer for s in raw_scores]
+    # Absolute saturation function: s / (s + k). With k≈3 this gives a
+    # threshold of 0.5 at BM25 score ≈3, matching where ms-marco rerank
+    # and LLM-judge produce "borderline relevant" papers in practice.
+    # The 'score' field is comparable across BM25/rerank/LLM tiers and
+    # the threshold has consistent semantics. Tie-broken at score ties by
+    # raw BM25 to preserve in-batch ordering.
+    _K = 3.0
+    norm_scores = [float(s) / (float(s) + _K) for s in raw_scores]
 
     results = [
         ScreenResult(
             item=candidates[i],
             score=norm_scores[i],
             kept=norm_scores[i] >= threshold,
+            reason=f"bm25_raw={raw_scores[i]:.2f}",
         )
         for i in range(len(candidates))
     ]
@@ -225,14 +231,21 @@ async def screen_papers_rerank(
     ]
     raw_scores = await loop.run_in_executor(None, lambda: model.predict(pairs))
 
-    # Sigmoid -> [0,1]. ms-marco family is trained with logit outputs.
-    norm_scores = [1.0 / (1.0 + math.exp(-float(s))) for s in raw_scores]
+    # Tempered sigmoid -> [0,1]. The ms-marco family emits logits roughly
+    # -10..+10; a plain sigmoid saturates above ~10 so every "good" hit
+    # collapses to 1.0 and the threshold loses resolution. Dividing by
+    # T=4.0 keeps the active band wide enough to distinguish a logit-of-6
+    # hit (≈0.82) from a logit-of-10 hit (≈0.92), so the returned score
+    # is actually informative as a ranking signal.
+    _T = 4.0
+    norm_scores = [1.0 / (1.0 + math.exp(-float(s) / _T)) for s in raw_scores]
 
     results = [
         ScreenResult(
             item=candidates_list[i],
             score=norm_scores[i],
             kept=norm_scores[i] >= threshold,
+            reason=f"rerank_logit={float(raw_scores[i]):.2f}",
         )
         for i in range(len(candidates_list))
     ]

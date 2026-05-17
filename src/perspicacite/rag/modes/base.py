@@ -84,6 +84,11 @@ class BaseRAGMode(ABC):
             embedding_service=embedding_provider,
         )
         dkb.collection_name = chroma_collection_name_for_kb(single_name)
+        # F-15: tag the retriever with the originating KB name so each
+        # search result carries kb_name even on the single-KB path. The
+        # MultiKBRetriever already populates kb_name per chunk; this
+        # mirrors that for parity.
+        dkb.kb_name = single_name
         dkb._initialized = True
         return dkb
 

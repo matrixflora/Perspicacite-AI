@@ -73,6 +73,30 @@ def _paper_for_file(path: Path) -> Paper:
     )
 
 
+def _extract_year_from_text(text: str | None) -> int | None:
+    """Heuristic year extractor for URL/local-doc ingest (F-13).
+
+    Looks for the first 4-digit year in [1990, current_year+1] within
+    the first 4KB of the document. Catches:
+      - ``Published: 2024`` / ``Date: 2024-01-15``
+      - YouTube transcript headers (carry an upload date in the warning)
+      - arXiv abstract pages (``[v1] 2023``)
+      - Markdown front-matter with ``date: 2023-XX-XX``
+    Returns ``None`` when no plausible year is present.
+    """
+    if not text:
+        return None
+    import re as _re
+    from datetime import datetime as _dt
+    max_year = _dt.now().year + 1
+    sample = text[:4096]
+    for m in _re.finditer(r"\b(19[9][0-9]|20[0-9]{2})\b", sample):
+        y = int(m.group(1))
+        if 1990 <= y <= max_year:
+            return y
+    return None
+
+
 async def _read_text(path: Path, content_type: str, pdf_parser) -> str | None:
     if content_type == "pdf":
         if pdf_parser is None:
@@ -113,6 +137,12 @@ async def _ingest_files(
             content_type, language = infer_content_type(fp)
             paper = _paper_for_file(fp)
             text = await _read_text(fp, content_type, app_state.pdf_parser)
+            # F-13: opportunistic year extraction from the document body so
+            # KB-stats by_year and recency-weighted retrieval have signal
+            # for URL- / file-ingested sources.
+            year_guess = _extract_year_from_text(text)
+            if year_guess is not None:
+                paper.year = year_guess
             if not text:
                 await registry.publish(job_id, {
                     "type": "progress", "done": idx + 1, "file": str(fp), "status": "empty",

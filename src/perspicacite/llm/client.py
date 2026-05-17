@@ -782,7 +782,10 @@ class AsyncLLMClient:
                     )
                 return
 
-            # Standard OpenAI-compatible streaming
+            # Standard OpenAI-compatible streaming. include_usage=True asks
+            # the OpenAI-compatible backend to emit a final delta-chunk
+            # with token totals (F-23 — without it provenance records
+            # prompt_tokens=0 / completion_tokens=0).
             completion_kwargs = {
                 "model": model_str,
                 "messages": messages,
@@ -790,6 +793,7 @@ class AsyncLLMClient:
                 "max_tokens": max_tokens,
                 "timeout": provider_config.timeout,
                 "stream": True,
+                "stream_options": {"include_usage": True},
             }
             completion_kwargs.update(kwargs)
 
@@ -797,14 +801,29 @@ class AsyncLLMClient:
             response = await litellm.acompletion(**completion_kwargs)
 
             accum2: list[str] = []
+            stream_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0}
             async for chunk in response:
-                piece = chunk.choices[0].delta.content
-                if piece:
-                    accum2.append(piece)
-                    yield piece
+                if chunk.choices:
+                    piece = chunk.choices[0].delta.content
+                    if piece:
+                        accum2.append(piece)
+                        yield piece
+                # Final chunk often carries .usage when include_usage=True.
+                usage_obj = getattr(chunk, "usage", None)
+                if usage_obj is not None:
+                    pt = getattr(usage_obj, "prompt_tokens", None)
+                    ct = getattr(usage_obj, "completion_tokens", None)
+                    if pt:
+                        stream_usage["prompt_tokens"] = int(pt)
+                    if ct:
+                        stream_usage["completion_tokens"] = int(ct)
 
             latency_ms = (time.monotonic() - t0) * 1000.0
-            logger.info("llm_stream_complete", provider=provider, model=model)
+            logger.info(
+                "llm_stream_complete", provider=provider, model=model,
+                prompt_tokens=stream_usage["prompt_tokens"],
+                completion_tokens=stream_usage["completion_tokens"],
+            )
             from perspicacite.provenance.context import get_collector
             _c = get_collector()
             if _c is not None:
@@ -814,8 +833,8 @@ class AsyncLLMClient:
                     model=model,
                     prompt_messages=messages,
                     response_text="".join(accum2),
-                    prompt_tokens=0,
-                    completion_tokens=0,
+                    prompt_tokens=stream_usage["prompt_tokens"],
+                    completion_tokens=stream_usage["completion_tokens"],
                     latency_ms=latency_ms,
                 )
 

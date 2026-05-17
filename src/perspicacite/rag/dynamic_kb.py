@@ -161,6 +161,7 @@ Abstract:
         # Format authors as comma-separated string for metadata
         authors_str = ", ".join(str(a) for a in paper.authors) if paper.authors else None
         
+        paper_content_type = getattr(paper, "content_type", None)
         chunks.append(DocumentChunk(
             id=f"{paper.id}_metadata",
             text=metadata_text,
@@ -172,6 +173,9 @@ Abstract:
                 authors=authors_str,
                 year=paper.year,
                 doi=paper.doi,
+                url=paper.url,
+                content_type=paper_content_type,
+                section="metadata",
             ),
         ))
 
@@ -201,6 +205,8 @@ Abstract:
                         authors=authors_str,
                         year=paper.year,
                         doi=paper.doi,
+                        url=paper.url,
+                        content_type=paper_content_type,
                     ),
                 ))
 
@@ -354,6 +360,10 @@ Abstract:
                 "score": score,
                 "paper_id": paper_id,
                 "metadata": r.chunk.metadata,
+                # F-15: propagate kb_name when the retriever was tagged by
+                # BaseRAGMode._build_kb_retriever (single-KB path). The
+                # MultiKBRetriever sets this per chunk already.
+                "kb_name": getattr(self, "kb_name", None),
             })
 
             if len(filtered) >= top_k:

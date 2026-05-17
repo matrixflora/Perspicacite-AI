@@ -83,16 +83,43 @@ def load_bibtex_entries(path: Path) -> list[dict[str, Any]]:
 
 
 def entries_to_papers(entries: list[dict[str, Any]]) -> list[Paper]:
-    """Convert parsed BibTeX entries to Paper models (metadata only)."""
+    """Convert parsed BibTeX entries to Paper models (metadata only).
+
+    Backwards-compatible wrapper around :func:`entries_to_papers_with_diagnostics`
+    that drops the per-entry skip report. Callers wanting to surface dropped
+    entries should use the diagnostic variant instead.
+    """
+    papers, _ = entries_to_papers_with_diagnostics(entries)
+    return papers
+
+
+def entries_to_papers_with_diagnostics(
+    entries: list[dict[str, Any]],
+) -> tuple[list[Paper], list[dict[str, Any]]]:
+    """Like :func:`entries_to_papers` but also returns the list of dropped
+    entries with a per-entry reason. Each dropped entry is reported as
+    ``{"key": str | None, "title": str | None, "reason": str}``.
+    """
     papers: list[Paper] = []
+    dropped: list[dict[str, Any]] = []
     for e in entries:
         et = (e.get("ENTRYTYPE") or "").lower()
         if et not in ALLOWED_ENTRY_TYPES:
+            dropped.append({
+                "key": e.get("ID"),
+                "title": (e.get("title") or "").strip() or None,
+                "reason": f"unsupported entry type: {et or 'unknown'}",
+            })
             continue
         flat = bibtexparser_entry_to_paper_dict(e)
         title = (flat.get("title") or "").strip()
         if not title:
             logger.warning("bibtex_skip_no_title", entry_key=e.get("ID"))
+            dropped.append({
+                "key": e.get("ID"),
+                "title": None,
+                "reason": "missing title",
+            })
             continue
         try:
             papers.append(Paper.from_bibtex(flat))
@@ -102,7 +129,12 @@ def entries_to_papers(entries: list[dict[str, Any]]) -> list[Paper]:
                 entry_key=e.get("ID"),
                 error=str(ex),
             )
-    return papers
+            dropped.append({
+                "key": e.get("ID"),
+                "title": title or None,
+                "reason": f"parse error: {ex}",
+            })
+    return papers, dropped
 
 
 def _parse_local_file_field(file_value: str | None) -> Path | None:

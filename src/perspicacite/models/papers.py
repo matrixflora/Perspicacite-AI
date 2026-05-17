@@ -64,6 +64,10 @@ class Paper(BaseModel):
     source: PaperSource = PaperSource.BIBTEX
     keywords: list[str] = Field(default_factory=list)
     full_text: Optional[str] = None
+    # Pipeline content-tier marker carried from PaperContent.content_type:
+    # one of "structured" | "full_text" | "abstract" | "none". None when
+    # the paper was loaded outside the unified download pipeline.
+    content_type: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("year")

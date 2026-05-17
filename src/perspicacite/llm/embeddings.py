@@ -266,6 +266,23 @@ class FallbackEmbeddingProvider:
 
     @property
     def model_name(self) -> str:
+        """Return the primary model name only.
+
+        Historically returned ``"primary|fallback"`` for diagnostic
+        purposes, but that string was being persisted as the KB's
+        embedding fingerprint and broke multi-KB compatibility checks
+        against KBs created from the MCP path (which uses
+        ``LiteLLMEmbeddingProvider`` directly and so stamps the bare
+        primary name). The composite is still available via
+        :attr:`composite_name`. Vectors stored in a KB come from the
+        primary unless ``primary_embedding_failed`` actually fires, in
+        which case ``last_used_model`` records the truth.
+        """
+        return self.primary.model_name
+
+    @property
+    def composite_name(self) -> str:
+        """Legacy ``"primary|fallback"`` string — diagnostic use only."""
         return f"{self.primary.model_name}|{self.fallback.model_name}"
 
     @property
