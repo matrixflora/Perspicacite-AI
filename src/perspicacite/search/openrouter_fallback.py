@@ -8,6 +8,7 @@ No external dependencies beyond httpx (already in project requirements).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from typing import Any
@@ -85,7 +86,13 @@ def _parse_response(content: str) -> list[dict[str, Any]]:
     end = content.rfind("]")
     if start == -1 or end == -1 or end <= start:
         return []
-    return json.loads(content[start : end + 1])
+    try:
+        result = json.loads(content[start : end + 1])
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(result, list):
+        return []
+    return result
 
 
 def _build_paper(entry: dict[str, Any]) -> Paper | None:
@@ -104,7 +111,8 @@ def _build_paper(entry: dict[str, Any]) -> Paper | None:
                 authors.append(Author(name=name_str))
 
         abstract = str(entry.get("abstract") or "").strip() or None
-        paper_id = doi or f"openrouter:{abs(hash(url or title)) & 0xFFFFFF:06x}"
+        _hash = hashlib.sha256((url or title or "unknown").encode()).hexdigest()[:8]
+        paper_id = doi or f"openrouter:{_hash}"
 
         return Paper(
             id=paper_id,
