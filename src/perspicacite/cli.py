@@ -1675,6 +1675,115 @@ def check_cookies_cmd(
         sys.exit(1)
 
 
+@cli.command("ingest-github-repo")
+@click.argument("url_or_path")
+@click.option("--kb", "kb_name", required=True, help="Target knowledge base name")
+@click.option("--no-linked-papers", "no_linked", is_flag=True, default=False)
+@click.option("-c", "--config", "config_path", default="config.yml", show_default=True)
+@click.pass_context
+def ingest_github_repo_cmd(
+    ctx: click.Context,
+    url_or_path: str,
+    kb_name: str,
+    no_linked: bool,
+    config_path: str,
+) -> None:
+    """Ingest a GitHub repository (URL or local path) into a knowledge base."""
+    from perspicacite.pipeline.github_kb import ingest_github_repo
+    from perspicacite.web.state import AppState
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        summary = await ingest_github_repo(
+            source=url_or_path,
+            kb_name=kb_name,
+            config=state.config,
+            vector_store=state.vector_store,
+            embedding_service=state.embedding_provider,
+            session_store=state.session_store,
+            ingest_linked_papers=not no_linked,
+        )
+        click.echo(
+            f"Done: {summary.files_added} files, {summary.chunks_added} chunks, "
+            f"{summary.linked_papers_added} linked papers added."
+        )
+
+    asyncio.run(_run())
+
+
+@cli.command("ingest-skill-bundle")
+@click.argument("path", type=click.Path(exists=True, file_okay=False))
+@click.option("--kb", "kb_name", default=None, help="KB name (default: bundle name)")
+@click.option("--no-linked-papers", "no_linked", is_flag=True, default=False)
+@click.option("-c", "--config", "config_path", default="config.yml", show_default=True)
+@click.pass_context
+def ingest_skill_bundle_cmd(
+    ctx: click.Context,
+    path: str,
+    kb_name: str | None,
+    no_linked: bool,
+    config_path: str,
+) -> None:
+    """Ingest a single skill bundle directory into a knowledge base."""
+    from perspicacite.pipeline.github_kb import ingest_skill_bundle
+    from perspicacite.web.state import AppState
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        summary = await ingest_skill_bundle(
+            source=Path(path),
+            kb_name=kb_name,
+            config=state.config,
+            vector_store=state.vector_store,
+            embedding_service=state.embedding_provider,
+            session_store=state.session_store,
+            ingest_linked_papers=not no_linked,
+        )
+        click.echo(
+            f"Done: bundle='{summary.bundle_name}', {summary.files_added} files, "
+            f"{summary.chunks_added} chunks."
+        )
+
+    asyncio.run(_run())
+
+
+@cli.command("ingest-skill-bundles")
+@click.argument("paths", nargs=-1, type=click.Path(exists=True, file_okay=False))
+@click.option("--no-linked-papers", "no_linked", is_flag=True, default=False)
+@click.option("-c", "--config", "config_path", default="config.yml", show_default=True)
+@click.pass_context
+def ingest_skill_bundles_cmd(
+    ctx: click.Context,
+    paths: tuple[str, ...],
+    no_linked: bool,
+    config_path: str,
+) -> None:
+    """Ingest multiple skill bundle directories."""
+    from perspicacite.pipeline.github_kb import ingest_skill_bundles_batch
+    from perspicacite.web.state import AppState
+
+    async def _run() -> None:
+        state = AppState()
+        await state.initialize()
+        summaries = await ingest_skill_bundles_batch(
+            sources=[Path(p) for p in paths],
+            config=state.config,
+            vector_store=state.vector_store,
+            embedding_service=state.embedding_provider,
+            session_store=state.session_store,
+            ingest_linked_papers=not no_linked,
+        )
+        total_files = sum(s.files_added for s in summaries)
+        total_chunks = sum(s.chunks_added for s in summaries)
+        click.echo(
+            f"Ingested {len(summaries)} bundles: {total_files} files, {total_chunks} chunks total."
+        )
+
+    asyncio.run(_run())
+
+
 @cli.command()
 def version() -> None:
     """Print version information."""
