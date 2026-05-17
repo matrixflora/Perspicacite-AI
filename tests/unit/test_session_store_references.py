@@ -104,3 +104,24 @@ async def test_store_null_doi_allows_multiple_rows(store):
     assert r2 is True
     refs = await store.get_paper_references("kb1")
     assert len(refs) == 2
+
+
+async def test_delete_paper_references_cleans_up(store):
+    """delete_paper_references removes all rows for the given KB and leaves others intact."""
+    await store.store_paper_reference(
+        kb_name="kb1", doi="10.1/a", title="A", authors=[], year=None, abstract=None,
+    )
+    await store.store_paper_reference(
+        kb_name="kb1", doi="10.1/b", title="B", authors=[], year=None, abstract=None,
+    )
+    await store.store_paper_reference(
+        kb_name="kb2", doi="10.1/c", title="C", authors=[], year=None, abstract=None,
+    )
+
+    deleted = await store.delete_paper_references("kb1")
+
+    assert deleted == 2
+    assert await store.get_paper_references("kb1") == []
+    remaining = await store.get_paper_references("kb2")
+    assert len(remaining) == 1
+    assert remaining[0]["doi"] == "10.1/c"
