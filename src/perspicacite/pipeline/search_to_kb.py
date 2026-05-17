@@ -473,7 +473,7 @@ async def ingest_dois_into_kb(
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
     # ---- checkpoint setup (Wave 3.3) -----------------------------------
-    ck_dir = _Path(getattr(app_state.config.kb, "checkpoint_dir", "data/checkpoints"))
+    ck_dir = _Path(getattr(app_state.config.knowledge_base, "checkpoint_dir", "data/checkpoints"))
     ckpt = CheckpointStore(
         path=ck_dir / f"{kb_name}__ingest_dois.json",
         kb_name=kb_name,
@@ -487,7 +487,7 @@ async def ingest_dois_into_kb(
 
     # ---- KB log setup (Wave 4.3) ----------------------------------------
     from perspicacite.pipeline.kb_log import KBEvent, KBLogWriter
-    log_dir = _Path(getattr(app_state.config.kb, "log_dir", "data/kb_logs"))
+    log_dir = _Path(getattr(app_state.config.knowledge_base, "log_dir", "data/kb_logs"))
     kb_log = KBLogWriter(path=log_dir / f"{kb_name}.jsonl")
     # ---------------------------------------------------------------------
 

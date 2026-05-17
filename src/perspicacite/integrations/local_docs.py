@@ -160,7 +160,7 @@ async def _ingest_files(
                 embeds = await app_state.embedding_provider.embed(texts)
                 for c, e in zip(chunks, embeds, strict=True):
                     c.embedding = e
-                await app_state.vector_store.add_chunks(kb.collection_name, chunks)
+                await app_state.vector_store.add_documents(kb.collection_name, chunks)
                 total_chunks += len(chunks)
             # Cycle A: on-disk capsule artifacts for PDFs (metadata + figures + blocks + resources).
             if content_type == "pdf" and app_state.config.capsule.auto_build_on_ingest:
