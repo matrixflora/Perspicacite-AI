@@ -284,6 +284,28 @@ def build_aggregator(config: Any) -> DomainAwareAggregator:
         except Exception as exc:
             logger.warning("build_aggregator_pubchem_unavailable", error=str(exc))
 
+    if "google_scholar" in enabled:
+        try:
+            scholar_cfg = getattr(config, "google_scholar", None)
+            if scholar_cfg is not None and getattr(scholar_cfg, "enabled", False):
+                from perspicacite.search.google_scholar_playwright import (
+                    GoogleScholarPlaywrightProvider,
+                )
+                providers.append(GoogleScholarPlaywrightProvider(
+                    delay_seconds=float(getattr(scholar_cfg, "delay_seconds", 2.0)),
+                    headless=bool(getattr(scholar_cfg, "headless", True)),
+                    user_agent=str(getattr(
+                        scholar_cfg, "user_agent",
+                        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36",
+                    )),
+                ))
+            else:
+                logger.info("build_aggregator_scholar_skipped_not_enabled")
+        except Exception as exc:
+            logger.warning("build_aggregator_scholar_unavailable", error=str(exc))
+
     logger.info(
         "build_aggregator_ready",
         n_providers=len(providers),

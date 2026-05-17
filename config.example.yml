@@ -81,6 +81,13 @@ knowledge_base:
   contextual_retrieval_provider: "anthropic"
   contextual_retrieval_max_chars: 400
 
+  # Content acquisition mode for KB ingestion:
+  #   "auto"          — try full text (structured → PDF), fall back to abstract
+  #   "full_text"     — require full text; fail papers that have none
+  #   "abstract_only" — skip PDF steps entirely; use abstract from OpenAlex/Crossref
+  #                     ~80% faster for large corpora; shallower retrieval depth
+  ingest_mode: "auto"
+
 # =============================================================================
 # Database Configuration
 # =============================================================================
@@ -382,6 +389,7 @@ search:
     - core         # CORE open-access aggregator (free, optional key below)
     - inspire      # INSPIRE-HEP physics bibliography (free, no key)
     - ads          # NASA ADS astronomy (requires ads_api_key below)
+    # - google_scholar  # Google Scholar via Playwright (requires [browser] dep + google_scholar.enabled: true below)
 
   # CORE API key (optional — raises rate limit from 10 to unlimited req/min)
   # Register at https://core.ac.uk/api-keys/register
@@ -390,3 +398,23 @@ search:
   # NASA ADS token (required for ADS provider; register at https://ui.adsabs.harvard.edu)
   # The ADS provider is silently skipped when this is empty.
   ads_api_key: ""
+
+# =============================================================================
+# Google Scholar (Playwright/Chromium) — optional browser-based provider
+# =============================================================================
+#
+# Requires: uv pip install -e "[browser]" && playwright install chromium
+# Add "google_scholar" to search.enabled_providers above to activate.
+#
+google_scholar:
+  # Must be True AND "google_scholar" in search.enabled_providers for this to run.
+  enabled: false
+
+  # Run Chromium headless (true) or with a visible window (false, useful for debugging).
+  headless: true
+
+  # Seconds to wait between Scholar page requests. Keep >= 2.0 to avoid CAPTCHA.
+  delay_seconds: 2.0
+
+  # Hard cap on results per search call.
+  max_results: 20
