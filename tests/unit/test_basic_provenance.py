@@ -1,7 +1,7 @@
 # tests/unit/test_basic_provenance.py
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -49,7 +49,7 @@ async def test_basic_pushes_retrieval_and_trace(monkeypatch) -> None:
     mode._build_kb_retriever = MagicMock(return_value=retriever)  # type: ignore[method-assign]
 
     # Short-circuit scope resolution + compute_retrieval_query
-    from perspicacite.rag import query_scope, conversation_helpers
+    from perspicacite.rag import conversation_helpers, query_scope
     monkeypatch.setattr(query_scope, "resolve_paper_scope_for_query",
                         AsyncMock(return_value=MagicMock(scope_note="")))
     monkeypatch.setattr(conversation_helpers, "compute_retrieval_query",

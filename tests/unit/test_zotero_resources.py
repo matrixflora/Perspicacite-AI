@@ -1,12 +1,11 @@
 # tests/unit/test_zotero_resources.py
 """Tests for ResourceLocator."""
 from __future__ import annotations
+
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
-from perspicacite.integrations.zotero_resources import ResourceLocator, Resource
+from perspicacite.integrations.zotero_resources import ResourceLocator
 
 
 def _fake_config(tmp_path: Path) -> SimpleNamespace:

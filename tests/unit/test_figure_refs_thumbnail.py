@@ -3,10 +3,8 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-import pytest
-
+from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 from perspicacite.rag.figure_refs import collect_figure_refs
-from perspicacite.models.documents import DocumentChunk, ChunkMetadata
 
 
 def _png_bytes() -> bytes:

@@ -8,7 +8,6 @@ from fastapi import APIRouter
 
 from perspicacite.web.state import app_state
 
-
 router = APIRouter()
 
 

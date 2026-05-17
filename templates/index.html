@@ -60,12 +60,12 @@
                 <div class="db-section">
                     <h3>🌐 Search Databases</h3>
                     <div id="db-selector" class="db-selector">
-                        <label class="db-option selected" data-db="semantic_scholar">
-                            <input type="checkbox" value="semantic_scholar" checked>
+                        <label class="db-option" data-db="semantic_scholar">
+                            <input type="checkbox" value="semantic_scholar">
                             <span>Semantic Scholar</span>
                         </label>
-                        <label class="db-option selected" data-db="openalex">
-                            <input type="checkbox" value="openalex" checked>
+                        <label class="db-option" data-db="openalex">
+                            <input type="checkbox" value="openalex">
                             <span>OpenAlex</span>
                         </label>
                         <label class="db-option selected" data-db="pubmed">
@@ -76,6 +76,30 @@
                             <input type="checkbox" value="arxiv">
                             <span>arXiv</span>
                         </label>
+                        <label class="db-option" data-db="europepmc">
+                            <input type="checkbox" value="europepmc">
+                            <span>Europe PMC</span>
+                        </label>
+                        <label class="db-option" data-db="core">
+                            <input type="checkbox" value="core">
+                            <span>CORE</span>
+                        </label>
+                        <label class="db-option" data-db="inspire">
+                            <input type="checkbox" value="inspire">
+                            <span>INSPIRE-HEP</span>
+                        </label>
+                        <label class="db-option" data-db="pubchem">
+                            <input type="checkbox" value="pubchem">
+                            <span>PubChem</span>
+                        </label>
+                        <label class="db-option" data-db="dblp_sparql">
+                            <input type="checkbox" value="dblp_sparql">
+                            <span>DBLP-SPARQL</span>
+                        </label>
+                        <label class="db-option selected" data-db="google_scholar" title="Broad coverage via Playwright scraping">
+                            <input type="checkbox" value="google_scholar" checked>
+                            <span>Google Scholar</span>
+                        </label>
                         <label class="db-option" data-db="ieee">
                             <input type="checkbox" value="ieee">
                             <span>IEEE</span>
@@ -83,10 +107,6 @@
                         <label class="db-option" data-db="springer">
                             <input type="checkbox" value="springer">
                             <span>Springer</span>
-                        </label>
-                        <label class="db-option" data-db="dblp">
-                            <input type="checkbox" value="dblp">
-                            <span>DBLP</span>
                         </label>
                     </div>
                     <span class="db-select-all" onclick="toggleAllDatabases()">Select All / Deselect All</span>
@@ -216,6 +236,19 @@
                 <div id="figures-list" class="attachments-list"></div>
             </div>
 
+            <div id="chat-status-bar" class="chat-status-bar" aria-live="polite">
+                <span id="chat-heartbeat" class="chat-heartbeat" title="Working…" aria-hidden="true"></span>
+                <span id="chat-status-label" class="chat-status-label">Idle</span>
+                <span class="chat-status-sep" aria-hidden="true">·</span>
+                <span class="chat-status-metric"><span id="chat-elapsed">0.0s</span></span>
+                <span class="chat-status-sep" aria-hidden="true">·</span>
+                <span class="chat-status-metric" title="Input tokens ↑ / Output tokens ↓">
+                    <span id="chat-tokens-in">0</span> ↑ <span id="chat-tokens-out">0</span> ↓
+                </span>
+                <span class="chat-status-sep" aria-hidden="true">·</span>
+                <span class="chat-status-metric" id="chat-llm-model" title="LLM model in use">—</span>
+            </div>
+
             <div class="input-area">
                 <div class="chat-input-wrapper">
                     <textarea
@@ -253,10 +286,10 @@
                             <option value="literature_survey">📖 Literature Survey</option>
                             <option value="contradiction">⚖️ Contradiction</option>
                         </select>
-                        <div id="download-cap-control" class="download-cap-control" title="Maximum papers to download for full-text analysis">
-                            <label>📄 Max papers:</label>
-                            <input type="range" id="download-cap-slider" min="1" max="20" value="10" oninput="updateDownloadCapDisplay(this.value)">
-                            <span class="value-display" id="download-cap-value">10</span>
+                        <div id="download-cap-control" class="download-cap-control" title="Number of papers retrieved and passed to the answer (also caps full-text download in Agentic mode)">
+                            <label>📄 Papers for answer:</label>
+                            <input type="range" id="download-cap-slider" min="1" max="10" value="5" oninput="updateDownloadCapDisplay(this.value)">
+                            <span class="value-display" id="download-cap-value">5</span>
                         </div>
                         <button id="send-btn" class="send-btn" onclick="sendQuery()" disabled>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

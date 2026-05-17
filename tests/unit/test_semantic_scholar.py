@@ -11,9 +11,8 @@ Run: PYTHONPATH=src pytest tests/unit/test_semantic_scholar.py -v
 
 import pytest
 
-from perspicacite.search.semantic_scholar import normalize_paper_id, lookup_paper
 from perspicacite.rag.agentic.planner import StepType, coerce_step_type
-
+from perspicacite.search.semantic_scholar import lookup_paper, normalize_paper_id
 
 # ---------------------------------------------------------------------------
 # normalize_paper_id

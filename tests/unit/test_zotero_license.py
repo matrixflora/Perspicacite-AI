@@ -1,8 +1,8 @@
 # tests/unit/test_zotero_license.py
 """Tests for LicenseClassifier."""
 from __future__ import annotations
-import pytest
-from perspicacite.integrations.zotero_license import LicenseClassifier, LicenseInfo
+
+from perspicacite.integrations.zotero_license import LicenseClassifier
 
 
 def _clf() -> LicenseClassifier:

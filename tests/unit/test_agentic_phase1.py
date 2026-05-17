@@ -12,8 +12,8 @@ Run: PYTHONPATH=src pytest tests/unit/test_agentic_phase1.py -v
 import pytest
 
 from perspicacite.rag.agentic.intent import (
-    heuristic_query_complexity,
     HEURISTIC_WEAK_COMPLEXITY_TAGS,
+    heuristic_query_complexity,
 )
 from perspicacite.rag.agentic.orchestrator import (
     AgenticOrchestrator,
@@ -27,7 +27,6 @@ from perspicacite.rag.agentic.planner import (
     StepType,
     coerce_step_type,
 )
-
 
 # ---------------------------------------------------------------------------
 # coerce_step_type (replanner / LLM synonyms)

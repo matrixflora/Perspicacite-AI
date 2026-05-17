@@ -1,7 +1,7 @@
 """RAG models."""
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -32,12 +32,22 @@ class SourceReference(BaseModel):
 
     title: str
     authors: list[str] = Field(default_factory=list)
-    year: Optional[int] = None
-    doi: Optional[str] = None
-    url: Optional[str] = None
+    year: int | None = None
+    journal: str | None = None
+    doi: str | None = None
+    url: str | None = None
+    # Which provider returned this paper (e.g. "google_scholar", "openalex",
+    # "core", "europe_pmc", "scilex"). None for KB-sourced papers. Also
+    # surfaced in the UI's source card next to the "details" button.
+    source: str | None = None
+    # When ``source`` is the SciLEx meta-wrapper, this lists the APIs that
+    # were actually queried (e.g. ["semantic_scholar", "openalex", "pubmed"]).
+    # SciLEx doesn't expose per-paper provenance so we can only say which
+    # APIs were called, not which one returned this specific paper.
+    source_apis: list[str] | None = None
     relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    chunk_text: Optional[str] = None
-    kb_name: Optional[str] = None
+    chunk_text: str | None = None
+    kb_name: str | None = None
 
     @field_validator("authors", mode="before")
     @classmethod
@@ -87,34 +97,34 @@ class RAGRequest(BaseModel):
     mode: RAGMode = RAGMode.BASIC
     provider: str = "deepseek"
     model: str = "deepseek-chat"
-    max_iterations: Optional[int] = None
+    max_iterations: int | None = None
     use_web_search: bool = False
-    filters: Optional[SearchFilters] = None
-    conversation_id: Optional[str] = None
-    refined_query: Optional[str] = None
-    kb_scope: Optional[str] = None
+    filters: SearchFilters | None = None
+    conversation_id: str | None = None
+    refined_query: str | None = None
+    kb_scope: str | None = None
     # v1: optional evaluator LLM (same client; different model/provider per call)
-    evaluator_provider: Optional[str] = None
-    evaluator_model: Optional[str] = None
-    databases: List[str] = Field(
+    evaluator_provider: str | None = None
+    evaluator_model: str | None = None
+    databases: list[str] = Field(
         default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
         description="List of databases to search",
     )
-    conversation_history: Optional[List[Dict[str, str]]] = Field(
+    conversation_history: list[dict[str, str]] | None = Field(
         default=None,
         description="Recent chat turns (role/content) for query rewrite and generation context",
     )
-    max_papers_retrieval: Optional[int] = Field(
+    max_papers_retrieval: int | None = Field(
         default=None,
         ge=1,
         le=10,
         description="Hard cap on papers loaded in two-pass; None uses mode default",
     )
-    bm25_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    vector_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    recency_weight: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    recency_half_life_years: Optional[float] = Field(default=None, gt=0.0)
-    kb_names: Optional[List[str]] = None
+    bm25_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    vector_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    recency_weight: float | None = Field(default=None, ge=0.0, le=1.0)
+    recency_half_life_years: float | None = Field(default=None, gt=0.0)
+    kb_names: list[str] | None = None
 
     def __repr__(self) -> str:
         return (
@@ -127,11 +137,11 @@ class FigureRef(BaseModel):
     """A figure attached to a RAG response for display in the GUI / MCP."""
     id: str
     paper_id: str
-    label: Optional[str] = None      # e.g. "Figure 3"
-    caption: Optional[str] = None
-    source_url: Optional[str] = None  # paper DOI / page URL
-    page: Optional[int] = None
-    thumbnail_b64: Optional[str] = None  # small base64 PNG for inline display
+    label: str | None = None      # e.g. "Figure 3"
+    caption: str | None = None
+    source_url: str | None = None  # paper DOI / page URL
+    page: int | None = None
+    thumbnail_b64: str | None = None  # small base64 PNG for inline display
 
 
 class CodeExcerpt(BaseModel):
@@ -139,7 +149,7 @@ class CodeExcerpt(BaseModel):
     id: str                            # e.g. "github:owner/repo@SHA:path#Lstart-Lend"
     paper_id: str
     file_path: str
-    symbol_name: Optional[str] = None  # None for module chunks
+    symbol_name: str | None = None  # None for module chunks
     symbol_kind: str                   # "function" | "class" | "method" | "cell" | "module"
     language: str                      # "python" | "r" | etc.
     start_line: int
@@ -155,10 +165,10 @@ class RAGResponse(BaseModel):
     sources: list[SourceReference] = Field(default_factory=list)
     mode: RAGMode
     iterations: int = 1
-    confidence: Optional[float] = None
-    research_plan: Optional[list[str]] = None
+    confidence: float | None = None
+    research_plan: list[str] | None = None
     web_search_used: bool = False
-    tokens_used: Optional[int] = None
+    tokens_used: int | None = None
     figures: list[FigureRef] = Field(default_factory=list)
     code_excerpts: list[CodeExcerpt] = Field(default_factory=list)
 

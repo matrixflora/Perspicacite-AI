@@ -11,8 +11,9 @@ Tests:
 Run: PYTHONPATH=src .venv/bin/pytest tests/unit/test_agentic_phase2.py -v
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from perspicacite.rag.agentic.orchestrator import (
     AgenticOrchestrator,
@@ -21,7 +22,6 @@ from perspicacite.rag.agentic.orchestrator import (
     EvidenceStore,
 )
 from perspicacite.rag.agentic.planner import Plan, Step, StepType
-
 
 # ---------------------------------------------------------------------------
 # EvidenceFacet

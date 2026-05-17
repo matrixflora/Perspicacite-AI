@@ -1,6 +1,5 @@
 """Unit tests: recency weighting + provenance events wired into LiteratureSurveyRAGMode."""
 
-import pytest
 
 
 def test_survey_imports_recency():

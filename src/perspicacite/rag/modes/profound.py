@@ -13,52 +13,46 @@ Profound RAG (ProfondeChain) adds:
 import contextlib
 import json
 import math
-import re
 from collections import Counter
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from perspicacite.config.schema import MultimodalMode
 from perspicacite.logging import get_logger
-from perspicacite.models.documents import DocumentChunk
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.provenance.context import get_collector
-from perspicacite.config.schema import MultimodalMode
 from perspicacite.rag.code_excerpts import collect_code_excerpts
 from perspicacite.rag.figure_refs import collect_figure_refs
-from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
-from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     ASSESS_DOCUMENT_QUALITY_PROMPT,
     GENERATE_CONTEXTUAL_QUERIES_PROMPT,
-    GENERATE_SIMILAR_QUERIES_PROMPT,
     PROFOUND_ADJUST_PLAN_PROMPT,
     PROFOUND_ANALYZE_DOCUMENTS_PROMPT_TEMPLATE,
     PROFOUND_CREATE_PLAN_PROMPT,
     PROFOUND_EVALUATE_PROGRESS_PROMPT,
-    PROFOUND_ITERATION_SUMMARY_ORIGINAL_PROMPT,
-    PROFOUND_ITERATION_SUMMARY_IMPROVED_PROMPT,
-    PROFOUND_FINAL_ANSWER_ORIGINAL_PROMPT,
     PROFOUND_FINAL_ANSWER_IMPROVED_PROMPT,
+    PROFOUND_FINAL_ANSWER_ORIGINAL_PROMPT,
     PROFOUND_FORMAT_ANSWER_PROMPT,
     PROFOUND_IS_QUESTION_ANSWERED_PROMPT,
+    PROFOUND_ITERATION_SUMMARY_IMPROVED_PROMPT,
+    PROFOUND_ITERATION_SUMMARY_ORIGINAL_PROMPT,
     PROFOUND_UNANSWERABLE_QUESTION_PROMPT_TEMPLATE,
     SUMMARIZE_INFORMATION_PROMPT,
 )
 from perspicacite.rag.relevancy import assess_query_complexity, reorder_documents_by_relevance
-from perspicacite.rag.wrrf_v1 import doc_page_content, select_wrrf_merged_documents
 from perspicacite.rag.utils import (
-    format_references,
-    prepare_sources,
-    get_doc_citation,
-    format_documents_for_prompt,
-    get_system_prompt,
     flatten_paper_results_to_chunks,
+    format_references,
+    get_doc_citation,
 )
+from perspicacite.rag.wrrf_v1 import doc_page_content, select_wrrf_merged_documents
+from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
+from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 
 logger = get_logger("perspicacite.rag.modes.profound")
 
@@ -625,7 +619,6 @@ class ProfoundRAGMode(BaseRAGMode):
         tools: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Execute Profound RAG with streaming output."""
-        import json
 
         yield StreamEvent.status("Profound RAG: Initializing deep research...")
 

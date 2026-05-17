@@ -16,9 +16,7 @@ DOI_PATTERN = re.compile(r"10\.\d{4,9}/[^\s\])>'\",]+", re.IGNORECASE)
 QUOTED_PATTERN = re.compile(r'"([^"]{12,600})"|\'([^\']{12,600})\'')
 
 _STOPWORDS = frozenset(
-    "the a an of in for to and or on at by with from as is are was were be been being "
-    "this that these those it its into than then not no we our their they he she his her "
-    "which what when where who how all any each both than".split()
+    ["the", "a", "an", "of", "in", "for", "to", "and", "or", "on", "at", "by", "with", "from", "as", "is", "are", "was", "were", "be", "been", "being", "this", "that", "these", "those", "it", "its", "into", "than", "then", "not", "no", "we", "our", "their", "they", "he", "she", "his", "her", "which", "what", "when", "where", "who", "how", "all", "any", "each", "both", "than"]
 )
 
 

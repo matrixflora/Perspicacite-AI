@@ -1,9 +1,11 @@
 # tests/unit/test_zotero_mcp_new_tools.py
 """Unit tests for the 4 new Zotero MCP tools."""
 from __future__ import annotations
+
 from types import SimpleNamespace
 
 import pytest
+
 from perspicacite.mcp import server as mcp_server
 
 
@@ -48,6 +50,7 @@ async def test_list_collections_no_api_key(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_collections_auth_failed(monkeypatch):
     import httpx
+
     from perspicacite.integrations import zotero as zotero_mod
 
     async def _bad_paginated(self, path, params=None):
@@ -85,6 +88,7 @@ async def test_list_collections_returns_tree(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_collection_items_collection_not_found(monkeypatch):
     import httpx
+
     from perspicacite.integrations import zotero as zotero_mod
 
     async def _bad(self, path, params=None):
@@ -242,7 +246,6 @@ async def test_ingest_collection_not_configured(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ingest_collection_inline_mode(monkeypatch):
-    from perspicacite.integrations import zotero as zotero_mod
     from perspicacite.integrations import zotero_ingest as zi
 
     async def _fake_plan(client, *, top_level_collection_keys=None, **kw):
@@ -275,7 +278,7 @@ async def test_ingest_collection_inline_mode(monkeypatch):
 @pytest.mark.asyncio
 async def test_ingest_collection_not_found(monkeypatch):
     import httpx
-    from perspicacite.integrations import zotero as zotero_mod
+
     from perspicacite.integrations import zotero_ingest as zi
 
     async def _bad_plan(client, **kw):
@@ -338,6 +341,7 @@ async def test_get_collection_items_populates_attachment_keys(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_attachment_bytes_returns_base64(monkeypatch):
     import base64
+
     from perspicacite.integrations import zotero as zotero_mod
 
     # Fake the metadata GET (returns a minimal attachment item with filename + tags).

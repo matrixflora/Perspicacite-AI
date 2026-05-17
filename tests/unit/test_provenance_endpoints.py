@@ -57,6 +57,7 @@ def test_provenance_endpoints_503_when_unconfigured(monkeypatch) -> None:
 async def test_export_ro_crate_returns_zip(tmp_path, monkeypatch) -> None:
     import io
     import zipfile
+
     from perspicacite.memory.session_store import SessionStore
     from perspicacite.models.messages import Message
     from perspicacite.provenance.collector import ProvenanceCollector

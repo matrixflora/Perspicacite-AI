@@ -6,12 +6,11 @@ produce SSE events for the agentic and RAG-mode flows.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import logging
 import uuid
-from typing import Any, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -19,9 +18,7 @@ from pydantic import BaseModel, Field
 
 from perspicacite.models.rag import RAGMode
 from perspicacite.provenance.collector import ProvenanceCollector
-from perspicacite.provenance.context import collecting
 from perspicacite.web.state import app_state
-
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +46,13 @@ class ChatRequest(BaseModel):
     """Request for chat endpoint - NOW WITH CONVERSATION SUPPORT."""
 
     query: str = Field(..., description="Current research question")
-    messages: List[ChatMessage] = Field(default_factory=list, description="Conversation history")
-    session_id: Optional[str] = Field(default=None, description="Session ID for persistence")
-    conversation_id: Optional[str] = Field(
+    messages: list[ChatMessage] = Field(default_factory=list, description="Conversation history")
+    session_id: str | None = Field(default=None, description="Session ID for persistence")
+    conversation_id: str | None = Field(
         default=None, description="Conversation ID for persistent chat thread"
     )
-    kb_name: Optional[str] = Field(default=None, description="Knowledge base to search first")
-    kb_names: Optional[List[str]] = Field(
+    kb_name: str | None = Field(default=None, description="Knowledge base to search first")
+    kb_names: list[str] | None = Field(
         default=None,
         description="Multiple knowledge bases to query together (embedding-model-compatible KBs only)",
     )
@@ -75,7 +72,7 @@ class ChatRequest(BaseModel):
         le=50,
         description="Maximum papers to download for full-text analysis (Agentic mode). Higher = more comprehensive but slower",
     )
-    databases: List[str] = Field(
+    databases: list[str] = Field(
         default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
         description="List of databases to search (semantic_scholar, openalex, pubmed, arxiv, ieee, springer, dblp)",
     )
@@ -85,14 +82,14 @@ class ChatResponse(BaseModel):
     """Response chunk for streaming."""
 
     type: str = Field(..., description="thinking, tool_call, tool_result, answer, error")
-    content: Optional[str] = None
-    message: Optional[str] = None
-    step: Optional[str] = None
-    tool: Optional[str] = None
-    description: Optional[str] = None
-    result_summary: Optional[str] = None
-    details: Optional[str] = None
-    session_id: Optional[str] = None
+    content: str | None = None
+    message: str | None = None
+    step: str | None = None
+    tool: str | None = None
+    description: str | None = None
+    result_summary: str | None = None
+    details: str | None = None
+    session_id: str | None = None
 
 
 @router.post("/api/chat")
@@ -207,7 +204,7 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
         }
 
 
-async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[str] = None):
+async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None = None):
     """
     Stream chat responses using selected RAG mode.
 
@@ -229,7 +226,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: Optional[st
             logger.warning(f"Failed to save user message: {e}")
 
     assistant_content = ""
-    assistant_message_id_outer: Optional[str] = None
+    assistant_message_id_outer: str | None = None
 
     try:
         logger.info(f"Chat request: {request.query[:50]}... | Mode: {request.mode}")
@@ -329,7 +326,7 @@ async def _copyright_filter_for_router(
         return full_answer
 
 
-async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] = None):
+async def _stream_agentic(request: ChatRequest, conversation_id: str | None = None):
     """Stream using AgenticOrchestrator."""
     assistant_message_id = str(uuid.uuid4())
 
@@ -440,13 +437,14 @@ async def _stream_agentic(request: ChatRequest, conversation_id: Optional[str] =
     if app_state.provenance_store is not None:
         try:
             await app_state.provenance_store.save(collector.finalize())
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(f"provenance_save_failed (agentic): {exc}")
 
 
-async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] = None):
+async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = None):
     """Stream using RAGEngine with selected mode (basic, advanced, profound, contradiction…)."""
-    from perspicacite.models.rag import RAGRequest as RAGReq, RAGMode
+    from perspicacite.models.rag import RAGMode
+    from perspicacite.models.rag import RAGRequest as RAGReq
 
     # Map string mode to RAGMode enum using the module-level constant
     rag_mode = RAG_MODE_MAP.get(request.mode, RAGMode.BASIC)
@@ -468,7 +466,7 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
 
     # Determine effective kb_name / kb_names for the RAG request
     effective_kb_name = request.kb_name or "default"
-    effective_kb_names: Optional[List[str]] = None
+    effective_kb_names: list[str] | None = None
 
     # `kb_name="auto"` (or `kb_names=["auto"]`) routes the query: pick the
     # top-N most-relevant KBs by description + sampled paper titles, then
@@ -625,7 +623,7 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
                     full_answer = await _copyright_filter_for_router(
                         full_answer=full_answer, sources=sources,
                     )
-                except Exception as _exc:  # noqa: BLE001
+                except Exception as _exc:
                     logger.warning(f"router_copyright_filter_failed: {_exc}")
                 # Send final answer as base64
                 safe = {
@@ -662,7 +660,7 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: Optional[str] 
 
     except Exception as e:
         logger.error(f"RAG engine error: {e}")
-        yield f"data: {json.dumps({'type': 'error', 'message': f'Error in {rag_mode.value} mode: {str(e)}'})}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'message': f'Error in {rag_mode.value} mode: {e!s}'})}\n\n"
 
     # End of stream (fallback if no done event)
     yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"

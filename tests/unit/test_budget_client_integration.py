@@ -6,7 +6,9 @@ import pytest
 
 from perspicacite.config.schema import LLMConfig
 from perspicacite.llm.budget import (
-    BudgetExceededError, BudgetTracker, set_budget_tracker,
+    BudgetExceededError,
+    BudgetTracker,
+    set_budget_tracker,
 )
 from perspicacite.llm.client import AsyncLLMClient
 

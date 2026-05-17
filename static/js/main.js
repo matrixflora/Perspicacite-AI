@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', function () {
     setInterval(updateTimestamps, 60000);
     syncRagModeFromDropdown();
     initConversationSearch();
+    initLLMModelLabel();
 
     // Wire up advanced-options slider display updates
     const vectorSlider = document.getElementById('adv-vector-slider');

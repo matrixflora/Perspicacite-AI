@@ -53,7 +53,7 @@ class AuthError(LLMError):
 
 # (compiled pattern, retry_seconds_extractor). Extractors return None
 # when no usable retry hint is available. First match wins.
-_RATE_LIMIT_PATTERNS: list[tuple[re.Pattern[str], "callable"]] = [
+_RATE_LIMIT_PATTERNS: list[tuple[re.Pattern[str], callable]] = [
     # Claude Code: "Rate limit reached. Try again in 1h 23m."
     (
         re.compile(r"rate\s*limit\s*reached.*?try\s*again\s*in\s*"

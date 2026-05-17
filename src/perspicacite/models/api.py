@@ -1,6 +1,6 @@
 """API request/response models."""
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,8 +20,8 @@ class ChatRequest(BaseModel):
     model: str = "deepseek-chat"
     stream: bool = True
     use_web_search: bool = False
-    conversation_id: Optional[str] = None
-    max_iterations: Optional[int] = None
+    conversation_id: str | None = None
+    max_iterations: int | None = None
 
 
 class ChatResponse(BaseModel):
@@ -37,10 +37,10 @@ class KBCreateRequest(BaseModel):
     """Request to create a knowledge base."""
 
     name: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")
-    description: Optional[str] = None
+    description: str | None = None
     source_type: Literal["bibtex", "papers", "empty"] = "empty"
-    source_path: Optional[str] = None  # BibTeX file path
-    papers: Optional[list[str]] = None  # DOIs or URLs
+    source_path: str | None = None  # BibTeX file path
+    papers: list[str] | None = None  # DOIs or URLs
     embedding_model: str = "text-embedding-3-small"
     chunk_config: ChunkConfig = Field(default_factory=ChunkConfig)
 
@@ -58,8 +58,8 @@ class SearchRequest(BaseModel):
     query: str
     apis: list[str] = Field(default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"])
     max_results: int = Field(default=20, ge=1, le=100)
-    year_min: Optional[int] = None
-    year_max: Optional[int] = None
+    year_min: int | None = None
+    year_max: int | None = None
 
 
 class SearchResponse(BaseModel):

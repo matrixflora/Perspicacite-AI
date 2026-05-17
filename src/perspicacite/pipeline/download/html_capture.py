@@ -22,12 +22,10 @@ extraction.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
 
 import httpx
 

@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import fnmatch
 import json
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterator, Optional, Sequence
 
 from perspicacite.models.documents import DocumentChunk
 
@@ -24,7 +24,7 @@ class SymbolRecord:
     start_line: int
     end_line: int
     signature: str            # e.g. "def fit(self, X, y=None)"
-    docstring: Optional[str]  # ≤500 chars, truncated
+    docstring: str | None  # ≤500 chars, truncated
     imports: list[str]
 
 
@@ -85,7 +85,7 @@ def append_symbols(kb_dir: Path, paper_id: str, symbols: Sequence[SymbolRecord])
     return len(symbols)
 
 
-def iter_symbols(kb_dir: Path, *, name_glob: Optional[str] = None) -> Iterator[SymbolRecord]:
+def iter_symbols(kb_dir: Path, *, name_glob: str | None = None) -> Iterator[SymbolRecord]:
     """Yield symbols from the sidecar, optionally filtered by fnmatch glob."""
     path = Path(kb_dir) / _SIDECAR_NAME
     if not path.exists():

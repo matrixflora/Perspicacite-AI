@@ -5,10 +5,10 @@ Tests the get_kb_stats handler directly by monkeypatching app_state.
 
 from __future__ import annotations
 
-import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers: fake dependencies

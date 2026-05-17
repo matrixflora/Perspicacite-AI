@@ -1,6 +1,6 @@
 """Adapter for LLM clients to provide simple complete() interface."""
 
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from perspicacite.llm import AsyncLLMClient
@@ -12,8 +12,8 @@ class LLMAdapter:
     def __init__(
         self,
         client: "AsyncLLMClient",
-        model: Optional[str] = None,
-        provider: Optional[str] = None
+        model: str | None = None,
+        provider: str | None = None
     ):
         self.client = client
         self.model = model

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from perspicacite.pipeline.capsule_builder import resolve_figure_refs
 from perspicacite.pipeline.parsers.figures import FigureRecord, RawFigure
 

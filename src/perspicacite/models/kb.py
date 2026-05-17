@@ -1,7 +1,7 @@
 """Knowledge base models."""
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -30,7 +30,7 @@ class KnowledgeBase(BaseModel):
     """A knowledge base of papers."""
 
     name: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")
-    description: Optional[str] = None
+    description: str | None = None
     collection_name: str  # Chroma collection name
     embedding_model: str = "text-embedding-3-small"
     chunk_config: ChunkConfig = Field(default_factory=ChunkConfig)
@@ -50,13 +50,13 @@ class KBStats(BaseModel):
     """Statistics for a knowledge base."""
 
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     paper_count: int
     chunk_count: int
     embedding_model: str
     created_at: datetime
     updated_at: datetime
-    size_mb: Optional[float] = None
+    size_mb: float | None = None
 
     def __repr__(self) -> str:
         return (

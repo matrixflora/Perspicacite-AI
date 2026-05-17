@@ -295,7 +295,7 @@ class AgentCLIClient:
                 proc.communicate(stdin_bytes),
                 timeout=self.timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             raise RuntimeError(
@@ -315,7 +315,9 @@ class AgentCLIClient:
             # Detect rate-limit signals — raise structured error so the
             # orchestrator / Wave 3.2 fallback chain can react.
             from perspicacite.llm.errors import (
-                RateLimitError, detect_rate_limit, suggested_action,
+                RateLimitError,
+                detect_rate_limit,
+                suggested_action,
             )
             hit = detect_rate_limit(err_full) or detect_rate_limit(out_str)
             if hit is not None:
@@ -326,7 +328,8 @@ class AgentCLIClient:
                     retry_after_seconds=hit.retry_after_seconds,
                 )
             from perspicacite.llm.errors import (
-                AuthError, detect_auth_error,
+                AuthError,
+                detect_auth_error,
             )
             if detect_auth_error(err_full) or detect_auth_error(out_str):
                 raise AuthError(
@@ -343,7 +346,7 @@ class AgentCLIClient:
         # that would otherwise need scraping), stdout otherwise.
         if out_path:
             try:
-                with open(out_path, "r", encoding="utf-8", errors="replace") as fh:
+                with open(out_path, encoding="utf-8", errors="replace") as fh:
                     raw = fh.read().strip()
             finally:
                 try:

@@ -72,6 +72,14 @@ async function sendQuery() {
     input.style.height = 'auto';
     input.disabled = true;
     document.getElementById('send-btn').disabled = true;
+    document.body.classList.add('chat-active');
+    startStatusBar();
+    // Seed an input-token estimate from the user message + conversation
+    // history that gets sent in this turn. The actual prompt the server
+    // assembles (system prompt + retrieved context) will be larger; this
+    // is just an early proxy so the ↑ counter isn't stuck at 0.
+    const histChars = messages.reduce((n, m) => n + (m.content || '').length, 0);
+    setInputTokenEstimate(query + ' ' + (histChars ? '_'.repeat(histChars) : ''));
 
     // Reset per-turn figure-id resolution state (Task 13)
     currentTurnPapers = new Set();
@@ -127,10 +135,17 @@ async function sendQuery() {
                 kb_name: advancedBody.kb_names ? undefined : selectedKb,
                 mode: currentMode,
                 stream: true,
+                max_papers: Math.max(1, Math.min(10, downloadCap)),
                 max_papers_to_download: downloadCap,
                 databases: selectedDatabases
             }, advancedBody))
         });
+
+        if (!response.ok) {
+            let detail = '';
+            try { detail = (await response.text()).slice(0, 500); } catch (_) {}
+            throw new Error(`Server returned HTTP ${response.status} ${response.statusText}${detail ? ' — ' + detail : ''}`);
+        }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -163,6 +178,7 @@ async function sendQuery() {
                 }
                 if (data.type === 'thinking') {
                     addThinkingStep(data.message, 'analyzing', data.details);
+                    if (data.message) setStatusLabel(String(data.message).slice(0, 80));
                 } else if (data.type === 'source') {
                     // Source from RAG modes (basic, advanced, profound)
                     if (data.source) {
@@ -178,15 +194,44 @@ async function sendQuery() {
                         if (src.kb_name) {
                             kbTagHtml = '<span class="source-kb-tag">' + src.kb_name + '</span>';
                         }
-                        let detailsLink = '';
-                        if (src.doi) {
-                            detailsLink = ' <button class="paper-detail-link" onclick="openPaperDetail(\'' +
-                                src.doi.replace(/'/g, "\\'") + '\')">details</button>';
+                        // Provider tag (e.g. "google_scholar", "openalex").
+                        // For SciLEx-routed papers the source string is
+                        // "scilex (multi-DB)" and source_apis lists the
+                        // underlying APIs that were queried in parallel.
+                        let providerHtml = '';
+                        if (src.source) {
+                            const provLabel = String(src.source).replace(/_/g, ' ');
+                            const tipText = (src.source_apis && src.source_apis.length)
+                                ? ('Queried in parallel: ' + src.source_apis.join(', ') +
+                                   '. SciLEx doesn\'t expose which specific API returned this paper.')
+                                : ('Returned by ' + provLabel);
+                            providerHtml = src.url
+                                ? (' <a class="source-provider-tag" href="' + src.url +
+                                   '" target="_blank" rel="noopener noreferrer" title="' + tipText + '">' +
+                                   provLabel + ' ↗</a>')
+                                : (' <span class="source-provider-tag" title="' + tipText + '">' + provLabel + '</span>');
                         }
+                        // Compact relevance chip next to the details button.
+                        const relPct = (src.relevance_score * 100).toFixed(1) + '%';
+                        const relHtml = ' <span class="source-relevance" title="Blended relevance: 60% MiniLM (semantic, query vs title+abstract) + 25% log citation count + 15% BM25 (lexical)">' + relPct + '</span>';
+                        // Details button always shown. When there's a DOI we
+                        // route through /api/paper; otherwise we render an
+                        // inline panel from the source data already in hand.
+                        // Stash the source in a turn-scoped registry keyed
+                        // by paper_id so we don't have to embed a giant
+                        // JSON blob in the onclick handler.
+                        const srcKey = (src.paper_id || src.doi || src.title || ('p' + Date.now()));
+                        if (!window.__sourceRegistry) window.__sourceRegistry = {};
+                        window.__sourceRegistry[srcKey] = src;
+                        const detailsArg = src.doi
+                            ? ("'" + src.doi.replace(/'/g, "\\'") + "'")
+                            : ("null, '" + srcKey.replace(/'/g, "\\'") + "'");
+                        const detailsLink = ' <button class="paper-detail-link" onclick="openPaperDetail(' +
+                            detailsArg + ')" title="View abstract and metadata">details</button>';
                         addThinkingStep(
-                            'Source: ' + src.title + ' ' + badgeHtml + kbTagHtml + detailsLink,
+                            'Source: ' + src.title + ' ' + badgeHtml + kbTagHtml + providerHtml + relHtml + detailsLink,
                             'result',
-                            'Relevance: ' + (src.relevance_score * 100).toFixed(1) + '%'
+                            ''   // no longer needed — relevance now inline above
                         );
                     }
                 } else if (data.type === 'tool_call') {
@@ -214,6 +259,8 @@ async function sendQuery() {
                         assistantMessage += delta;
                         activeAssistantText = assistantMessage;
                         assistantDiv.innerHTML = formatMessage(assistantMessage);
+                        bumpTokenCounter(delta.length);
+                        setStatusLabel('Generating answer…');
                         if (data.session_id) sessionId = data.session_id;
                         if (data.conversation_id) {
                             conversationId = data.conversation_id;
@@ -233,6 +280,13 @@ async function sendQuery() {
                         : (data.content || '');
                     activeAssistantText = assistantMessage;
                     assistantDiv.innerHTML = formatMessage(assistantMessage);
+                    // Token deltas may have arrived in one ``answer`` payload
+                    // (some modes don't stream content). Update the counter
+                    // from the final length so the user sees a non-zero total.
+                    if (_tokensOut === 0 && assistantMessage) {
+                        _tokensOut = Math.max(1, Math.round(assistantMessage.length / 4));
+                        updateTokenDisplay();
+                    }
                     sessionId = data.session_id || sessionId;
                     // Capture conversation_id from response
                     if (data.conversation_id) {
@@ -299,13 +353,105 @@ async function sendQuery() {
         }
 
     } catch (error) {
-        addMessage('assistant', '❌ Error: ' + error.message);
+        // "Failed to fetch" is the browser's opaque message for any network-level
+        // failure (server down/restarting, DNS, blocked, CORS). Surface something
+        // actionable instead, including the URL so the user can sanity-check.
+        const isNetworkErr =
+            (error && error.name === 'TypeError' && /failed to fetch|networkerror|load failed/i.test(error.message || ''));
+        const msg = isNetworkErr
+            ? `❌ Could not reach the server at ${location.origin}/api/chat. It may be restarting or unreachable. Check the server console and retry. (original: ${error.message})`
+            : `❌ Error: ${error.message || String(error)}`;
+        addMessage('assistant', msg);
+        console.error('sendQuery failed:', error);
     }
 
     isProcessing = false;
     input.disabled = false;
+    document.body.classList.remove('chat-active');
+    stopStatusBar();
     handleInputChange();  // Update button state based on content
     input.focus();
+}
+
+// --- Chat status bar (heartbeat + elapsed time + token counter) -----------
+// Drives the bottom-of-thread indicator added in Sub-project D: shows live
+// activity instead of just a small dot near the send button. Tokens are
+// rolled up from incremental "token" SSE deltas (rough character-count)
+// plus any explicit usage payloads carried on `done`/`status` events.
+let _statusTimerId = null;
+let _statusStartedAt = 0;
+let _tokensIn = 0;   // estimated input (prompt + history)
+let _tokensOut = 0;  // streamed output
+
+function startStatusBar() {
+    _statusStartedAt = performance.now();
+    _tokensIn = 0; _tokensOut = 0;
+    setStatusLabel('Sending query…');
+    updateTokenDisplay();
+    if (_statusTimerId) clearInterval(_statusTimerId);
+    _statusTimerId = setInterval(() => {
+        const elapsedSec = (performance.now() - _statusStartedAt) / 1000;
+        const el = document.getElementById('chat-elapsed');
+        if (el) el.textContent = elapsedSec < 60
+            ? elapsedSec.toFixed(1) + 's'
+            : Math.floor(elapsedSec / 60) + 'm' + Math.round(elapsedSec % 60) + 's';
+    }, 200);
+}
+
+function stopStatusBar() {
+    if (_statusTimerId) { clearInterval(_statusTimerId); _statusTimerId = null; }
+    setStatusLabel('Idle');
+}
+
+function setStatusLabel(text) {
+    const el = document.getElementById('chat-status-label');
+    if (el) el.textContent = text || 'Working…';
+}
+
+function setInputTokenEstimate(text) {
+    // Rough: ~4 chars/tok. Used at request time before we hear from the server.
+    if (!text) return;
+    _tokensIn = Math.max(1, Math.round(text.length / 4));
+    updateTokenDisplay();
+}
+
+function bumpOutputTokenCounter(deltaChars) {
+    if (!deltaChars) return;
+    _tokensOut += Math.max(1, Math.round(deltaChars / 4));
+    updateTokenDisplay();
+}
+
+function updateTokenDisplay() {
+    const elIn = document.getElementById('chat-tokens-in');
+    const elOut = document.getElementById('chat-tokens-out');
+    if (elIn) elIn.textContent = (_tokensIn || 0).toLocaleString();
+    if (elOut) elOut.textContent = (_tokensOut || 0).toLocaleString();
+}
+
+// Back-compat shim for callers that still use the old name.
+function bumpTokenCounter(deltaChars) { bumpOutputTokenCounter(deltaChars); }
+
+// Populate the LLM-model chip in the status bar from /api/health. The
+// server already reports llm.default_model in its health payload, so we
+// don't need a new endpoint. Falls back silently when the field is
+// missing or the request fails.
+async function initLLMModelLabel() {
+    const el = document.getElementById('chat-llm-model');
+    if (!el) return;
+    try {
+        const r = await fetch('/api/health');
+        if (!r.ok) return;
+        const data = await r.json();
+        const model = data && data.llm && data.llm.default_model;
+        const provider = data && data.llm && data.llm.default_provider;
+        if (model) {
+            // Trim "vendor/" prefix for the chip face; keep the full
+            // "provider/model" string in the tooltip.
+            const short = String(model).split('/').pop();
+            el.textContent = '🤖 ' + short;
+            el.title = 'LLM: ' + (provider ? provider + ' · ' : '') + model;
+        }
+    } catch (_) { /* silent */ }
 }
 
 function addMessage(role, content) {
@@ -327,10 +473,42 @@ function formatMessage(content) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 
+    // Render inline-link helper used in every text path below. Markdown
+    // shape: [visible](url "optional title"). The title attribute gives
+    // the on-hover tooltip with the full citation. Numbered list items
+    // (e.g. "1. [..](..)") will be wrapped by the list/paragraph code
+    // below since we don't render ordered lists explicitly.
+    function renderLinks(s) {
+        return s.replace(
+            /\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g,
+            function (_m, label, url, title) {
+                const t = title ? ` title="${title}"` : '';
+                return `<a href="${url}" target="_blank" rel="noopener noreferrer"${t}>${label}</a>`;
+            }
+        );
+    }
+
     // Split into lines for processing
     let lines = formatted.split('\n');
     let result = [];
     let inList = false;
+    // The References block at the end of an assistant answer is wrapped in
+    // a smaller-font block so a long bibliography doesn't dominate the
+    // message. Triggered by a `## References` header, ended at the next
+    // header or end-of-content.
+    let inReferences = false;
+    function openRefBlockIfNeeded() {
+        if (!inReferences) {
+            result.push('<div class="references-block">');
+            inReferences = true;
+        }
+    }
+    function closeRefBlockIfOpen() {
+        if (inReferences) {
+            result.push('</div>');
+            inReferences = false;
+        }
+    }
 
     for (let line of lines) {
         let trimmed = line.trim();
@@ -338,28 +516,47 @@ function formatMessage(content) {
         // Headers
         if (trimmed.startsWith('### ')) {
             if (inList) { result.push('</ul>'); inList = false; }
-            result.push('<h3 style="color: var(--primary); margin: 16px 0 8px 0; font-size: 1.1em;">' + trimmed.substring(4) + '</h3>');
+            closeRefBlockIfOpen();
+            result.push('<h3 style="color: var(--primary); margin: 16px 0 8px 0; font-size: 1.1em;">' + renderLinks(trimmed.substring(4)) + '</h3>');
             continue;
         }
         if (trimmed.startsWith('## ')) {
             if (inList) { result.push('</ul>'); inList = false; }
-            result.push('<h2 style="color: var(--primary); margin: 20px 0 10px 0; font-size: 1.2em; border-bottom: 1px solid var(--border);">' + trimmed.substring(3) + '</h2>');
+            closeRefBlockIfOpen();
+            const headerText = trimmed.substring(3);
+            result.push('<h2 style="color: var(--primary); margin: 20px 0 10px 0; font-size: 1.2em; border-bottom: 1px solid var(--border);">' + renderLinks(headerText) + '</h2>');
+            if (/^references\b/i.test(headerText.trim())) {
+                openRefBlockIfNeeded();
+            }
             continue;
         }
         if (trimmed.startsWith('# ')) {
             if (inList) { result.push('</ul>'); inList = false; }
-            result.push('<h1 style="color: var(--primary); margin: 24px 0 12px 0; font-size: 1.4em;">' + trimmed.substring(2) + '</h1>');
+            closeRefBlockIfOpen();
+            result.push('<h1 style="color: var(--primary); margin: 24px 0 12px 0; font-size: 1.4em;">' + renderLinks(trimmed.substring(2)) + '</h1>');
             continue;
         }
 
-        // List items
+        // List items (unordered)
         if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
             if (!inList) { result.push('<ul style="margin: 8px 0; padding-left: 20px;">'); inList = true; }
             let item = trimmed.substring(2);
-            // Process bold/italic within list item
             item = item.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
             item = item.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            item = renderLinks(item);
             result.push('<li style="margin: 4px 0;">' + item + '</li>');
+            continue;
+        }
+
+        // Ordered list items like "1. ", "12. ", "1) " — common in the References block.
+        const orderedMatch = trimmed.match(/^(\d+)[.)]\s+(.*)$/);
+        if (orderedMatch) {
+            if (inList) { result.push('</ul>'); inList = false; }
+            let item = orderedMatch[2];
+            item = item.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            item = item.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            item = renderLinks(item);
+            result.push(`<div style="margin: 4px 0; padding-left: 8px; line-height: 1.6;"><span style="color: var(--muted);">${orderedMatch[1]})</span> ${item}</div>`);
             continue;
         }
 
@@ -380,6 +577,7 @@ function formatMessage(content) {
         para = para.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
         para = para.replace(/\*([^*]+)\*/g, '<em>$1</em>');
         para = para.replace(/`([^`]+)`/g, '<code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em;">$1</code>');
+        para = renderLinks(para);
         result.push('<p style="margin: 8px 0; line-height: 1.6;">' + para + '</p>');
     }
 
@@ -405,7 +603,8 @@ function createThinkingMessage() {
     div.innerHTML = `
         <div class="thinking-header-bar" onclick="toggleThinkingMessage(this.parentElement)">
             <span class="thinking-toggle">▶</span>
-            <span>${label}</span>
+            <span class="thinking-label">${label}</span>
+            <span class="thinking-dots" aria-hidden="true"></span>
             <span class="thinking-count"></span>
         </div>
         <div class="thinking-content collapsed">

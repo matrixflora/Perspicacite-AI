@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from perspicacite.pipeline.orcid import AuthorResolution, AuthorResolver
+from perspicacite.pipeline.orcid import AuthorResolver
 
 
 def _mock_openalex_response(items: list[dict]) -> str:

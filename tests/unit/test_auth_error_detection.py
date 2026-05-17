@@ -1,6 +1,8 @@
 """detect_auth_error patterns + AuthError shape (Wave 3.4)."""
 from perspicacite.llm.errors import (
-    AuthError, LLMError, detect_auth_error, suggested_action,
+    AuthError,
+    LLMError,
+    detect_auth_error,
 )
 
 

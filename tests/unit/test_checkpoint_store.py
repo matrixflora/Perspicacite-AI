@@ -1,8 +1,5 @@
 """Tests for CheckpointStore + atomic save (Wave 3.3)."""
-import json
 from pathlib import Path
-
-import pytest
 
 from perspicacite.pipeline.checkpoint import CheckpointStore
 

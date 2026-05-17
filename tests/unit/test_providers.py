@@ -1,6 +1,5 @@
 """Tests for LLM provider registry."""
 
-import os
 
 import pytest
 

@@ -765,7 +765,6 @@ class ZoteroClient:
         on hard failure (logged via :exc:`ZoteroAPIError`).
         """
         import hashlib
-        import os
 
         if self.is_local and not self.api_key:
             raise ZoteroWriteUnsupportedError(

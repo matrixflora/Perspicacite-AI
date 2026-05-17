@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 def test_mine_known_kinds():
     from perspicacite.pipeline.external.accessions import mine_accessions

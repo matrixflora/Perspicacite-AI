@@ -55,7 +55,7 @@ class HTMLParser:
             if isinstance(source, Path) or (
                 isinstance(source, str) and Path(source).exists()
             ):
-                with open(source, "r", encoding="utf-8") as f:
+                with open(source, encoding="utf-8") as f:
                     html = f.read()
             else:
                 html = source

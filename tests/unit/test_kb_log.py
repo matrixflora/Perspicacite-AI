@@ -3,8 +3,6 @@ import json
 import threading
 from pathlib import Path
 
-import pytest
-
 from perspicacite.pipeline.kb_log import KBEvent, KBLogWriter
 
 

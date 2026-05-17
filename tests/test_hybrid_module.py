@@ -1,18 +1,18 @@
 """Tests for the hybrid retrieval module."""
 
-import pytest
-import numpy as np
-from dataclasses import dataclass
-import sys
 import os
+import sys
+
+import numpy as np
 
 # Add src to path and import directly to avoid __init__.py dependencies
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 # Import hybrid module functions directly
 import importlib.util
+
 spec = importlib.util.spec_from_file_location(
-    "hybrid", 
+    "hybrid",
     os.path.join(os.path.dirname(__file__), "..", "src", "perspicacite", "retrieval", "hybrid.py")
 )
 hybrid_module = importlib.util.module_from_spec(spec)
@@ -29,11 +29,11 @@ def test_normalize_scores_basic():
     """Test basic score normalization."""
     scores = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
     normalized = normalize_scores(scores)
-    
+
     assert normalized.min() == 0.0
     assert normalized.max() == 1.0
     assert len(normalized) == len(scores)
-    
+
     print("✅ Normalize scores basic test passed")
 
 
@@ -41,9 +41,9 @@ def test_combine_scores():
     """Test combining scores."""
     vector_scores = np.array([0.9, 0.7, 0.5])
     bm25_scores = np.array([0.3, 0.9, 0.6])
-    
+
     combined = combine_scores(vector_scores, bm25_scores, 0.5, 0.5)
-    
+
     assert 0 <= combined.min() <= combined.max() <= 1
     print("✅ Combine scores test passed")
 
@@ -55,12 +55,12 @@ def test_compute_bm25_scores():
         "Machine learning is a subset of artificial intelligence",
         "Deep learning uses neural networks with multiple layers",
     ]
-    
+
     scores = compute_bm25_scores(documents, "neural networks")
-    
+
     assert len(scores) == len(documents)
     assert scores[2] > scores[0]  # Doc 2 has the keywords
-    
+
     print("✅ Compute BM25 scores test passed")
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import json as _json
 
 from fastapi import APIRouter, HTTPException
@@ -11,12 +9,11 @@ from fastapi.responses import PlainTextResponse
 
 from perspicacite.web.state import app_state
 
-
 router = APIRouter()
 
 
 @router.get("/api/conversations")
-async def list_conversations(session_id: Optional[str] = None):
+async def list_conversations(session_id: str | None = None):
     """List all conversations (optionally filtered by session_id)."""
     if not app_state.session_store:
         return []

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from perspicacite.web.routers import kb as kb_router
 
 

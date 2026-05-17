@@ -7,8 +7,7 @@ import os
 
 import httpx
 
-from perspicacite.logging import get_logger
-from .base import logger, PDFDownloader
+from .base import PDFDownloader, logger
 
 
 async def get_open_access_url(
@@ -82,7 +81,7 @@ async def download_from_unpaywall(
     oa_url = await get_open_access_url(doi, http_client, email)
     if not oa_url:
         return None
-    
+
     logger.info("unpaywall_downloading", doi=doi, url=oa_url)
     downloader = PDFDownloader()
     return await downloader.download(oa_url, http_client)

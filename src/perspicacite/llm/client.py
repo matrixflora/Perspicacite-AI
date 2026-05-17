@@ -25,7 +25,7 @@ logger = get_logger("perspicacite.llm")
 import logging as _stdlib_logging  # noqa: E402
 
 try:
-    import litellm as _litellm  # noqa: E402
+    import litellm as _litellm
     _litellm.suppress_debug_info = True
 except Exception:  # pragma: no cover — litellm is a hard dep
     pass
@@ -42,7 +42,10 @@ def _maybe_wrap_error(exc: Exception, provider: str) -> Exception:
 
     # Rate-limit takes priority over auth — see test_rate_limit_wins_when_both_patterns_match.
     from perspicacite.llm.errors import (
-        AuthError, RateLimitError, detect_auth_error, detect_rate_limit,
+        AuthError,
+        RateLimitError,
+        detect_auth_error,
+        detect_rate_limit,
         suggested_action,
     )
     if cls_name == "RateLimitError" or cls_name.endswith(".RateLimitError"):
@@ -609,7 +612,7 @@ class AsyncLLMClient:
                     model=model,
                     input_tokens=usage.get("prompt_tokens", 0),
                     output_tokens=usage.get("completion_tokens", 0),
-                    content_length=len(content),
+                    content_length=len(content or ""),
                 )
                 from perspicacite.provenance.context import get_collector
                 _c = get_collector()
@@ -654,7 +657,7 @@ class AsyncLLMClient:
                 model=model,
                 input_tokens=usage.get("prompt_tokens", 0),
                 output_tokens=usage.get("completion_tokens", 0),
-                content_length=len(content),
+                content_length=len(content or ""),
             )
             from perspicacite.provenance.context import get_collector
             _c = get_collector()

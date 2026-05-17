@@ -78,7 +78,7 @@ class AuthorResolver:
             return 0
         return int(time.time()) - self.ttl_days * 86400
 
-    def _cache_get(self, name: str) -> "AuthorResolution | None | _Sentinel":
+    def _cache_get(self, name: str) -> AuthorResolution | None | _Sentinel:
         """Return ``AuthorResolution`` on hit, ``None`` on cached negative,
         or ``_MISS`` when there is no entry (or it expired)."""
         cutoff = self._ttl_cutoff()
@@ -104,7 +104,7 @@ class AuthorResolver:
             confidence=float(conf or 0.0),
         )
 
-    def _cache_put(self, name: str, res: "AuthorResolution | None") -> None:
+    def _cache_put(self, name: str, res: AuthorResolution | None) -> None:
         with self._connect() as conn:
             if res is None:
                 conn.execute(
@@ -133,7 +133,7 @@ class AuthorResolver:
     # ---- parsing -----------------------------------------------------
 
     @staticmethod
-    def _strip_orcid(s: "str | None") -> "str | None":
+    def _strip_orcid(s: str | None) -> str | None:
         if not s:
             return None
         s = s.strip()
@@ -142,7 +142,7 @@ class AuthorResolver:
                 return s[len(prefix):]
         return s
 
-    def _parse(self, body: str) -> "AuthorResolution | None":
+    def _parse(self, body: str) -> AuthorResolution | None:
         try:
             payload = json.loads(body)
         except json.JSONDecodeError:
@@ -172,7 +172,7 @@ class AuthorResolver:
 
     # ---- public API --------------------------------------------------
 
-    async def resolve(self, name: str) -> "AuthorResolution | None":
+    async def resolve(self, name: str) -> AuthorResolution | None:
         name = (name or "").strip()
         if not name:
             return None
@@ -190,7 +190,7 @@ class AuthorResolver:
         )
         try:
             resp = await self._http_get(url)
-        except Exception as exc:  # noqa: BLE001 — best-effort lookup
+        except Exception as exc:
             logger.warning(
                 "orcid_resolver_http_failed",
                 name=name, error=str(exc), error_type=type(exc).__name__,

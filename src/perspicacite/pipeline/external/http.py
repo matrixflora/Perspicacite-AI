@@ -40,7 +40,7 @@ async def _request_with_retries(
                     "external_http_retryable",
                     url=url, status=resp.status_code, attempt=attempt,
                 )
-            except (httpx.HTTPError, OSError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, httpx.HTTPError, OSError) as exc:
                 logger.warning(
                     "external_http_error",
                     url=url, error=str(exc), attempt=attempt,

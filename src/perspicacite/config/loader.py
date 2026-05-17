@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 
 import yaml
 from pydantic import ValidationError
@@ -30,17 +30,17 @@ def get_config_search_paths() -> list[Path]:
     return paths
 
 
-def load_yaml_file(path: Path) -> Optional[dict[str, Any]]:
+def load_yaml_file(path: Path) -> dict[str, Any] | None:
     """Load YAML file if it exists."""
     if not path.exists():
         return None
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except yaml.YAMLError as e:
         raise ValueError(f"Invalid YAML in {path}: {e}") from e
-    except IOError as e:
+    except OSError as e:
         raise ValueError(f"Cannot read config file {path}: {e}") from e
 
 
@@ -86,7 +86,7 @@ def load_from_env() -> dict[str, Any]:
     return overrides
 
 
-def load_config(path: Optional[str] = None) -> Config:
+def load_config(path: str | None = None) -> Config:
     """
     Load configuration from layered sources.
 
@@ -146,7 +146,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
             base[key] = value
 
 
-def save_config(config: Config, path: Optional[Path] = None) -> None:
+def save_config(config: Config, path: Path | None = None) -> None:
     """
     Save configuration to file.
 

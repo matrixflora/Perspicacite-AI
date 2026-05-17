@@ -8,7 +8,7 @@ correct quality-based priority flow (structured > PDF > abstract > discard).
 # These functions are preserved for any external code that may import them.
 # They will be removed in a future version.
 
-from .unified import retrieve_paper_content  # noqa: F401 — re-export
+from .unified import retrieve_paper_content
 
 
 async def get_pdf_with_fallback(*args, **kwargs):
@@ -19,7 +19,6 @@ async def get_pdf_with_fallback(*args, **kwargs):
         DeprecationWarning,
         stacklevel=2,
     )
-    from .unified import retrieve_paper_content
     result = await retrieve_paper_content(*args, **kwargs)
     if result.success and result.full_text:
         return result.full_text.encode("utf-8")
@@ -35,7 +34,6 @@ async def get_content_with_fallback(*args, **kwargs):
         stacklevel=2,
     )
     from .base import ContentResult
-    from .unified import retrieve_paper_content
     result = await retrieve_paper_content(*args, **kwargs)
     if result.success:
         return ContentResult(

@@ -86,8 +86,8 @@ class KBSearchTool:
 
 
 __all__ = [
-    "Tool",
-    "ToolRegistry",
     "KBSearchTool",
     "LotusSearchTool",
+    "Tool",
+    "ToolRegistry",
 ]

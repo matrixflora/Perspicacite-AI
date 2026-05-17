@@ -133,6 +133,7 @@ def test_mcp_add_papers_to_kb_uses_user_upload():
     these come from an external client, so the source must be
     USER_UPLOAD (not the legacy WEB_SEARCH)."""
     import inspect
+
     from perspicacite.mcp import server
 
     src = inspect.getsource(server)
@@ -149,6 +150,7 @@ def test_mcp_add_dois_to_kb_uses_openalex():
     """The MCP add_dois_to_kb tool fetches via retrieve_paper_content
     (unified pipeline); OpenAlex is the discovery source."""
     import inspect
+
     from perspicacite.mcp import server
 
     src = inspect.getsource(server)
@@ -169,6 +171,7 @@ def test_kb_router_uses_correct_enum_values():
     This invariant test guards all three at once via source scan.
     """
     import inspect
+
     from perspicacite.web.routers import kb
 
     src = inspect.getsource(kb)
@@ -189,6 +192,7 @@ def test_search_to_kb_ingest_dois_uses_openalex():
     """pipeline/search_to_kb.ingest_dois_into_kb fetches via the unified
     download pipeline; built Papers must carry source=OPENALEX."""
     import inspect
+
     from perspicacite.pipeline import search_to_kb
 
     src = inspect.getsource(search_to_kb)
@@ -209,6 +213,7 @@ def test_orchestrator_url_prefetch_uses_correct_enums():
 
     Source scan keeps both pinned."""
     import inspect
+
     from perspicacite.rag.agentic import orchestrator
 
     src = inspect.getsource(orchestrator)

@@ -1,8 +1,6 @@
 """Usage-path parsing in AgentCLIClient (Wave 2.3)."""
 import json
 
-import pytest
-
 from perspicacite.llm.agent_cli import AgentCLIClient
 
 

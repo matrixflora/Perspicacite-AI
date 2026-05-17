@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # Routes the app must expose. Every entry is (path, set-of-methods).
 EXPECTED_ROUTES: list[tuple[str, set[str]]] = [
     ("/", {"GET"}),

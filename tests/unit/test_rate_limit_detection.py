@@ -1,5 +1,4 @@
 """Pattern detection + structured-exception tests for Wave 3.1."""
-import pytest
 
 from perspicacite.llm.errors import (
     LLMError,

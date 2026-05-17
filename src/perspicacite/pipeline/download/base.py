@@ -150,6 +150,7 @@ class PDFDownloader:
         try:
             from http.cookiejar import MozillaCookieJar
             from pathlib import Path
+
             from perspicacite.pipeline.download.cookies import (
                 check_cookie_freshness_for_domains,
             )

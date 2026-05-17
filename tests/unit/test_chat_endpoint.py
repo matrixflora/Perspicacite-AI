@@ -11,7 +11,6 @@ import json
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # We test the non-streaming collection logic directly, without starting
 # the full FastAPI app (which requires ChromaDB, LLM keys, etc.).

@@ -12,7 +12,7 @@ import pytest
 
 from perspicacite.models import PaperSource
 from perspicacite.pipeline.download.arxiv import get_arxiv_id_from_url
-from perspicacite.rag.agentic.orchestrator import AgenticOrchestrator, _URL_RE, _DOI_IN_URL_RE
+from perspicacite.rag.agentic.orchestrator import _DOI_IN_URL_RE, _URL_RE, AgenticOrchestrator
 
 
 class _MockRetrieveResult:
@@ -304,7 +304,7 @@ class TestTryResolveUrl:
     @pytest.mark.asyncio
     async def test_falls_back_to_s2_when_no_full_text(self, monkeypatch):
         """When retrieve returns no full text, falls back to Semantic Scholar lookup."""
-        from perspicacite.models.papers import Paper, Author
+        from perspicacite.models.papers import Author, Paper
 
         async def mock_retrieve(doi, pdf_parser=None, unpaywall_email=None):
             return _MockRetrieveResult(success=False, full_text=None)

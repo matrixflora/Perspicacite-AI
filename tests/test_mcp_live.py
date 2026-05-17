@@ -180,7 +180,10 @@ def _truncate(text: str, max_len: int = 200) -> str:
 def _cleanup_kb(kb_name: str):
     """Delete a test KB from ChromaDB and SQLite."""
     try:
-        import chromadb, sqlite3
+        import sqlite3
+
+        import chromadb
+
         from perspicacite.models.kb import chroma_collection_name_for_kb
         collection = chroma_collection_name_for_kb(kb_name)
         chroma_client = chromadb.PersistentClient(path="./chroma_db")
@@ -541,7 +544,7 @@ def test_nonstream(port: int):
         _cleanup_kb(kb_name)
         return
 
-    if "answer" in result and result["answer"]:
+    if result.get("answer"):
         ans_len = len(result["answer"])
         sources = len(result.get("sources", []))
         _info(f"Answer: {ans_len} chars, Sources: {sources}")

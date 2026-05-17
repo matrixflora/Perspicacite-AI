@@ -13,7 +13,6 @@ This uses the public PDF URL pattern ``https://pubs.acs.org/doi/pdf/{article_id}
 
 import httpx
 
-from perspicacite.logging import get_logger
 from .base import logger
 
 
@@ -31,18 +30,18 @@ def extract_acs_article_id(doi: str) -> str | None:
     """
     if not doi:
         return None
-    
+
     # Remove DOI prefix
     prefixes = [
         "https://doi.org/10.1021/",
         "http://doi.org/10.1021/",
         "10.1021/",
     ]
-    
+
     for prefix in prefixes:
         if doi.lower().startswith(prefix.lower()):
             return doi[len(prefix):]
-    
+
     return None
 
 
@@ -65,22 +64,22 @@ async def download_from_acs(
     """
     client = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     should_close = http_client is None
-    
+
     try:
         article_id = extract_acs_article_id(doi)
         if not article_id:
             logger.warning("acs_invalid_doi", doi=doi)
             return None
-        
+
         logger.info("acs_attempt", doi=doi, article_id=article_id)
-        
+
         # ACS PDF URL format
         pdf_url = f"https://pubs.acs.org/doi/pdf/{article_id}"
-        
+
         logger.info("acs_downloading", url=pdf_url)
         response = await client.get(pdf_url)
         response.raise_for_status()
-        
+
         # Verify it's a PDF
         content_type = response.headers.get("content-type", "").lower()
         if "pdf" in content_type or response.content.startswith(b"%PDF"):
@@ -93,7 +92,7 @@ async def download_from_acs(
             else:
                 logger.warning("acs_not_pdf", doi=doi, content_type=content_type)
             return None
-            
+
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 403:
             logger.warning("acs_access_denied", doi=doi)
@@ -129,20 +128,20 @@ async def check_acs_open_access(
     """
     client = http_client or httpx.AsyncClient(timeout=10.0)
     should_close = http_client is None
-    
+
     try:
         article_id = extract_acs_article_id(doi)
         if not article_id:
             return False
-        
+
         url = f"https://pubs.acs.org/doi/{article_id}"
         response = await client.get(url)
-        
+
         if response.status_code != 200:
             return False
-        
+
         html = response.text.lower()
-        
+
         # Check for OA indicators
         oa_indicators = [
             "open access",
@@ -151,14 +150,14 @@ async def check_acs_open_access(
             "free access",
             "this article is licensed under",
         ]
-        
+
         for indicator in oa_indicators:
             if indicator in html:
                 logger.info("acs_detected_oa", doi=doi, indicator=indicator)
                 return True
-        
+
         return False
-        
+
     except Exception as e:
         logger.error("acs_oa_check_error", doi=doi, error=str(e))
         return False

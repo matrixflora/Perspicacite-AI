@@ -11,7 +11,6 @@ import re
 
 import httpx
 
-from perspicacite.logging import get_logger
 from .base import logger
 
 
@@ -60,9 +59,9 @@ def get_arxiv_id_from_doi(doi: str) -> str | None:
     """
     if not doi:
         return None
-    
+
     doi_lower = doi.lower()
-    
+
     # Handle 10.48550/arXiv.xxxxx format
     if "arxiv" in doi_lower:
         # Extract after arxiv. or arxiv:
@@ -71,7 +70,7 @@ def get_arxiv_id_from_doi(doi: str) -> str | None:
                 parts = doi_lower.split(prefix, 1)
                 if len(parts) > 1:
                     return parts[1].strip()
-    
+
     return None
 
 
@@ -84,15 +83,15 @@ def convert_abs_to_pdf_url(url: str) -> str | None:
     """
     if not url:
         return None
-    
+
     url_lower = url.lower()
-    
+
     # Handle /abs/ URLs
     if "/abs/" in url_lower:
         arxiv_id = url.split("/abs/")[-1].split("?")[0].split("#")[0]
         if arxiv_id:
             return f"https://arxiv.org/pdf/{arxiv_id}"
-    
+
     return None
 
 
@@ -115,10 +114,10 @@ async def download_from_arxiv(
     """
     client = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     should_close = http_client is None
-    
+
     pdf_url = None
     arxiv_id = None
-    
+
     try:
         # Determine arXiv ID from various inputs
         if identifier:
@@ -131,21 +130,21 @@ async def download_from_arxiv(
             pdf_url = convert_abs_to_pdf_url(url)
             if pdf_url:
                 logger.info("arxiv_converted_url", original_url=url, pdf_url=pdf_url)
-        
+
         # Build PDF URL from arXiv ID
         if arxiv_id and not pdf_url:
             pdf_url = f"https://arxiv.org/pdf/{arxiv_id}"
             logger.info("arxiv_pdf_url", arxiv_id=arxiv_id, url=pdf_url)
-        
+
         if not pdf_url:
             logger.debug("arxiv_no_valid_identifier")
             return None
-        
+
         # Download PDF
         logger.info("arxiv_downloading", url=pdf_url)
         response = await client.get(pdf_url)
         response.raise_for_status()
-        
+
         # Verify it's a PDF
         content_type = response.headers.get("content-type", "").lower()
         if "pdf" in content_type or response.content.startswith(b"%PDF"):
@@ -154,7 +153,7 @@ async def download_from_arxiv(
         else:
             logger.warning("arxiv_not_pdf", content_type=content_type)
             return None
-            
+
     except httpx.HTTPStatusError as e:
         logger.error(
             "arxiv_http_error",
@@ -205,7 +204,7 @@ async def fetch_arxiv_html(
         html = response.text
 
         try:
-            from bs4 import BeautifulSoup, Tag, NavigableString
+            from bs4 import BeautifulSoup, NavigableString, Tag
         except ImportError:
             # Fallback: just extract raw text
             text = response.text

@@ -1,37 +1,37 @@
 """Data models for Perspicacité v2."""
 
-from perspicacite.models.papers import Paper, Author, PaperSource, normalize_paper_dict
-from perspicacite.models.documents import DocumentChunk, ChunkMetadata
-from perspicacite.models.kb import KnowledgeBase, ChunkConfig, KBStats
-from perspicacite.models.search import SearchFilters, RetrievedChunk, SearchQuery
+from perspicacite.models.documents import ChunkMetadata, DocumentChunk
+from perspicacite.models.kb import ChunkConfig, KBStats, KnowledgeBase
+from perspicacite.models.messages import Conversation, Message, Session
+from perspicacite.models.papers import Author, Paper, PaperSource, normalize_paper_dict
 from perspicacite.models.rag import (
     RAGMode,
-    SourceReference,
     RAGRequest,
     RAGResponse,
+    SourceReference,
     StreamEvent,
 )
-from perspicacite.models.messages import Message, Conversation, Session
+from perspicacite.models.search import RetrievedChunk, SearchFilters, SearchQuery
 
 __all__ = [
-    "Paper",
     "Author",
-    "PaperSource",
-    "normalize_paper_dict",
-    "DocumentChunk",
-    "ChunkMetadata",
-    "KnowledgeBase",
     "ChunkConfig",
+    "ChunkMetadata",
+    "Conversation",
+    "DocumentChunk",
     "KBStats",
-    "SearchFilters",
-    "RetrievedChunk",
-    "SearchQuery",
+    "KnowledgeBase",
+    "Message",
+    "Paper",
+    "PaperSource",
     "RAGMode",
-    "SourceReference",
     "RAGRequest",
     "RAGResponse",
-    "StreamEvent",
-    "Message",
-    "Conversation",
+    "RetrievedChunk",
+    "SearchFilters",
+    "SearchQuery",
     "Session",
+    "SourceReference",
+    "StreamEvent",
+    "normalize_paper_dict",
 ]

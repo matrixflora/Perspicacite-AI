@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from perspicacite.pipeline.capsule_builder import (
-    resolve_paper_from_metadata,
     locate_cached_pdf,
+    resolve_paper_from_metadata,
 )
 
 

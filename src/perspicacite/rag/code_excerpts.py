@@ -12,11 +12,10 @@ start_line, end_line)``, and builds a ``source_url`` link-out:
 from __future__ import annotations
 
 import re
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from perspicacite.models.documents import DocumentChunk
 from perspicacite.models.rag import CodeExcerpt
-
 
 _GITHUB_PAPER_ID_RE = re.compile(
     r"^github:(?P<owner>[^/\s]+)/(?P<repo>[^@\s]+)@(?P<sha>[^:\s]+):(?P<path>.+)$"
@@ -25,7 +24,7 @@ _GITHUB_PAPER_ID_RE = re.compile(
 
 def build_github_source_url(
     *, paper_id: str, start_line: int, end_line: int
-) -> Optional[str]:
+) -> str | None:
     """Build a GitHub blob URL with line range, or None if paper_id isn't a
     GitHub-format id."""
     m = _GITHUB_PAPER_ID_RE.match(paper_id)

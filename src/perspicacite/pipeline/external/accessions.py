@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 
 # (kind, compiled_regex, url_template). url_template uses ``{id}`` placeholder.
-_ACCESSION_PATTERNS: tuple[tuple[str, "re.Pattern[str]", str], ...] = (
+_ACCESSION_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("massive",      re.compile(r"\bMSV\d{9}\b"),
         "https://massive.ucsd.edu/ProteoSAFe/dataset.jsp?accession={id}"),
     ("pride",        re.compile(r"\bPXD\d{6,}\b"),

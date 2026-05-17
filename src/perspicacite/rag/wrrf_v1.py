@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 from collections import Counter
-from typing import Any, List, Tuple
+from typing import Any
 
 from perspicacite.rag.utils import get_doc_citation
 
@@ -20,7 +20,7 @@ def doc_page_content(doc: Any) -> str:
     return str(doc)
 
 
-def merge_three_chunks(before: Any, current: Any, after: Any) -> Tuple[str, Any]:
+def merge_three_chunks(before: Any, current: Any, after: Any) -> tuple[str, Any]:
     """Port of core/core.py merge_documents for chunk-level results."""
     merged_text = ""
     if before:
@@ -66,18 +66,18 @@ def build_merged_search_result(
 
 
 def select_wrrf_merged_documents(
-    sorted_docs: List[Tuple[Any, float]],
+    sorted_docs: list[tuple[Any, float]],
     documents_info: dict[Any, Any],
     final_max_docs: int,
     max_docs_per_source: int,
-) -> List[Any]:
+) -> list[Any]:
     """
     v1: walk WRRF-sorted unique doc_ids, merge with neighbors in that list,
     enforce max_docs_per_source.
     """
     sorted_doc_ids = [doc_id for doc_id, _ in sorted_docs]
     sorted_documents = [documents_info[doc_id] for doc_id in sorted_doc_ids]
-    selected: List[Any] = []
+    selected: list[Any] = []
     source_counter: Counter[str] = Counter()
 
     for idx, doc_id in enumerate(sorted_doc_ids):

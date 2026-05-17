@@ -18,7 +18,6 @@ from perspicacite.pipeline.download.youtube import (
     is_youtube_url,
 )
 
-
 # ---------------------------------------------------------------------------
 # URL detection across all surface forms
 # ---------------------------------------------------------------------------

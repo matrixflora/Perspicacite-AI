@@ -131,8 +131,8 @@ class DynamicKnowledgeBase:
         include_full_text: bool,
     ) -> int:
         """Add a single paper to the collection."""
-        from perspicacite.models.documents import DocumentChunk, ChunkMetadata
-        from perspicacite.rag.chunking import create_chunker, SimpleChunker
+        from perspicacite.models.documents import ChunkMetadata, DocumentChunk
+        from perspicacite.rag.chunking import SimpleChunker, create_chunker
 
         # Skip papers with no searchable content
         has_full_text = bool(paper.full_text and paper.full_text.strip())
@@ -160,7 +160,7 @@ Abstract:
 
         # Format authors as comma-separated string for metadata
         authors_str = ", ".join(str(a) for a in paper.authors) if paper.authors else None
-        
+
         paper_content_type = getattr(paper, "content_type", None)
         chunks.append(DocumentChunk(
             id=f"{paper.id}_metadata",

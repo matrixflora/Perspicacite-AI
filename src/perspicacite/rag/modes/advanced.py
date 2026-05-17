@@ -14,46 +14,44 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from perspicacite.config.schema import MultimodalMode
 from perspicacite.logging import get_logger
-from perspicacite.models.documents import DocumentChunk
+from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.provenance.context import get_collector
-from perspicacite.config.schema import MultimodalMode
 from perspicacite.rag.code_excerpts import collect_code_excerpts
+from perspicacite.rag.conversation_helpers import compute_retrieval_query, format_conversation_block
 from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.rag.modes.base import BaseRAGMode
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
-from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
-from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
-    MANDATORY_PROMPT,
-    get_mandatory_prompt,
-    FORMAT_PROMPT,
-    GENERATE_SIMILAR_QUERIES_PROMPT,
     EVALUATE_RESPONSE_PROMPT,
-    REFINE_RESPONSE_SYSTEM_PROMPT,
-    REFINE_RESPONSE_HUMAN_PROMPT_SUFFIX,
     FOCUS_INSTRUCTIONS_PROMPT,
+    FORMAT_PROMPT,
+    MANDATORY_PROMPT,
+    REFINE_RESPONSE_HUMAN_PROMPT_SUFFIX,
+    REFINE_RESPONSE_SYSTEM_PROMPT,
+    get_mandatory_prompt,
 )
-from perspicacite.models.kb import chroma_collection_name_for_kb
-from perspicacite.rag.conversation_helpers import compute_retrieval_query, format_conversation_block
 from perspicacite.rag.query_scope import merge_scope_with_candidates, resolve_paper_scope_for_query
+from perspicacite.rag.relevancy import assess_query_complexity, reorder_documents_by_relevance
+from perspicacite.rag.utils import (
+    flatten_paper_results_to_chunks,
+    format_documents_for_prompt,
+    format_paper_results_for_prompt,
+    format_references,
+    get_doc_citation,
+    prepare_sources,
+)
+from perspicacite.rag.wrrf_v1 import doc_page_content, select_wrrf_merged_documents
 from perspicacite.retrieval.hybrid import (
     determine_weights_with_llm,
     hybrid_retrieval,
     resolve_hybrid_weights,
 )
-from perspicacite.rag.relevancy import assess_query_complexity, reorder_documents_by_relevance
-from perspicacite.rag.utils import (
-    format_references,
-    prepare_sources,
-    get_doc_citation,
-    format_documents_for_prompt,
-    format_paper_results_for_prompt,
-    flatten_paper_results_to_chunks,
-)
-from perspicacite.rag.wrrf_v1 import doc_page_content, select_wrrf_merged_documents
+from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
+from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 
 logger = get_logger("perspicacite.rag.modes.advanced")
 
@@ -535,7 +533,6 @@ Sources:
         tools: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Execute Advanced RAG with true streaming output."""
-        import json
 
         yield StreamEvent.status("Advanced RAG: Generating query variations...")
 

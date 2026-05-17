@@ -82,7 +82,8 @@ def report(msg: str) -> None:
 async def audit_doi_resolution(findings: dict[str, Any]) -> None:
     section("Phase 1: DOI → OpenAlex resolution (fix #3 + #7)")
     import httpx
-    from perspicacite.pipeline.snowball import openalex_id_for_doi, _fetch_seed_work
+
+    from perspicacite.pipeline.snowball import _fetch_seed_work, openalex_id_for_doi
 
     out: dict[str, Any] = {}
     findings["doi_resolution"] = out
@@ -215,7 +216,7 @@ async def audit_bug_fixes(findings: dict[str, Any]) -> None:
         report(f"  fix#4 PaperSource enum extension: FAIL — {exc}")
 
     # ---- Fix #5: BudgetTracker max_tokens / max_cost_usd ------------------
-    from perspicacite.llm.budget import BudgetTracker, BudgetExceededError
+    from perspicacite.llm.budget import BudgetExceededError, BudgetTracker
 
     try:
         t = BudgetTracker(max_tokens=1000, max_cost_usd=1.0)
@@ -243,7 +244,9 @@ async def audit_bug_fixes(findings: dict[str, Any]) -> None:
 
     # ---- Fix #6: KBRouteHit destructuring ---------------------------------
     from perspicacite.rag.kb_router import (
-        KBRouteHit, route_kbs, _bm25_cache_clear,
+        KBRouteHit,
+        _bm25_cache_clear,
+        route_kbs,
     )
 
     try:
@@ -289,9 +292,13 @@ async def audit_bug_fixes(findings: dict[str, Any]) -> None:
 async def audit_ingest_cycle(findings: dict[str, Any]) -> None:
     section("Phase 3: Fresh-paper ingest cycle (Lab + ASB)")
     import httpx
+
     from perspicacite.models.papers import Paper, PaperSource
     from perspicacite.pipeline.capsule_builder import (
-        capsule_dir_for, write_metadata, write_blocks, write_resources,
+        capsule_dir_for,
+        write_blocks,
+        write_metadata,
+        write_resources,
     )
     from perspicacite.pipeline.chunking_dispatch import chunk_document
 
@@ -384,6 +391,7 @@ async def audit_ingest_cycle(findings: dict[str, Any]) -> None:
 async def audit_cite_graph(findings: dict[str, Any]) -> None:
     section("Phase 4: Cite-graph by DOI (live, no --openalex-id)")
     import httpx
+
     from perspicacite.pipeline.snowball import _fetch_seed_work, fetch_cited_by_works
 
     out: dict[str, Any] = {}
@@ -441,8 +449,10 @@ _MULTI_CHUNK_FIXTURES = [
 
 async def audit_multi_chunk(findings: dict[str, Any]) -> None:
     section("Phase 4b: Multi-chunk path on real long-form text")
-    import httpx
     from types import SimpleNamespace
+
+    import httpx
+
     from perspicacite.models.papers import Paper, PaperSource
     from perspicacite.pipeline.chunking_dispatch import chunk_document
 
@@ -497,8 +507,12 @@ async def audit_multi_chunk(findings: dict[str, Any]) -> None:
 def audit_response_assembly(findings: dict[str, Any]) -> None:
     section("Phase 5: RAGResponse + StreamEvent factories (Manuscript)")
     from perspicacite.models.rag import (
-        RAGRequest, RAGResponse, RAGMode, SourceReference,
-        CodeExcerpt, FigureRef, StreamEvent,
+        FigureRef,
+        RAGMode,
+        RAGRequest,
+        RAGResponse,
+        SourceReference,
+        StreamEvent,
     )
     out: dict[str, Any] = {}
     findings["response_assembly"] = out

@@ -11,10 +11,9 @@ import httpx
 import pytest
 
 from perspicacite.search.semantic_scholar import (
-    fetch_ss_references,
     fetch_ss_citations,
+    fetch_ss_references,
 )
-
 
 _SAMPLE_REF_RESPONSE = {
     "data": [

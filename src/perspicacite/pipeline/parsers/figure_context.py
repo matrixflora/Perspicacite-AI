@@ -9,9 +9,8 @@ Cycle B chat path.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
-
 
 FIGURE_CAPTION_CHAR_CAP = 400
 
@@ -51,8 +50,8 @@ def is_si_label(label: str) -> bool:
 
 
 def partition_main_vs_supplementary(
-    figures: list["FigureContext"],
-) -> tuple[list["FigureContext"], list["FigureContext"]]:
+    figures: list[FigureContext],
+) -> tuple[list[FigureContext], list[FigureContext]]:
     """Split a flat figure list into (main, supplementary) preserving order."""
     main = [f for f in figures if not f.is_supplementary]
     si = [f for f in figures if f.is_supplementary]

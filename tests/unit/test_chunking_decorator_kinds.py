@@ -3,7 +3,6 @@ from __future__ import annotations
 from perspicacite.models.papers import Paper, PaperSource
 from perspicacite.pipeline.chunking_code import _chunk_python_ast
 
-
 SRC = '''\
 class C:
     """C class."""

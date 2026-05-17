@@ -29,11 +29,10 @@ def build_embedding_cache_key(*, model: str, text: str) -> str:
 import asyncio
 import sqlite3
 import time
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import numpy as np
-
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS embedding_cache (

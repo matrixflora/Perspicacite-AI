@@ -4,8 +4,8 @@ from pathlib import Path
 
 from perspicacite.llm.embeddings import (
     CachedEmbeddingProvider,
-    create_embedding_provider,
     SentenceTransformerEmbeddingProvider,
+    create_embedding_provider,
 )
 
 

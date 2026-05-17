@@ -151,17 +151,17 @@ class SciLExAdapter:
         article_type: str | None = None,
     ) -> list[Paper]:
         """Synchronous SciLEx search."""
-        from scilex.crawlers.collector_collection import CollectCollection
         from scilex.crawlers.aggregate import (
-            OpenAlextoZoteroFormat,
-            SemanticScholartoZoteroFormat,
             ArxivtoZoteroFormat,
-            PubMedtoZoteroFormat,
-            IEEEtoZoteroFormat,
-            SpringertoZoteroFormat,
             DBLPtoZoteroFormat,
+            IEEEtoZoteroFormat,
+            OpenAlextoZoteroFormat,
+            PubMedtoZoteroFormat,
+            SemanticScholartoZoteroFormat,
+            SpringertoZoteroFormat,
             deduplicate,
         )
+        from scilex.crawlers.collector_collection import CollectCollection
 
         # API name mapping
         api_name_map = {
@@ -308,7 +308,7 @@ class SciLExAdapter:
                                 logger.debug(f"Failed to read {result_file}: {e}")
                                 continue
 
-                logger.info(f"scilex_collected_records", count=len(all_records))
+                logger.info("scilex_collected_records", count=len(all_records))
 
                 if not all_records:
                     logger.warning("scilex_no_results", query=query)
@@ -320,7 +320,7 @@ class SciLExAdapter:
                 # Deduplicate
                 try:
                     df_deduped = deduplicate(df)
-                    logger.info(f"scilex_deduplicated", before=len(df), after=len(df_deduped))
+                    logger.info("scilex_deduplicated", before=len(df), after=len(df_deduped))
                 except Exception as e:
                     logger.debug(f"Deduplication error: {e}")
                     df_deduped = df
@@ -443,22 +443,22 @@ class SciLExAdapter:
             "springer": "Springer",
             "dblp": "DBLP",
         }
-        
+
         config = {}
         for api in apis:
             api_upper = api.upper()
             scilex_api_name = api_name_map.get(api, api)
-            
+
             # Try multiple env var naming conventions
             env_key_prefixed = f"SCILEX_{api_upper}_API_KEY"
             env_key_direct = f"{api_upper}_API_KEY"
-            
+
             api_key = (
                 os.environ.get(env_key_prefixed) or
                 os.environ.get(env_key_direct) or
                 self.api_config.get(api, {}).get("api_key")
             )
-            
+
             if api_key:
                 # F-33: Validate the key before handing it to SciLEx. If the
                 # configured Semantic Scholar key is rejected (stale / revoked),
@@ -524,7 +524,7 @@ class SciLExAdapter:
                 author_str = author_str.strip()
                 if not author_str:
                     continue
-                # Zotero format is "Last, First" 
+                # Zotero format is "Last, First"
                 if "," in author_str:
                     parts = author_str.split(",", 1)
                     family = parts[0].strip()

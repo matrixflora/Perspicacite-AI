@@ -13,7 +13,6 @@ from typing import Any
 
 from perspicacite.logging import get_logger
 from perspicacite.pipeline.external.http import (
-    http_get_bytes,
     http_get_json,
     http_get_text,
 )

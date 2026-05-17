@@ -1,5 +1,5 @@
 """Verify AgentCLIClient surfaces RateLimitError on rate-limit stderr (Wave 3.1)."""
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 

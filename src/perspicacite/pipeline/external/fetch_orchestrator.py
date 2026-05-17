@@ -16,7 +16,6 @@ from perspicacite.logging import get_logger
 from perspicacite.models.papers import Paper
 from perspicacite.pipeline.external.fetch_doi import (
     fetch_crossref,
-    fetch_pubmed,
     fetch_unpaywall,
 )
 from perspicacite.pipeline.external.fetch_github import fetch_github_docs

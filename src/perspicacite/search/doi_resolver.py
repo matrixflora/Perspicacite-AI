@@ -3,7 +3,7 @@
 import httpx
 
 from perspicacite.logging import get_logger
-from perspicacite.models.papers import Paper, PaperSource, Author
+from perspicacite.models.papers import Author, Paper, PaperSource
 
 logger = get_logger("perspicacite.search.doi")
 

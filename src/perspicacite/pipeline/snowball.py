@@ -36,7 +36,7 @@ the existing vector store + session store + LLM client + PDF cache.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import httpx
@@ -44,7 +44,7 @@ import httpx
 from perspicacite.logging import get_logger
 from perspicacite.models.papers import Author, Paper, PaperSource
 from perspicacite.pipeline.arxiv_ids import parse_arxiv_doi, resolve_arxiv_title
-from perspicacite.search.semantic_scholar import fetch_ss_references, fetch_ss_citations
+from perspicacite.search.semantic_scholar import fetch_ss_citations, fetch_ss_references
 
 logger = get_logger("perspicacite.pipeline.snowball")
 
@@ -625,8 +625,10 @@ async def expand_kb_via_citations(
             DOI list.
     """
     from perspicacite.pipeline.search_to_kb import (
-        SearchFilter, apply_filters, screen_candidates,
+        SearchFilter,
+        apply_filters,
         ingest_dois_into_kb,
+        screen_candidates,
     )
 
     kb_meta = await app_state.session_store.get_kb_metadata(kb_name)

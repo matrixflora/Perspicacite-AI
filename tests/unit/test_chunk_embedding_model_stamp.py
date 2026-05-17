@@ -2,10 +2,8 @@
 ``embedding_model`` is updated to the actual model used (sub-project B)."""
 from __future__ import annotations
 
-import pytest
-
-from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 from perspicacite.llm.embeddings import TypedEmbeddingProvider
+from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 
 
 class _Stub:

@@ -25,10 +25,13 @@
 }
 
 .message.user {
-    align-self: flex-end;
+    /* Anchored to the left, slightly indented from the assistant bubble so
+       the speaker-turn alternation is still readable at a glance. */
+    align-self: flex-start;
+    margin-left: 24px;
     background: var(--primary);
     color: white;
-    border-bottom-right-radius: 2px;
+    border-bottom-left-radius: 2px;
 }
 
 .message.assistant {
@@ -178,7 +181,7 @@
 }
 
 .download-cap-control {
-    display: none;
+    display: flex;
     align-items: center;
     gap: 8px;
     font-size: 12px;
@@ -186,10 +189,6 @@
     padding: 4px 10px;
     background: rgba(27, 68, 121, 0.05);
     border-radius: 6px;
-}
-
-.download-cap-control.visible {
-    display: flex;
 }
 
 .download-cap-control label {
@@ -325,6 +324,7 @@
     background: #e0e7ff;
     color: #3730a3;
     border-left-color: #6366f1;
+    margin-left: 50px;
 }
 
 .thinking-step.complete {
@@ -390,6 +390,118 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
 }
+
+/* Heartbeat ~70 bpm (857 ms/beat) while a chat request is streaming. */
+@keyframes heartbeat {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    25% { transform: scale(1.18); opacity: 0.95; }
+    50% { transform: scale(0.92); opacity: 0.55; }
+    75% { transform: scale(1.12); opacity: 0.95; }
+}
+
+.chat-heartbeat {
+    display: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent, #10b981);
+    margin: 0 8px;
+    flex: 0 0 auto;
+}
+
+body.chat-active .chat-heartbeat {
+    display: inline-block;
+    animation: heartbeat 857ms ease-in-out infinite;
+}
+
+/* Status bar pinned just above the chat input. Shows heartbeat,
+   current activity label, elapsed wall-clock seconds, and token usage. */
+.chat-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary, transparent);
+    color: var(--muted, #64748b);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+}
+
+.chat-status-bar .chat-status-label {
+    font-weight: 500;
+    color: var(--text, inherit);
+}
+
+.chat-status-sep { opacity: 0.5; }
+
+body.chat-active .chat-status-bar {
+    color: var(--text, inherit);
+}
+
+/* Provider tag rendered next to each source row (e.g. "google scholar ↗"). */
+.source-provider-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    background: rgba(16,185,129,0.12);
+    color: var(--accent, #10b981);
+    border-radius: 4px;
+    font-size: 11px;
+    text-decoration: none;
+}
+.source-provider-tag:hover { text-decoration: underline; }
+
+/* Rolling "..." next to the active thinking-mode label. Cycles 0→1→2→3
+   dots so the user sees the panel is alive while the step is in flight. */
+.thinking-dots {
+    display: none;
+    margin-left: 4px;
+    width: 1.4em;
+    color: var(--muted, #94a3b8);
+    font-weight: 600;
+    letter-spacing: 1px;
+}
+.thinking-dots::after {
+    content: '';
+    animation: thinking-dots 1.2s steps(4, end) infinite;
+}
+@keyframes thinking-dots {
+    0%   { content: ''; }
+    25%  { content: '.'; }
+    50%  { content: '..'; }
+    75%  { content: '...'; }
+    100% { content: ''; }
+}
+body.chat-active .thinking-message:last-of-type .thinking-dots {
+    display: inline-block;
+}
+
+/* Compact relevance chip beside the details button. Replaces the old
+   full-row "Relevance: 64.0%" label that wasted vertical space. */
+.source-relevance {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    background: rgba(99,102,241,0.12);
+    color: var(--primary, #6366f1);
+    border-radius: 4px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* References list rendered at the end of an assistant message — keep it
+   compact so a long bibliography doesn't overwhelm the answer. */
+.references-block {
+    font-size: 12.5px;
+    color: var(--muted, #64748b);
+    line-height: 1.5;
+    margin-top: 4px;
+}
+.references-block div { margin: 2px 0; }
+.references-block em { color: var(--text, #1e293b); }
+.references-block a { color: var(--primary, #6366f1); }
 
 .intent-badge {
     display: inline-block;

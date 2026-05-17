@@ -198,11 +198,7 @@ def _extract_sections_from_xml(xml_bytes: bytes) -> dict[str, str] | None:
             paras: list[str] = []
             for child in sec:
                 ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-                if ctag == "p":
-                    ptext = "".join(child.itertext()).strip()
-                    if ptext:
-                        paras.append(ptext)
-                elif ctag not in ("sec", "title", "fig", "table-wrap", "xref", "ref-list"):
+                if ctag == "p" or ctag not in ("sec", "title", "fig", "table-wrap", "xref", "ref-list"):
                     ptext = "".join(child.itertext()).strip()
                     if ptext:
                         paras.append(ptext)

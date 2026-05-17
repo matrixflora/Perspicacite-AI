@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from perspicacite.models.documents import ChunkMetadata, DocumentChunk
-from perspicacite.pipeline.symbol_index import write_chunks_symbols, iter_symbols
+from perspicacite.pipeline.symbol_index import iter_symbols, write_chunks_symbols
 
 
 def _code_chunk(paper_id: str, idx: int, name: str) -> DocumentChunk:

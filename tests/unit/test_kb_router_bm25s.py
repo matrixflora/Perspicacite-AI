@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import pytest
-
-from perspicacite.rag.kb_router import route_kbs, _bm25_cache_clear
+from perspicacite.rag.kb_router import _bm25_cache_clear, route_kbs
 
 
 def _names(result):

@@ -10,8 +10,6 @@ from __future__ import annotations
 import signal
 from contextlib import contextmanager
 
-import pytest
-
 from perspicacite.models.kb import ChunkConfig
 from perspicacite.models.papers import Paper, PaperSource
 from perspicacite.pipeline.chunking import _chunk_by_tokens

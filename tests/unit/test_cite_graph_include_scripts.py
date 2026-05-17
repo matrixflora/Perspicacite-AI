@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from perspicacite.pipeline import cite_graph as cg
 from perspicacite.config.schema import CiteGraphConfig, KnowledgeBaseConfig
+from perspicacite.pipeline import cite_graph as cg
 
 
 @pytest.mark.asyncio

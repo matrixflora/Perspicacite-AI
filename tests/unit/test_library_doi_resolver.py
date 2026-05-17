@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from perspicacite.pipeline.library_doi import (
-    LibraryPaper,
     resolve_library_paper,
 )
 
