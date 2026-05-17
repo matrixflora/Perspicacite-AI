@@ -1458,7 +1458,8 @@ async def add_dois_to_kb(
         papers_to_add: list[Paper] = []
         skipped: list[dict] = []
         failed: list[dict] = []
-        dl: dict[str, int] = {"attempted": 0, "success": 0, "failed": 0}
+        metadata_only: list[dict] = []  # F-28/F-30
+        dl: dict[str, int] = {"attempted": 0, "success": 0, "failed": 0, "metadata_only": 0}
 
         from perspicacite.pipeline.download.cookies import (
             build_authenticated_client,
@@ -1488,7 +1489,12 @@ async def add_dois_to_kb(
                     continue
 
                 if not result or not result.success:
-                    failed.append({"doi": doi, "reason": "no content"})
+                    attempts = list(getattr(result, "attempts", []) or [])
+                    failed.append({
+                        "doi": doi,
+                        "reason": "; ".join(f"{a['source']}:{a['status']}" for a in attempts) or "no content",
+                        "attempts": attempts,
+                    })
                     dl["failed"] += 1
                     continue
 
@@ -1502,22 +1508,33 @@ async def add_dois_to_kb(
                     abstract=result.abstract or md.get("abstract"),
                     journal=md.get("journal"),
                     source=PaperSource.OPENALEX,
+                    content_type=getattr(result, "content_type", None),
                 )
                 if result.full_text:
                     paper.full_text = result.full_text
                     dl["success"] += 1
                 else:
-                    dl["failed"] += 1
+                    dl["metadata_only"] += 1
+                    metadata_only.append({
+                        "doi": doi,
+                        "content_type": paper.content_type,
+                        "attempts": list(getattr(result, "attempts", []) or []),
+                    })
                 papers_to_add.append(paper)
 
+        added_with_full_text = sum(1 for p in papers_to_add if getattr(p, "full_text", None))
+        added_metadata_only = len(papers_to_add) - added_with_full_text
         if not papers_to_add:
             return _json_ok(
                 {
                     "kb_name": kb_name,
                     "added_papers": 0,
+                    "added_with_full_text": 0,
+                    "added_metadata_only": 0,
                     "added_chunks": 0,
                     "skipped_duplicates": len(skipped),
                     "failed": failed,
+                    "metadata_only": metadata_only,
                     "pdf_download": dl,
                 }
             )
@@ -1546,9 +1563,12 @@ async def add_dois_to_kb(
             {
                 "kb_name": kb_name,
                 "added_papers": len(papers_to_add),
+                "added_with_full_text": added_with_full_text,
+                "added_metadata_only": added_metadata_only,
                 "added_chunks": chunks_added,
                 "skipped_duplicates": len(skipped),
                 "failed": failed,
+                "metadata_only": metadata_only,
                 "pdf_download": dl,
             }
         )

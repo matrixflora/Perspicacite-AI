@@ -374,7 +374,7 @@ async def retrieve_paper_content(
 
         # ── STEP 4: ABSTRACT ONLY ───────────────────────────────────────
         if disc.abstract and len(disc.abstract.strip()) > 20:
-            return PaperContent(
+            pc = PaperContent(
                 success=True,
                 doi=clean,
                 content_type="abstract",
@@ -382,9 +382,17 @@ async def retrieve_paper_content(
                 content_source="openalex" if disc.title else "unknown",
                 metadata=_metadata_from_discovery(disc, clean),
             )
+            # F-30: surface the per-tier attempts trail even on successful
+            # abstract-only degradation so operators can see which publisher
+            # paths were skipped or missed before we settled for the abstract.
+            pc.attempts.extend(attempts)
+            return pc
 
         # ── STEP 4b: bioRxiv abstract fallback (when discovery had none) ──
         if biorxiv_abstract_fallback is not None:
+            # Same F-30 fix for the bioRxiv-only fallback path
+            if hasattr(biorxiv_abstract_fallback, "attempts"):
+                biorxiv_abstract_fallback.attempts.extend(attempts)
             return biorxiv_abstract_fallback
 
         # ── STEP 5: DISCARD ─────────────────────────────────────────────

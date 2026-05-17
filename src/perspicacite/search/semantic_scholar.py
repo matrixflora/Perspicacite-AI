@@ -298,11 +298,18 @@ async def _ss_fetch_graph(
         if api_key:
             headers["x-api-key"] = api_key
 
-        response = await client.get(
-            url,
-            params={"fields": _SS_REF_CIT_FIELDS, "limit": clamped_limit},
-            headers=headers,
-        )
+        params = {"fields": _SS_REF_CIT_FIELDS, "limit": clamped_limit}
+        response = await client.get(url, params=params, headers=headers)
+
+        # If a configured API key is rejected (403/401), retry without it
+        # — SS allows public access at a lower rate, which is fine for one
+        # snowball expansion.
+        if api_key and response.status_code in (401, 403):
+            logger.info(
+                "snowball_ss_key_rejected_retrying_unauth",
+                paper_id=normalized, endpoint=endpoint, status=response.status_code,
+            )
+            response = await client.get(url, params=params, headers={})
 
         if response.status_code == 404:
             logger.info("snowball_ss_paper_not_found", paper_id=normalized, endpoint=endpoint)

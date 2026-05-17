@@ -240,10 +240,14 @@ async def _bibtex_ingest_worker(
                 except Exception as exc:
                     logger.warning(f"capsule build failed for {p.id}: {exc}")
 
+        added_with_full_text = sum(1 for p in papers_to_add if getattr(p, "full_text", None))
+        added_metadata_only = len(papers_to_add) - added_with_full_text
         await registry.finish(
             job_id,
             {
                 "added_papers": len(papers_to_add),
+                "added_with_full_text": added_with_full_text,
+                "added_metadata_only": added_metadata_only,
                 "added_chunks": added,
                 "skipped": skipped,
             },
@@ -281,7 +285,8 @@ async def _dois_ingest_worker(
         papers_to_add: list = []
         skipped: list = []
         failed: list = []
-        dl: dict = {"attempted": 0, "success": 0, "failed": 0}
+        metadata_only: list = []  # F-28/F-30
+        dl: dict = {"attempted": 0, "success": 0, "failed": 0, "metadata_only": 0}
 
         for i, raw_doi in enumerate(dois):
             doi = (raw_doi or "").strip().replace("https://doi.org/", "")
@@ -315,7 +320,12 @@ async def _dois_ingest_worker(
                 continue
 
             if not result or not result.success:
-                failed.append({"doi": doi, "reason": "no content"})
+                attempts = list(getattr(result, "attempts", []) or [])
+                failed.append({
+                    "doi": doi,
+                    "reason": "; ".join(f"{a['source']}:{a['status']}" for a in attempts) or "no content",
+                    "attempts": attempts,
+                })
                 dl["failed"] += 1
                 await registry.publish(
                     job_id,
@@ -333,13 +343,19 @@ async def _dois_ingest_worker(
                 abstract=result.abstract or md.get("abstract"),
                 journal=md.get("journal"),
                 source=PaperSource.OPENALEX,
+                content_type=getattr(result, "content_type", None),
             )
             if result.full_text:
                 paper.full_text = result.full_text
                 dl["success"] += 1
                 status = "embedded"
             else:
-                dl["failed"] += 1
+                dl["metadata_only"] += 1
+                metadata_only.append({
+                    "doi": doi,
+                    "content_type": paper.content_type,
+                    "attempts": list(getattr(result, "attempts", []) or []),
+                })
                 status = "no_full_text"
             papers_to_add.append(paper)
             await registry.publish(
@@ -348,6 +364,8 @@ async def _dois_ingest_worker(
             )
 
         added = 0
+        added_with_full_text = sum(1 for p in papers_to_add if getattr(p, "full_text", None))
+        added_metadata_only = len(papers_to_add) - added_with_full_text
         if papers_to_add:
             dkb = DynamicKnowledgeBase(
                 vector_store=app_state.vector_store,
@@ -377,9 +395,12 @@ async def _dois_ingest_worker(
             job_id,
             {
                 "added_papers": len(papers_to_add),
+                "added_with_full_text": added_with_full_text,
+                "added_metadata_only": added_metadata_only,
                 "added_chunks": added,
                 "skipped_duplicates": len(skipped),
                 "failed": failed,
+                "metadata_only": metadata_only,
                 "pdf_download": dl,
             },
         )
@@ -887,7 +908,11 @@ async def add_bibtex_to_kb(name: str, request: Request):
     # Process papers with deduplication and PDF download
     papers_to_add = []
     skipped_existing: list[dict[str, Any]] = []
-    download_stats = {"attempted": 0, "success": 0, "failed": 0, "local_pdf": 0}
+    metadata_only: list[dict[str, Any]] = []  # F-28/F-30
+    download_stats = {
+        "attempted": 0, "success": 0, "failed": 0,
+        "local_pdf": 0, "metadata_only": 0,
+    }
 
     pdf_config = app_state.config.pdf_download if app_state.config else None
     pdf_kw = _get_pdf_fallback_kwargs(pdf_config)
@@ -919,6 +944,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
                 logger.warning(f"Local PDF parse failed for {paper.title[:50]}: {e}")
 
         # Try to download full text if DOI available
+        download_failed = False
         if paper.doi and app_state.pdf_parser:
             download_stats["attempted"] += 1
             try:
@@ -944,8 +970,17 @@ async def add_bibtex_to_kb(name: str, request: Request):
                     paper.content_type = getattr(result, "content_type", None)
                     if result.abstract and not paper.abstract:
                         paper.abstract = result.abstract
+                    download_stats["metadata_only"] += 1
+                    metadata_only.append({
+                        "key": paper.doi,
+                        "title": paper.title[:120],
+                        "content_type": paper.content_type,
+                        "attempts": list(getattr(result, "attempts", []) or []),
+                        "reason": "abstract_only_from_discovery",
+                    })
                 else:
                     download_stats["failed"] += 1
+                    download_failed = True
                     attempts = getattr(result, "attempts", []) if result is not None else []
                     dropped_entries.append({
                         "key": paper.doi,
@@ -953,25 +988,51 @@ async def add_bibtex_to_kb(name: str, request: Request):
                         "reason": "; ".join(
                             f"{a['source']}:{a['status']}" for a in attempts
                         ) if attempts else "download failed",
+                        "attempts": list(attempts),
                     })
             except Exception as e:
                 logger.warning(f"Content download failed for {paper.title[:50]}: {e}")
                 download_stats["failed"] += 1
+                download_failed = True
                 dropped_entries.append({
                     "key": paper.doi,
                     "title": paper.title[:120],
                     "reason": str(e),
                 })
 
+        # Skip the paper entirely if DOI lookup completely failed AND the
+        # BibTeX entry has no abstract/full_text to fall back on.
+        if download_failed and not paper.abstract and not paper.full_text:
+            continue
+
+        # Track metadata-only adds from the BibTeX side too (no DOI / DOI failed
+        # but BibTeX itself supplied title+authors; treat as metadata-only).
+        if not paper.full_text and not any(
+            entry["key"] == paper.doi for entry in metadata_only
+        ):
+            metadata_only.append({
+                "key": paper.doi or paper.id,
+                "title": paper.title[:120],
+                "content_type": paper.content_type or "bibtex_metadata",
+                "attempts": [],
+                "reason": "bibtex_metadata_only" if not download_failed else "doi_lookup_failed_metadata_kept",
+            })
+
         papers_to_add.append(paper)
+
+    added_with_full_text = sum(1 for p in papers_to_add if getattr(p, "full_text", None))
+    added_metadata_only_count = len(papers_to_add) - added_with_full_text
 
     if not papers_to_add:
         return {
             "message": "All papers already exist in KB",
             "added_papers": 0,
+            "added_with_full_text": 0,
+            "added_metadata_only": 0,
             "total_entries": total_entries,
             "skipped_duplicates": len(skipped_existing),
             "failed": dropped_entries,
+            "metadata_only": metadata_only,
             "kb": name,
         }
 
@@ -995,10 +1056,13 @@ async def add_bibtex_to_kb(name: str, request: Request):
     )
     return {
         "added_papers": len(papers_to_add),
+        "added_with_full_text": added_with_full_text,
+        "added_metadata_only": added_metadata_only_count,
         "added_chunks": added,
         "total_entries": total_entries,
         "skipped_duplicates": len(skipped_existing),
         "failed": dropped_entries,
+        "metadata_only": metadata_only,
         "pdf_download": download_stats,
         "kb": name,
     }
@@ -1060,7 +1124,8 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
     papers_to_add: list = []
     skipped: list = []
     failed: list = []
-    dl = {"attempted": 0, "success": 0, "failed": 0}
+    metadata_only: list = []  # F-28/F-30: surface attempts on abstract-only adds
+    dl = {"attempted": 0, "success": 0, "failed": 0, "metadata_only": 0}
 
     for raw_doi in request.dois:
         doi = (raw_doi or "").strip().replace("https://doi.org/", "")
@@ -1109,15 +1174,27 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
             paper.full_text = result.full_text
             dl["success"] += 1
         else:
-            dl["failed"] += 1
+            dl["metadata_only"] += 1
+            attempts = list(getattr(result, "attempts", []) or [])
+            metadata_only.append({
+                "doi": doi,
+                "content_type": getattr(result, "content_type", None),
+                "attempts": attempts,
+            })
         papers_to_add.append(paper)
+
+    added_with_full_text = sum(1 for p in papers_to_add if getattr(p, "full_text", None))
+    added_metadata_only = len(papers_to_add) - added_with_full_text
 
     if not papers_to_add:
         return {
             "added_papers": 0,
+            "added_with_full_text": 0,
+            "added_metadata_only": 0,
             "added_chunks": 0,
             "skipped_duplicates": len(skipped),
             "failed": failed,
+            "metadata_only": metadata_only,
             "pdf_download": dl,
             "kb": name,
         }
@@ -1138,9 +1215,12 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
     logger.info(f"Added {len(papers_to_add)} papers from DOI list to KB '{name}' ({added} chunks)")
     return {
         "added_papers": len(papers_to_add),
+        "added_with_full_text": added_with_full_text,
+        "added_metadata_only": added_metadata_only,
         "added_chunks": added,
         "skipped_duplicates": len(skipped),
         "failed": failed,
+        "metadata_only": metadata_only,
         "pdf_download": dl,
         "kb": name,
     }

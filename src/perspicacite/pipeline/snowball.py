@@ -486,45 +486,47 @@ async def snowball_expand(
     try:
         for seed in seed_dois:
             work = await _fetch_seed_work(client, seed, headers)
-            if not work:
-                continue
 
             # Collect hits for this seed into per-direction locals so the
             # SS merge pass can dedup within the seed before we extend hits.
             seed_back: list[ExpansionHit] = []
             seed_fwd: list[ExpansionHit] = []
 
-            # Backward — referenced_works is a list of OpenAlex IDs.
-            if direction in {"backward", "both"}:
-                refs = work.get("referenced_works") or []
-                refs = refs[:max_per_seed]
-                if refs:
-                    ref_works = await _batch_get_works(client, refs, headers)
-                    for rw in ref_works:
-                        doi, fields = _paper_from_oa_work(rw)
+            if work is not None:
+                # Backward — referenced_works is a list of OpenAlex IDs.
+                if direction in {"backward", "both"}:
+                    refs = work.get("referenced_works") or []
+                    refs = refs[:max_per_seed]
+                    if refs:
+                        ref_works = await _batch_get_works(client, refs, headers)
+                        for rw in ref_works:
+                            doi, fields = _paper_from_oa_work(rw)
+                            if not doi:
+                                continue
+                            seed_back.append(ExpansionHit(
+                                seed_doi=seed, expanded_doi=doi,
+                                direction="backward", **fields,
+                            ))
+                # Forward — paginate cited_by_api_url.
+                if direction in {"forward", "both"}:
+                    forward_works = await _fetch_forward_citations(
+                        client, work, max_per_seed, headers,
+                    )
+                    for fw in forward_works:
+                        doi, fields = _paper_from_oa_work(fw)
                         if not doi:
                             continue
-                        seed_back.append(ExpansionHit(
+                        seed_fwd.append(ExpansionHit(
                             seed_doi=seed, expanded_doi=doi,
-                            direction="backward", **fields,
+                            direction="forward", **fields,
                         ))
-            # Forward — paginate cited_by_api_url.
-            if direction in {"forward", "both"}:
-                forward_works = await _fetch_forward_citations(
-                    client, work, max_per_seed, headers,
-                )
-                for fw in forward_works:
-                    doi, fields = _paper_from_oa_work(fw)
-                    if not doi:
-                        continue
-                    seed_fwd.append(ExpansionHit(
-                        seed_doi=seed, expanded_doi=doi,
-                        direction="forward", **fields,
-                    ))
 
-            # SS pass — only for arxiv-only seeds (preprints underreported
-            # by OpenAlex cite-graph).
-            if include_semantic_scholar and _seed_needs_ss_fallback(seed, work):
+            # SS pass — for arxiv seeds (preprints underreported by
+            # OpenAlex cite-graph) and as a last resort when OpenAlex
+            # couldn't resolve the seed work at all.
+            ss_eligible = (work is None and (seed or "").lower().startswith(_ARXIV_DOI_PREFIX)) \
+                or _seed_needs_ss_fallback(seed, work)
+            if include_semantic_scholar and ss_eligible:
                 ss_id = _ss_id_for_seed(seed, work)
                 if direction in {"backward", "both"}:
                     ss_back_works = await fetch_ss_references(
