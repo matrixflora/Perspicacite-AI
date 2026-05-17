@@ -75,6 +75,77 @@ async def _enrich_from_arxiv_atom(
                 disc.year = int(m.group(1))
 
 
+def _title_word_jaccard(a: str | None, b: str | None) -> float:
+    """Jaccard similarity over lowercased word sets, stop-word-light.
+
+    Used by the F-32 cross-check to decide whether OpenAlex's title is
+    plausibly the same paper as arXiv's. 1.0 = identical sets, 0.0 = disjoint.
+    """
+    if not a or not b:
+        return 0.0
+    def _toks(s: str) -> set[str]:
+        return {w for w in re.findall(r"[a-z0-9]+", s.lower()) if len(w) > 2}
+    ta, tb = _toks(a), _toks(b)
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    union = len(ta | tb)
+    return inter / union if union else 0.0
+
+
+async def _cross_check_arxiv_title(
+    arxiv_id: str,
+    disc: PaperDiscovery,
+    http_client: httpx.AsyncClient,
+    *,
+    similarity_threshold: float = 0.4,
+) -> None:
+    """F-32: for arXiv DOIs, compare ``disc.title`` against arXiv's canonical
+    title. When they're wildly different (word-Jaccard < threshold), assume
+    the upstream metadata is corrupted and overwrite with the arXiv version.
+
+    OpenAlex has been observed to mis-attribute arXiv records (e.g. 2310.11511
+    titled 'CareerX' but authored by the Self-RAG team). The arXiv API is
+    the source of truth for arXiv preprints, so when it disagrees with the
+    aggregator, the aggregator loses.
+
+    No-op when ``disc.title`` was empty (the regular enrich path already
+    handled that).
+    """
+    import xml.etree.ElementTree as ET
+
+    if not disc.title:
+        return  # nothing to compare against; the enrich path will fill it
+    bare = arxiv_id.split("v")[0] if re.match(r".*v\d+$", arxiv_id) else arxiv_id
+    url = f"https://export.arxiv.org/api/query?id_list={bare}"
+    try:
+        r = await http_client.get(url)
+        if r.status_code != 200:
+            return
+        root = ET.fromstring(r.text)
+        entry = root.find("atom:entry", _ARXIV_ATOM_NS)
+        if entry is None:
+            return
+        title_el = entry.find("atom:title", _ARXIV_ATOM_NS)
+        if title_el is None or not title_el.text:
+            return
+        arxiv_title = " ".join(title_el.text.split())
+    except Exception as e:
+        logger.info("discovery_arxiv_xcheck_error", arxiv_id=bare, error=str(e))
+        return
+
+    sim = _title_word_jaccard(disc.title, arxiv_title)
+    if sim < similarity_threshold:
+        logger.warning(
+            "discovery_title_mismatch_correcting",
+            arxiv_id=bare,
+            openalex_title=disc.title[:200],
+            arxiv_title=arxiv_title[:200],
+            similarity=round(sim, 3),
+        )
+        disc.title = arxiv_title
+
+
 def _discovery_cache_path(doi: str) -> Path:
     safe = doi.replace("/", "_").replace(":", "-")
     return _CACHE_DIR / f"{safe}_discovery.json"
@@ -183,21 +254,42 @@ async def discover_paper_sources(
         needs_enrich = is_arxiv_doi(clean) and (
             not cached.authors or cached.year is None or not cached.title
         )
-        if needs_enrich:
-            arxiv_id = cached.arxiv_id or get_arxiv_id_from_doi(clean)
-            if arxiv_id:
-                try:
-                    await _enrich_from_arxiv_atom(arxiv_id, cached, http_client)
-                    if not cached.arxiv_id:
-                        cached.arxiv_id = arxiv_id
+        arxiv_id_for_cache = (
+            cached.arxiv_id
+            or (get_arxiv_id_from_doi(clean) if is_arxiv_doi(clean) else None)
+        )
+        if needs_enrich and arxiv_id_for_cache:
+            try:
+                await _enrich_from_arxiv_atom(
+                    arxiv_id_for_cache, cached, http_client,
+                )
+                if not cached.arxiv_id:
+                    cached.arxiv_id = arxiv_id_for_cache
+                _write_discovery_cache(cached)
+                logger.info("discovery_cache_enriched_arxiv", doi=clean)
+            except Exception as e:
+                logger.info(
+                    "discovery_cache_enrich_failed",
+                    doi=clean,
+                    error=str(e),
+                )
+        # F-32: also re-run the title cross-check on cache hits so corrupted
+        # OpenAlex titles cached by older versions get corrected on the next
+        # access (no need to wipe the cache dir manually).
+        if arxiv_id_for_cache and cached.title:
+            try:
+                before = cached.title
+                await _cross_check_arxiv_title(
+                    arxiv_id_for_cache, cached, http_client,
+                )
+                if cached.title != before:
                     _write_discovery_cache(cached)
-                    logger.info("discovery_cache_enriched_arxiv", doi=clean)
-                except Exception as e:
-                    logger.info(
-                        "discovery_cache_enrich_failed",
-                        doi=clean,
-                        error=str(e),
-                    )
+            except Exception as e:
+                logger.info(
+                    "discovery_cache_xcheck_failed",
+                    doi=clean,
+                    error=str(e),
+                )
         logger.info("discovery_cache_hit", doi=clean)
         return cached
 
@@ -261,6 +353,17 @@ async def discover_paper_sources(
                 disc.arxiv_id = arxiv_id_for_fallback
         except Exception as e:
             logger.info("discovery_arxiv_atom_failed", arxiv_id=arxiv_id_for_fallback, error=str(e))
+
+    # F-32: for arXiv DOIs, cross-check the title against arXiv's canonical
+    # entry — corrupted OpenAlex records (e.g. 2310.11511 → 'CareerX') get
+    # overwritten with the arXiv version. Only runs when OpenAlex gave us a
+    # title (so we have something to validate).
+    if arxiv_id_for_fallback and disc.title and oa_ok:
+        try:
+            await _cross_check_arxiv_title(arxiv_id_for_fallback, disc, http_client)
+        except Exception as e:
+            logger.info("discovery_arxiv_xcheck_failed",
+                        arxiv_id=arxiv_id_for_fallback, error=str(e))
 
     # 3. Unpaywall (fills gaps OpenAlex left)
     email = unpaywall_email or os.getenv("UNPAYWALL_EMAIL")

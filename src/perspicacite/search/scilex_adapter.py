@@ -20,6 +20,40 @@ from perspicacite.models.papers import Paper, PaperSource
 logger = get_logger("perspicacite.search.scilex")
 
 
+# F-33: cache the per-key validation result so we only hit SS once per
+# adapter init (and not once per query).
+_SS_KEY_CACHE: dict[str, bool] = {}
+
+
+def _ss_key_is_valid(api_key: str) -> bool:
+    """Return True if the given Semantic Scholar API key still works.
+
+    Hits the cheapest SS endpoint with a tiny query. Treats network errors
+    as "assume valid" so a transient outage doesn't drop a good key.
+    On 401/403 returns False so the caller can fall through to unauth mode.
+    Result is cached per-key for the process lifetime.
+    """
+    if not api_key:
+        return False
+    cached = _SS_KEY_CACHE.get(api_key)
+    if cached is not None:
+        return cached
+    try:
+        import httpx
+        r = httpx.get(
+            "https://api.semanticscholar.org/graph/v1/paper/search",
+            params={"query": "ping", "limit": 1, "fields": "title"},
+            headers={"x-api-key": api_key},
+            timeout=5.0,
+        )
+        valid = r.status_code not in (401, 403)
+        _SS_KEY_CACHE[api_key] = valid
+        return valid
+    except Exception as exc:
+        logger.debug("ss_key_validation_error_assume_valid", error=str(exc))
+        return True
+
+
 class SciLExAdapter:
     """Adapter to use SciLEx as a search provider."""
 
@@ -426,6 +460,19 @@ class SciLExAdapter:
             )
             
             if api_key:
+                # F-33: Validate the key before handing it to SciLEx. If the
+                # configured Semantic Scholar key is rejected (stale / revoked),
+                # drop it so the adapter falls through to the unauthenticated
+                # public tier (still rate-limited but usable). Same pattern as
+                # the F-29 snowball fix.
+                if api == "semantic_scholar" and not _ss_key_is_valid(api_key):
+                    logger.warning(
+                        "scilex_ss_key_rejected",
+                        api=scilex_api_name,
+                        action="dropping_key_falling_through_to_unauth",
+                    )
+                    config[scilex_api_name] = {"api_key": ""}
+                    continue
                 config[scilex_api_name] = {"api_key": api_key}
                 # Log only first/last 4 chars of key for security
                 masked_key = f"{api_key[:4]}...{api_key[-4:]}" if len(api_key) > 8 else "****"
