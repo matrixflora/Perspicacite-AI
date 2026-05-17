@@ -38,6 +38,7 @@ class RAGEngine:
         embedding_provider: EmbeddingProvider,
         tool_registry: ToolRegistry,
         config: Config,
+        session_store: Any = None,
     ):
         """
         Initialize RAG engine.
@@ -48,6 +49,7 @@ class RAGEngine:
             embedding_provider: Embedding provider
             tool_registry: Tool registry
             config: Configuration
+            session_store: Optional SessionStore for KB reference storage
         """
         self.llm_client = llm_client
         self.vector_store = vector_store
@@ -56,13 +58,18 @@ class RAGEngine:
         self.config = config
         self.provenance_store: Any | None = None
 
+        # Build survey mode separately so we can inject the session_store
+        # (needed by _store_references_to_all_kbs to write SQLite reference rows)
+        survey_mode = LiteratureSurveyRAGMode(config)
+        survey_mode.session_store = session_store
+
         # Initialize mode handlers for all supported modes
         self._modes: dict[RAGMode, Any] = {
             RAGMode.BASIC: BasicRAGMode(config),
             RAGMode.ADVANCED: AdvancedRAGMode(config),
             RAGMode.PROFOUND: ProfoundRAGMode(config),
             RAGMode.AGENTIC: AgenticRAGMode(config),
-            RAGMode.LITERATURE_SURVEY: LiteratureSurveyRAGMode(config),
+            RAGMode.LITERATURE_SURVEY: survey_mode,
             RAGMode.CONTRADICTION: ContradictionRAGMode(config),
         }
 
@@ -199,7 +206,7 @@ class RAGEngine:
             if not saved:
                 try:
                     await self._save_provenance(collector, message_id)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning("provenance_save_finally_failed", error=str(exc))
 
     def _build_collector(

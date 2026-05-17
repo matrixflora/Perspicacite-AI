@@ -10,12 +10,11 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
+from perspicacite.jobs.registry import JobRegistry
 from perspicacite.memory.session_store import SessionStore
 from perspicacite.provenance.store import ProvenanceStore
-from perspicacite.jobs.registry import JobRegistry
-
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +74,9 @@ class AppState:
         self.vector_store = None
         self.orchestrator = None
         self.rag_engine = None  # Multi-mode RAG engine
-        self.session_store: Optional[SessionStore] = None
-        self.provenance_store: Optional[ProvenanceStore] = None
-        self.job_registry: Optional[JobRegistry] = None
+        self.session_store: SessionStore | None = None
+        self.provenance_store: ProvenanceStore | None = None
+        self.job_registry: JobRegistry | None = None
         self.pdf_downloader = None
         self.pdf_parser = None
         self.initialized = False
@@ -91,11 +90,11 @@ class AppState:
 
         # Load config
         from perspicacite.config.loader import load_config
-        from perspicacite.llm import AsyncLLMClient, LiteLLMEmbeddingProvider
+        from perspicacite.llm import AsyncLLMClient
         from perspicacite.llm.embeddings import create_embedding_provider
-        from perspicacite.retrieval import ChromaVectorStore
         from perspicacite.rag.agentic import AgenticOrchestrator, LLMAdapter
-        from perspicacite.rag.tools import ToolRegistry, LotusSearchTool
+        from perspicacite.rag.tools import ToolRegistry
+        from perspicacite.retrieval import ChromaVectorStore
 
         config = load_config()
 
@@ -148,6 +147,13 @@ class AppState:
         )
         logger.info("Agentic orchestrator initialized")
 
+        # Initialize session store FIRST so RAGEngine can receive it
+        db_path = Path("./data/perspicacite.db")
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.session_store = SessionStore(db_path)
+        await self.session_store.init_db()
+        logger.info("Session store initialized")
+
         # Initialize RAG engine for multi-mode support
         from perspicacite.rag.engine import RAGEngine
 
@@ -157,15 +163,9 @@ class AppState:
             embedding_provider=self.embedding_provider,
             tool_registry=tool_registry,
             config=config,
+            session_store=self.session_store,
         )
         logger.info("RAG engine initialized (supports all modes)")
-
-        # Initialize session store (SQLite for KB metadata)
-        db_path = Path("./data/perspicacite.db")
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.session_store = SessionStore(db_path)
-        await self.session_store.init_db()
-        logger.info("Session store initialized")
 
         sidecar_dir = self.session_store.db_path.parent / "provenance"
         self.provenance_store = ProvenanceStore(
@@ -225,8 +225,9 @@ def _warn_stale_cookies(*, cookies_path: str | None, cookie_domains: list[str]) 
     """
     if not cookies_path or not cookie_domains:
         return
-    from pathlib import Path
     from http.cookiejar import MozillaCookieJar
+    from pathlib import Path
+
     from perspicacite.pipeline.download.cookies import (
         check_cookie_freshness_for_domains,
     )
