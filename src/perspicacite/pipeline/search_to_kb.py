@@ -67,7 +67,7 @@ _KB_AWARE_STOPWORDS = {
     "from", "by", "with", "is", "are", "was", "were", "be", "been",
     "being", "as", "this", "that", "these", "those", "we", "our",
     "their", "his", "her", "its", "it", "into", "via", "using", "use",
-    "used", "uses", "show", "shown", "show", "study", "studies", "based",
+    "used", "uses", "show", "shown", "study", "studies", "based",
     "novel", "new", "method", "methods", "approach", "paper", "papers",
     "result", "results", "data", "datasets",
     "imported", "references", "smoke", "test", "audit", "demo", "kb",
@@ -289,8 +289,8 @@ async def screen_candidates(
             logger.warning("screen_papers_llm_no_client_falling_back_to_bm25")
             method = "bm25"
     if method == "llm":
-        from perspicacite.search.screening import screen_papers_llm as _llm
         from perspicacite.llm.client import resolve_stage_model
+        from perspicacite.search.screening import screen_papers_llm as _llm
         if app_state is not None:
             screen_provider, screen_model = resolve_stage_model(
                 app_state.config, "screening",
@@ -443,7 +443,7 @@ async def _create_kb_if_missing(
     await app_state.vector_store.create_collection(collection_name)
     kb = KnowledgeBase(
         name=kb_name,
-        description=description or f"Built from SciLEx search via search_to_kb",
+        description=description or "Built from SciLEx search via search_to_kb",
         collection_name=collection_name,
         embedding_model=app_state.embedding_provider.model_name,
         chunk_config=ChunkConfig(
@@ -550,6 +550,15 @@ async def ingest_dois_into_kb(
                     doi,
                     http_client=client,
                     pdf_parser=app_state.pdf_parser,
+                    abstract_only=(
+                        getattr(
+                            getattr(
+                                getattr(app_state, "config", None),
+                                "knowledge_base", None,
+                            ),
+                            "ingest_mode", "auto",
+                        ) == "abstract_only"
+                    ),
                     **pdf_kwargs,
                 )
             except Exception as e:
@@ -585,6 +594,9 @@ async def ingest_dois_into_kb(
             )
             if result.full_text:
                 paper.full_text = result.full_text
+                dl["success"] += 1
+            elif result.abstract:
+                # abstract_only mode — abstract without full text is a valid result
                 dl["success"] += 1
             else:
                 dl["failed"] += 1
