@@ -392,26 +392,22 @@ async def search_literature(
     if isinstance(state, str):
         return state
 
-    from perspicacite.search.scilex_adapter import SciLExAdapter
+    from perspicacite.search.domain_aggregator import build_aggregator
 
     try:
-        adapter = SciLExAdapter.from_config(state.config)
-        if not adapter.available:
-            # SciLEx is an optional extra; without it, this tool has no
-            # backend. Tell the caller how to install it instead of
-            # silently returning zero results.
+        aggregator = build_aggregator(state.config)
+        if not aggregator.available:
             return _json_error(
-                "SciLEx (multi-DB search aggregator) is not installed. "
-                "Install with: `uv pip install -e \".[scilex]\"` from the "
-                "Perspicacité repo. Or skip and use search_knowledge_base / "
-                "generate_report on a pre-ingested KB instead.",
+                "No search providers are available. Install SciLEx with: "
+                "`uv pip install -e \".[scilex]\"` from the Perspicacité repo, "
+                "or configure at least one search provider in config.yml.",
                 scilex_available=False,
             )
         # When filtering by relevance, overfetch ~3x so the post-filter
         # has enough candidates to actually return ``max_results``
         # quality hits. Capped at SciLEx's per-DB ceiling.
         fetch_n = min(max_results * 3, 100) if min_relevance > 0 else max_results
-        papers = await adapter.search(
+        papers = await aggregator.search(
             query=query,
             max_results=fetch_n,
             year_min=year_min,
@@ -487,7 +483,7 @@ async def search_literature(
         )
         # F-19: surface per-database failures so external agents can tell
         # "no matches" from "the upstream DB was down".
-        errors_by_db = dict(adapter.last_errors_by_database)
+        errors_by_db = dict(getattr(aggregator, "last_errors_by_database", {}))
         databases_queried = databases or ["semantic_scholar", "openalex", "pubmed"]
         all_dbs_failed = (
             bool(errors_by_db)

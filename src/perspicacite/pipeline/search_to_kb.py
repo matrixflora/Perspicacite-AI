@@ -338,30 +338,43 @@ async def run_search(
     year_min: int | None,
     year_max: int | None,
     article_type: str | None = None,
+    config: Any | None = None,
 ) -> list[Any]:
-    """Run a SciLEx multi-DB search.
+    """Run a multi-DB search via DomainAwareAggregator.
 
-    Returns an empty list when SciLEx isn't installed (the caller can
-    distinguish "0 hits" from "no backend" via the empty list + a log
-    line; the MCP tool also surfaces a structured error).
+    Falls back to SciLEx-only when config is not provided.
+    Returns an empty list when no providers are available.
     """
-    from perspicacite.search.scilex_adapter import SciLExAdapter
-
-    adapter = SciLExAdapter()
-    if not adapter.available:
-        logger.warning(
-            "search_to_kb_scilex_missing",
-            advice="install with: uv pip install -e \".[scilex]\"",
+    if config is not None:
+        from perspicacite.search.domain_aggregator import build_aggregator
+        aggregator = build_aggregator(config)
+        if not aggregator.available:
+            logger.warning("run_search_no_providers_available")
+            return []
+        papers = await aggregator.search(
+            query=query,
+            max_results=max_results,
+            year_min=year_min,
+            year_max=year_max,
+            apis=databases or ["semantic_scholar", "openalex", "pubmed"],
         )
-        return []
-    papers = await adapter.search(
-        query=query,
-        max_results=max_results,
-        year_min=year_min,
-        year_max=year_max,
-        apis=databases or ["semantic_scholar", "openalex", "pubmed"],
-        article_type=article_type,
-    )
+    else:
+        from perspicacite.search.scilex_adapter import SciLExAdapter
+        adapter = SciLExAdapter()
+        if not adapter.available:
+            logger.warning(
+                "search_to_kb_scilex_missing",
+                advice="install with: uv pip install -e \".[scilex]\"",
+            )
+            return []
+        papers = await adapter.search(
+            query=query,
+            max_results=max_results,
+            year_min=year_min,
+            year_max=year_max,
+            apis=databases or ["semantic_scholar", "openalex", "pubmed"],
+            article_type=article_type,
+        )
     logger.info("search_to_kb_search", query=query, hits=len(papers))
     return list(papers)
 
@@ -697,6 +710,7 @@ async def search_filter_and_ingest(
             year_min=flt.min_year,
             year_max=flt.max_year,
             article_type=article_type,
+            config=getattr(app_state, "config", None),
         )
         report.rephrase_hits_per_variant[q] = len(hits)
         for p in hits:

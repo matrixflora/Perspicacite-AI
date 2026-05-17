@@ -360,3 +360,33 @@ external_resources:
     - .toml
     - .json
     - .csv
+
+# =============================================================================
+# Search Provider Configuration
+# =============================================================================
+
+search:
+  # Timeout (seconds) for "reliable" tier providers.
+  # external tier = 1.5×, flaky tier = 2.25× this value.
+  provider_timeout_s: 20
+
+  # Max results fetched per provider before merge + dedup.
+  max_results_per_provider: 25
+
+  # Allowlist of provider names. Remove or comment out to disable a provider.
+  # Omit this key entirely to enable all registered providers.
+  enabled_providers:
+    - scilex       # SciLEx aggregator (Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP)
+    - europepmc    # Europe PMC biomedical search (free, no key)
+    - pubchem      # PubChem compound → literature search (free, no key)
+    - core         # CORE open-access aggregator (free, optional key below)
+    - inspire      # INSPIRE-HEP physics bibliography (free, no key)
+    - ads          # NASA ADS astronomy (requires ads_api_key below)
+
+  # CORE API key (optional — raises rate limit from 10 to unlimited req/min)
+  # Register at https://core.ac.uk/api-keys/register
+  core_api_key: ""
+
+  # NASA ADS token (required for ADS provider; register at https://ui.adsabs.harvard.edu)
+  # The ADS provider is silently skipped when this is empty.
+  ads_api_key: ""
