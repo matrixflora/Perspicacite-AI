@@ -10,3 +10,10 @@ def test_new_paper_source_values():
     assert PaperSource.INSPIRE_HEP.value == "inspire_hep"
     assert PaperSource.ADS.value == "ads"
     assert PaperSource.OPENCITATIONS.value == "opencitations"
+
+
+def test_openrouter_web_paper_source():
+    from perspicacite.models.papers import PaperSource
+    assert PaperSource.OPENROUTER_WEB.value == "openrouter_web"
+    # Round-trip
+    assert PaperSource("openrouter_web") is PaperSource.OPENROUTER_WEB

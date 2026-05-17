@@ -1109,6 +1109,41 @@ class GoogleScholarConfig(BaseModel):
         ),
         description="Browser User-Agent string sent to Scholar.",
     )
+    openrouter_fallback_enabled: bool = Field(
+        default=True,
+        description=(
+            "Call OpenRouter web_search when Scholar returns a CAPTCHA. "
+            "Requires openrouter_api_key or OPENROUTER_API_KEY env var."
+        ),
+    )
+    openrouter_api_key: str = Field(
+        default="",
+        description="OpenRouter API key. Also read from OPENROUTER_API_KEY env var.",
+    )
+    openrouter_fallback_model: str = Field(
+        default="deepseek/deepseek-v2-fast",
+        description=(
+            "OpenRouter model for CAPTCHA fallback. Use 'deepseek/deepseek-v2-fast' "
+            "for cheap Exa-backed search. For native search: 'anthropic/claude-haiku-4-5' "
+            "or 'openai/gpt-4o-mini' (omit engine override in that case)."
+        ),
+    )
+    openrouter_fallback_domains: list[str] = Field(
+        default_factory=lambda: [
+            "arxiv.org",
+            "biorxiv.org",
+            "chemrxiv.org",
+            "pubmed.ncbi.nlm.nih.gov",
+            "europepmc.org",
+            "semanticscholar.org",
+            "crossref.org",
+            "nature.com",
+            "sciencedirect.com",
+            "springer.com",
+            "wiley.com",
+        ],
+        description="Exa search restricted to these academic domains.",
+    )
 
 
 class GitHubConfig(BaseModel):
