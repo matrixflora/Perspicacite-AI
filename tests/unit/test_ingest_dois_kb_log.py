@@ -13,7 +13,7 @@ def _app_state(tmp_path: Path) -> SimpleNamespace:
     return SimpleNamespace(
         config=SimpleNamespace(
             pdf_download=None,
-            kb=SimpleNamespace(
+            knowledge_base=SimpleNamespace(
                 checkpoint_dir=tmp_path / "ckpt",
                 log_dir=tmp_path / "logs",
             ),

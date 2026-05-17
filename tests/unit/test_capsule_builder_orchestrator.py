@@ -27,7 +27,7 @@ def _state(tmp_root: Path):
             ),
         ),
         embedding_provider=SimpleNamespace(embed=AsyncMock(return_value=[[0.1]*3])),
-        vector_store=SimpleNamespace(add_chunks=AsyncMock()),
+        vector_store=SimpleNamespace(add_documents=AsyncMock()),
         pdf_parser=SimpleNamespace(parse=AsyncMock()),
         session_store=SimpleNamespace(
             get_kb_metadata=AsyncMock(return_value=SimpleNamespace(
@@ -79,7 +79,7 @@ async def test_builds_capsule_for_paper_with_pdf(tmp_path, monkeypatch):
     blocks = (cap / "text" / "blocks.jsonl").read_text().splitlines()
     assert any('"section": "results"' in line for line in blocks)
     assert any("pdf_p3_i1" in line for line in blocks)
-    state.vector_store.add_chunks.assert_called_once()
+    state.vector_store.add_documents.assert_called_once()
     assert result["status"] == "built"
     assert result["figures"] == 1
 
@@ -97,7 +97,7 @@ async def test_idempotent_when_capsule_exists(tmp_path):
         paper=paper, pdf_path=None, kb_name="kb_test", app_state=state,
     )
     assert result["status"] == "skipped"
-    state.vector_store.add_chunks.assert_not_called()
+    state.vector_store.add_documents.assert_not_called()
 
 
 @pytest.mark.asyncio

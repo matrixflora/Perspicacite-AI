@@ -13,7 +13,7 @@ def _app_state(tmp_path: Path) -> SimpleNamespace:
     """Minimal app_state stand-in. Avoids pulling the full DI graph."""
     config = SimpleNamespace(
         pdf_download=None,
-        kb=SimpleNamespace(checkpoint_dir=tmp_path / "ck"),
+        knowledge_base=SimpleNamespace(checkpoint_dir=tmp_path / "ck"),
     )
     session_store = MagicMock()
     session_store.get_kb_metadata = AsyncMock(return_value=SimpleNamespace(

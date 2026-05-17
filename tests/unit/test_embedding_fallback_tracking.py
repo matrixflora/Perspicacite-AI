@@ -61,7 +61,7 @@ async def test_legacy_model_name_unchanged():
     primary = _Stub("a")
     fallback = _Stub("b")
     fb = FallbackEmbeddingProvider(primary=primary, fallback=fallback)
-    assert fb.model_name == "a|b"
+    assert fb.composite_name == "a|b"
 
 
 @pytest.mark.asyncio

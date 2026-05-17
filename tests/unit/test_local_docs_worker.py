@@ -35,7 +35,7 @@ class _VS:
     def __init__(self):
         self.added: list = []
 
-    async def add_chunks(self, collection, chunks):
+    async def add_documents(self, collection, chunks):
         self.added.extend(chunks)
 
 
