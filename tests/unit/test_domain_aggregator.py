@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import pytest
+
 from perspicacite.models.papers import Paper, PaperSource
 from perspicacite.search.domain_aggregator import DomainAwareAggregator, ProviderHealthTracker
 
@@ -15,7 +15,7 @@ class _Provider:
         self,
         name: str,
         papers: list[Paper],
-        domains: list[str] = None,
+        domains: list[str] | None = None,
         tier: str = "reliable",
         retry: int = 0,
         fail: bool = False,
@@ -141,3 +141,58 @@ def test_available_true_when_providers_registered():
     p = _Provider("p", [])
     agg = DomainAwareAggregator([p])
     assert agg.available
+
+
+@pytest.mark.asyncio
+async def test_sources_attribution_populated():
+    p1 = _Provider("provA", [_paper("10.1/x")])
+    p2 = _Provider("provB", [_paper("10.1/x")])  # same DOI → dedup, source merged
+    agg = DomainAwareAggregator([p1, p2], provider_timeout_s=5.0)
+    results = await agg.search("any")
+    assert len(results) == 1
+    sources = results[0].metadata.get("sources", [])
+    assert "provA" in sources
+    assert "provB" in sources
+
+
+@pytest.mark.asyncio
+async def test_sources_attribution_unique_papers():
+    p1 = _Provider("provA", [_paper("10.1/a")])
+    p2 = _Provider("provB", [_paper("10.1/b")])
+    agg = DomainAwareAggregator([p1, p2], provider_timeout_s=5.0)
+    results = await agg.search("any")
+    assert len(results) == 2
+    by_doi = {r.doi: r for r in results}
+    assert by_doi["10.1/a"].metadata.get("sources") == ["provA"]
+    assert by_doi["10.1/b"].metadata.get("sources") == ["provB"]
+
+
+@pytest.mark.asyncio
+async def test_retry_counts_as_one_circuit_failure():
+    """A provider with retry=2 that fails all attempts counts as one failure, not three."""
+    bad = _Provider("bad", [], retry=2, fail=True)
+    agg = DomainAwareAggregator([bad], provider_timeout_s=5.0)
+    await agg.search("any")
+    # One logical failure recorded — circuit should NOT be tripped yet.
+    assert agg._health.is_available("bad")
+    # Two more logical failures (= 3 total) should trip it.
+    await agg.search("any")
+    await agg.search("any")
+    assert not agg._health.is_available("bad")
+
+
+@pytest.mark.asyncio
+async def test_apis_kwarg_not_forwarded_to_non_scilex_provider():
+    """apis kwarg must not reach providers other than scilex (they lack **kwargs handling)."""
+    received_kwargs: dict = {}
+
+    class StrictProvider(_Provider):
+        async def search(self, query, max_results=20, year_min=None, year_max=None):  # no **kwargs
+            received_kwargs.clear()
+            return self._papers
+
+    strict = StrictProvider("other", [_paper("10.1/x")])
+    agg = DomainAwareAggregator([strict], provider_timeout_s=5.0)
+    # Should not raise TypeError even though apis is passed and provider has no **kwargs.
+    results = await agg.search("any", apis=["pubmed"])
+    assert len(results) == 1

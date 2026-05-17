@@ -122,9 +122,10 @@ class DomainAwareAggregator:
                 logger.warning("provider_timeout", provider=name, attempt=attempt)
             except Exception as exc:
                 logger.warning("provider_error", provider=name, error=str(exc), attempt=attempt)
-            self._health.record_failure(name)
             if attempt < retry:
                 await asyncio.sleep(backoffs[min(attempt, len(backoffs) - 1)])
+        # Count one logical failure regardless of how many retry attempts were made.
+        self._health.record_failure(name)
         return []
 
     async def search(
@@ -166,21 +167,38 @@ class DomainAwareAggregator:
 
         results_per_provider: list[list[Paper]] = await asyncio.gather(*tasks)
 
-        seen_dois: set[str] = set()
-        seen_title_hashes: set[str] = set()
+        # Annotate each paper with the name of its source provider.
+        for p, papers in zip(providers, results_per_provider, strict=True):
+            provider_name = getattr(p, "name", "unknown")
+            for paper in papers:
+                paper.metadata.setdefault("sources", [])
+                if provider_name not in paper.metadata["sources"]:
+                    paper.metadata["sources"].append(provider_name)
+
+        seen_dois: dict[str, Paper] = {}
+        seen_title_hashes: dict[str, Paper] = {}
         merged: list[Paper] = []
         for papers in results_per_provider:
             for paper in papers:
+                new_sources: list[str] = paper.metadata.get("sources", [])
                 if paper.doi:
                     doi_key = paper.doi.lower().strip()
                     if doi_key in seen_dois:
+                        kept = seen_dois[doi_key]
+                        for s in new_sources:
+                            if s not in kept.metadata.get("sources", []):
+                                kept.metadata.setdefault("sources", []).append(s)
                         continue
-                    seen_dois.add(doi_key)
+                    seen_dois[doi_key] = paper
                 else:
                     title_hash = paper.title.lower().strip()[:80]
                     if title_hash in seen_title_hashes:
+                        kept = seen_title_hashes[title_hash]
+                        for s in new_sources:
+                            if s not in kept.metadata.get("sources", []):
+                                kept.metadata.setdefault("sources", []).append(s)
                         continue
-                    seen_title_hashes.add(title_hash)
+                    seen_title_hashes[title_hash] = paper
                 merged.append(paper)
 
         return merged[:max_results]
