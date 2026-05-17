@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
 
 @dataclass
 class _FakePdfFig:
@@ -49,6 +47,7 @@ def test_load_image_b64_missing(tmp_path):
 
 def test_load_image_b64_roundtrip(tmp_path):
     import base64
+
     from perspicacite.pipeline.parsers.figure_context import load_image_b64
     p = tmp_path / "x.png"
     payload = b"\x89PNG\r\n\x1a\nhello"

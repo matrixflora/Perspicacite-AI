@@ -1,8 +1,9 @@
 """Tests for PDF download utilities."""
 
-import pytest
+from unittest.mock import AsyncMock, Mock, patch
+
 import httpx
-from unittest.mock import Mock, AsyncMock, patch
+import pytest
 
 from perspicacite.pipeline.download import (
     PDFDownloader,
@@ -10,7 +11,7 @@ from perspicacite.pipeline.download import (
     get_pdf_from_alternative_endpoint,
     retrieve_paper_content,
 )
-from perspicacite.pipeline.download.base import PaperContent, PaperDiscovery
+from perspicacite.pipeline.download.base import PaperDiscovery
 from perspicacite.pipeline.download.discovery import discover_paper_sources
 
 
@@ -426,8 +427,8 @@ class TestRetrievePaperContent:
         """Regression: a cached PaperDiscovery written before the Atom fallback
         existed (title only, no authors/year) is enriched on cache hit.
         """
-        from perspicacite.pipeline.download.discovery import _write_discovery_cache
         from perspicacite.pipeline.download.base import PaperDiscovery
+        from perspicacite.pipeline.download.discovery import _write_discovery_cache
 
         monkeypatch.delenv("UNPAYWALL_EMAIL", raising=False)
         doi = "10.48550/arXiv.2604.88888"
@@ -839,8 +840,8 @@ class TestDownloadPaperPDF:
     ):
         """When the PDF is already cached, no network calls are made
         and the cache hit is returned with source="pdf_cache"."""
-        from perspicacite.pipeline.download.unified import download_paper_pdf
         from perspicacite.pipeline.download.pdf_cache import store_pdf
+        from perspicacite.pipeline.download.unified import download_paper_pdf
 
         # ≥1024 bytes so the cache module accepts it.
         store_pdf("10.1/cached", b"%PDF-cached " + b"y" * 2048,

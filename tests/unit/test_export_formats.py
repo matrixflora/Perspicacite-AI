@@ -1,13 +1,10 @@
 """Tests for CSL JSON + RIS exporters (Wave 4.5)."""
-import json
 
-import pytest
 
 from perspicacite.pipeline.export_kb import (
     render_csl_json_entry,
     render_ris_entry,
 )
-
 
 _PAPER = {
     "title": "Cool Paper About Quasars",

@@ -1,8 +1,5 @@
 import json
 import time
-from pathlib import Path
-
-import pytest
 
 from perspicacite.pipeline.external.cache import (
     cache_load,

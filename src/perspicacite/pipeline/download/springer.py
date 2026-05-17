@@ -18,7 +18,6 @@ Nature / BMC may use other host patterns—fallback direct URL can fail for thos
 
 import httpx
 
-from perspicacite.logging import get_logger
 from .base import logger
 
 
@@ -44,17 +43,17 @@ def get_springer_journal_from_doi(doi: str) -> str | None:
     """
     if not doi:
         return None
-    
+
     doi_lower = doi.lower()
-    
+
     # Nature journals (10.1038/)
     if doi_lower.startswith("10.1038/"):
         return "nature"
-    
+
     # BioMed Central (10.1186/)
     if doi_lower.startswith("10.1186/"):
         return "biomed-central"
-    
+
     # Springer journals (10.1007/)
     if doi_lower.startswith("10.1007/"):
         # Extract journal code (first part after 10.1007/)
@@ -65,7 +64,7 @@ def get_springer_journal_from_doi(doi: str) -> str | None:
             if "-" in journal_part:
                 return journal_part.split("-")[0]
             return journal_part
-    
+
     return None
 
 
@@ -90,26 +89,26 @@ async def download_from_springer(
     """
     client = http_client or httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     should_close = http_client is None
-    
+
     try:
         clean_doi = doi.replace("https://doi.org/", "").replace("http://doi.org/", "")
-        
+
         logger.info("springer_attempt", doi=clean_doi)
-        
+
         # Try API if key provided to get metadata and PDF URL
         if api_key:
             api_url = (
                 f"https://api.springernature.com/meta/v2/json"
                 f"?q=doi:{clean_doi}&api_key={api_key}"
             )
-            
+
             logger.info("springer_trying_api", doi=clean_doi)
             response = await client.get(api_url)
-            
+
             if response.status_code == 200:
                 data = response.json()
                 records = data.get("records", [])
-                
+
                 if records:
                     record = records[0]
                     # Look for open access PDF URL
@@ -125,15 +124,15 @@ async def download_from_springer(
                                     if "pdf" in content_type or pdf_response.content.startswith(b"%PDF"):
                                         logger.info("springer_api_success", doi=clean_doi)
                                         return pdf_response.content
-        
+
         # Try direct PDF link
         # Springer PDF URLs: https://link.springer.com/content/pdf/{doi}.pdf
         pdf_url = f"https://link.springer.com/content/pdf/{clean_doi}.pdf"
-        
+
         logger.info("springer_trying_direct", url=pdf_url)
         response = await client.get(pdf_url)
         response.raise_for_status()
-        
+
         content_type = response.headers.get("content-type", "").lower()
         if "pdf" in content_type or response.content.startswith(b"%PDF"):
             logger.info("springer_direct_success", doi=clean_doi, size_bytes=len(response.content))
@@ -145,7 +144,7 @@ async def download_from_springer(
             else:
                 logger.warning("springer_not_pdf", doi=clean_doi, content_type=content_type)
             return None
-            
+
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 403:
             logger.warning("springer_access_denied", doi=doi)
@@ -183,10 +182,10 @@ async def check_springer_open_access(
     """
     client = http_client or httpx.AsyncClient(timeout=10.0)
     should_close = http_client is None
-    
+
     try:
         clean_doi = doi.replace("https://doi.org/", "").replace("http://doi.org/", "")
-        
+
         # Try API if key provided
         if api_key:
             api_url = (
@@ -194,27 +193,27 @@ async def check_springer_open_access(
                 f"?q=doi:{clean_doi}&api_key={api_key}"
             )
             response = await client.get(api_url)
-            
+
             if response.status_code == 200:
                 data = response.json()
                 records = data.get("records", [])
-                
+
                 if records:
                     record = records[0]
                     # Check for open access flags
                     if record.get("openaccess") == "true":
                         logger.info("springer_api_detected_oa", doi=doi)
                         return True
-        
+
         # Fallback: check landing page
         url = f"https://link.springer.com/article/{clean_doi}"
         response = await client.get(url)
-        
+
         if response.status_code != 200:
             return False
-        
+
         html = response.text.lower()
-        
+
         # Check for OA indicators
         oa_indicators = [
             "open access",
@@ -223,14 +222,14 @@ async def check_springer_open_access(
             "cc-by",
             "free full text",
         ]
-        
+
         for indicator in oa_indicators:
             if indicator in html:
                 logger.info("springer_detected_oa", doi=doi, indicator=indicator)
                 return True
-        
+
         return False
-        
+
     except Exception as e:
         logger.error("springer_oa_check_error", doi=doi, error=str(e))
         return False
@@ -257,27 +256,27 @@ async def get_springer_metadata(
     if not api_key:
         logger.warning("springer_metadata_no_api_key", doi=doi)
         return None
-    
+
     client = http_client or httpx.AsyncClient(timeout=10.0)
     should_close = http_client is None
-    
+
     try:
         clean_doi = doi.replace("https://doi.org/", "").replace("http://doi.org/", "")
         api_url = (
             f"https://api.springernature.com/meta/v2/json"
             f"?q=doi:{clean_doi}&api_key={api_key}"
         )
-        
+
         response = await client.get(api_url)
         response.raise_for_status()
-        
+
         data = response.json()
         records = data.get("records", [])
-        
+
         if records:
             return records[0]
         return None
-        
+
     except Exception as e:
         logger.error("springer_metadata_error", doi=doi, error=str(e))
         return None

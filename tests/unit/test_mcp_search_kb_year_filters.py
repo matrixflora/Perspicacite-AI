@@ -1,6 +1,6 @@
 """Verify search_knowledge_base MCP tool wires year params (Wave 4.2)."""
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

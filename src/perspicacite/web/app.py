@@ -33,19 +33,34 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from perspicacite.web.state import app_state
 from perspicacite.web.routers import (
     chat as chat_router,
+)
+from perspicacite.web.routers import (
     conversations as conversations_router,
+)
+from perspicacite.web.routers import (
     health as health_router,
+)
+from perspicacite.web.routers import (
     jobs as jobs_router,
+)
+from perspicacite.web.routers import (
     kb as kb_router,
+)
+from perspicacite.web.routers import (
     pdf_dropzone as pdf_dropzone_router,
+)
+from perspicacite.web.routers import (
     survey as survey_router,
+)
+from perspicacite.web.routers import (
     zotero as zotero_router,
+)
+from perspicacite.web.routers import (
     zotero_ingest as zotero_ingest_router,
 )
-
+from perspicacite.web.state import app_state
 
 logger = logging.getLogger("perspicacite.web")
 
@@ -71,6 +86,20 @@ app = FastAPI(title="Perspicacité v2 - True Agentic RAG", lifespan=lifespan)
 # Mount static assets (CSS/JS extracted from templates/index.html)
 STATIC_DIR = Path(__file__).resolve().parents[3] / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+# Disable browser caching of frontend assets and the index template. Without
+# this the browser holds onto stale chat.js/chat.css across server restarts
+# (only ETag/Last-Modified are sent, and a "hard refresh" doesn't always
+# defeat aggressive cache heuristics). Cheap to revalidate every load.
+@app.middleware("http")
+async def _no_cache_for_assets(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 # Mount routers

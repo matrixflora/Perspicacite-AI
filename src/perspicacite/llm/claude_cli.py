@@ -59,7 +59,7 @@ def ClaudeCLIClient(
     cost_usd_path: str | None = None,
     cache_read_tokens_path: str | None = None,
     cache_creation_tokens_path: str | None = None,
-) -> AgentCLIClient:  # noqa: N802 — preserve the legacy class-shaped name
+) -> AgentCLIClient:
     """Backwards-compatible factory returning an :class:`AgentCLIClient`
     pre-configured for Claude Code.
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from perspicacite.models.documents import ChunkMetadata
 
 

@@ -72,7 +72,7 @@ class KBLogWriter:
                     os.fsync(fh.fileno())
                 except OSError:
                     pass  # fsync is best-effort
-        except Exception as exc:  # noqa: BLE001 — best-effort logging
+        except Exception as exc:
             logger.warning(
                 "kb_log_append_failed",
                 path=str(self.path),
@@ -89,7 +89,7 @@ class KBLogWriter:
             return []
         events: list[KBEvent] = []
         try:
-            with open(self.path, "r", encoding="utf-8") as fh:
+            with open(self.path, encoding="utf-8") as fh:
                 lines = fh.readlines()
         except OSError as exc:
             logger.warning("kb_log_read_failed", path=str(self.path), error=str(exc))

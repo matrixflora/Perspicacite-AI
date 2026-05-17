@@ -1,6 +1,5 @@
 """Tests for embedding providers."""
 
-import numpy as np
 import pytest
 
 from perspicacite.llm.embeddings import (

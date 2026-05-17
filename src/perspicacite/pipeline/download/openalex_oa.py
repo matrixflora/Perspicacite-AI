@@ -15,6 +15,7 @@ import os
 import httpx
 
 from perspicacite.logging import get_logger
+
 from .base import PDFDownloader
 
 logger = get_logger("perspicacite.pipeline.download.openalex_oa")

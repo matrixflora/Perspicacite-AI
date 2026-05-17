@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-
 SECTION_ALIASES: dict[str, str] = {
     "abstract": "abstract",
     "introduction": "intro",

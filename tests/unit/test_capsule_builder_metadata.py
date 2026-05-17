@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-import pytest
 
 from perspicacite.models.papers import Paper, PaperSource
 from perspicacite.pipeline.capsule_builder import capsule_dir_for, write_metadata

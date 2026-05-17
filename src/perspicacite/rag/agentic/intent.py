@@ -1,16 +1,15 @@
 """Intent classification for query routing."""
 
-from enum import Enum, auto
-from dataclasses import dataclass
-from typing import Optional, List, Tuple
 import json
-import re
 import logging
+import re
+from dataclasses import dataclass
+from enum import Enum, auto
 
 logger = logging.getLogger(__name__)
 
 # Heuristic triggers for multi-aspect / comparison queries (parallel search + map-reduce path).
-_COMPOSITE_PATTERNS: List[Tuple[re.Pattern[str], str]] = [
+_COMPOSITE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bvs\.?\b", re.I), "vs"),
     (re.compile(r"\bversus\b", re.I), "versus"),
     (re.compile(r"\bcompare\b", re.I), "compare"),
@@ -28,7 +27,7 @@ _COMPOSITE_PATTERNS: List[Tuple[re.Pattern[str], str]] = [
 HEURISTIC_WEAK_COMPLEXITY_TAGS = frozenset({"effect_on"})
 
 
-def heuristic_query_complexity(query: str) -> Tuple[str, str]:
+def heuristic_query_complexity(query: str) -> tuple[str, str]:
     """Return (complexity, reason_tag). complexity is 'composite' or 'simple'."""
     if not (query or "").strip():
         return "simple", ""
@@ -55,7 +54,7 @@ class IntentResult:
     intent: Intent
     confidence: float
     reasoning: str
-    suggested_tools: List[str]
+    suggested_tools: list[str]
     entities: dict  # Extracted entities (compounds, organisms, etc.)
     query_complexity: str = "simple"  # "simple" | "composite"
     query_complexity_source: str = "default"  # heuristic, llm, heuristic+llm, simple, default
@@ -63,11 +62,11 @@ class IntentResult:
 
 class IntentClassifier:
     """Classifies user intent using LLM."""
-    
+
     def __init__(self, llm_client):
         self.llm = llm_client
-    
-    def _extract_json(self, text: str) -> Optional[str]:
+
+    def _extract_json(self, text: str) -> str | None:
         """Extract JSON from text, handling markdown code blocks."""
         # Try to find JSON in markdown code blocks
         patterns = [
@@ -75,24 +74,24 @@ class IntentClassifier:
             r'```\s*(.*?)\s*```',      # Generic code block
             r'\{.*\}',                  # Raw JSON object
         ]
-        
+
         for pattern in patterns:
             match = re.search(pattern, text, re.DOTALL)
             if match:
                 return match.group(1) if '```' in pattern else match.group(0)
-        
+
         # If no patterns match, return the text if it starts with {
         text = text.strip()
         if text.startswith('{') and text.endswith('}'):
             return text
-        
+
         return None
-    
+
     async def classify(
         self,
         query: str,
-        conversation_history: Optional[List[dict]] = None,
-        active_kb_name: Optional[str] = None,
+        conversation_history: list[dict] | None = None,
+        active_kb_name: str | None = None,
     ) -> IntentResult:
         """
         Classify user intent from query.
@@ -105,7 +104,7 @@ class IntentClassifier:
         Returns:
             IntentResult with classification and metadata
         """
-        
+
         history_context = ""
         if conversation_history:
             history_context = "\n\nPrevious conversation:\n"
@@ -122,7 +121,7 @@ ACTIVE KNOWLEDGE BASE: The user has selected curated KB "{active_kb_name}".
 - Always include "kb_search" in suggested_tools (preferably first) for any question that can be answered from scientific literature, methods, or prior curated papers.
 - You may also suggest literature_search for external discovery when KB might be incomplete.
 """
-        
+
         prompt = f"""You are an intent classifier for a scientific research assistant. Analyze the user query and determine the most appropriate research approach.
 
 Query: "{query}"{history_context}{kb_block}
@@ -161,20 +160,20 @@ query_complexity rules:
 
         try:
             response = await self.llm.complete(prompt, temperature=0.1)
-            
+
             # Log the raw response for debugging
             logger.debug(f"Intent classification raw response: {response[:200]}...")
-            
+
             # Extract JSON from response
             json_str = self._extract_json(response)
-            
+
             if not json_str:
                 logger.warning(f"Could not extract JSON from response: {response[:200]}")
                 # Try simple keyword-based fallback
                 return self._keyword_fallback(query, active_kb_name=active_kb_name)
-            
+
             result = json.loads(json_str)
-            
+
             intent_map = {
                 "natural_products_only": Intent.NATURAL_PRODUCTS_ONLY,
                 "papers_only": Intent.PAPERS_ONLY,
@@ -184,7 +183,7 @@ query_complexity rules:
                 "analysis": Intent.ANALYSIS,
                 "unknown": Intent.UNKNOWN,
             }
-            
+
             tools = list(result.get("suggested_tools", []))
             if active_kb_name and "kb_search" not in tools:
                 tools.insert(0, "kb_search")
@@ -225,13 +224,13 @@ query_complexity rules:
                 query_complexity=final_qc,
                 query_complexity_source=qc_src,
             )
-            
+
         except Exception as e:
             logger.error(f"Intent classification error: {e}")
             # Fallback to keyword-based classification
             return self._keyword_fallback(query, active_kb_name=active_kb_name)
-    
-    def _keyword_fallback(self, query: str, active_kb_name: Optional[str] = None) -> IntentResult:
+
+    def _keyword_fallback(self, query: str, active_kb_name: str | None = None) -> IntentResult:
         """Simple keyword-based intent classification as fallback."""
         query_lower = query.lower()
         h_qc, h_tag = heuristic_query_complexity(query)
@@ -240,7 +239,7 @@ query_complexity rules:
             h_tag = ""
         qc = h_qc
         qc_src = f"heuristic:{h_tag}" if h_tag else ("simple" if h_qc == "simple" else "heuristic")
-        
+
         # Check for LOTUS-specific keywords
         lotus_keywords = ["lotus", "natural product", "compound", "metabolite", "structure", "chemical"]
         if any(kw in query_lower for kw in lotus_keywords):
@@ -267,7 +266,7 @@ query_complexity rules:
                 query_complexity=qc,
                 query_complexity_source=qc_src,
             )
-        
+
         # Check for paper-specific keywords
         paper_keywords = ["paper", "article", "research", "literature", "study", "publication"]
         if any(kw in query_lower for kw in paper_keywords):
@@ -280,7 +279,7 @@ query_complexity rules:
                 query_complexity=qc,
                 query_complexity_source=qc_src,
             )
-        
+
         # Default to combined research
         return IntentResult(
             intent=Intent.COMBINED_RESEARCH,
@@ -295,7 +294,7 @@ query_complexity rules:
         )
 
     @staticmethod
-    def _tools_with_kb(base: List[str], active_kb_name: Optional[str]) -> List[str]:
+    def _tools_with_kb(base: list[str], active_kb_name: str | None) -> list[str]:
         if not active_kb_name or "kb_search" in base:
             return base
         return ["kb_search"] + base

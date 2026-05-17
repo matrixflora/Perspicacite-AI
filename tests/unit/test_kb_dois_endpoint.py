@@ -6,12 +6,11 @@ retrieve_paper_content, and DynamicKnowledgeBase.
 
 from __future__ import annotations
 
-import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import HTTPException
-
 
 # ---------------------------------------------------------------------------
 # Helpers: fake dependencies

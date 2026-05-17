@@ -1,5 +1,4 @@
 """Verify DynamicKnowledgeBase.search threads filters through (Wave 4.2)."""
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

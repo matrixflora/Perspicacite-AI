@@ -15,7 +15,6 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 
-from perspicacite.logging import get_logger
 from .base import logger
 
 

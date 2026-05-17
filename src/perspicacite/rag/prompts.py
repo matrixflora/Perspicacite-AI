@@ -47,7 +47,7 @@ def get_mandatory_prompt(kb_title: str, scope: str) -> str:
 # Format prompt for response formatting (from get_response)
 FORMAT_PROMPT = """You are a scientific writing assistant helping to format a research summary or report. Follow these instructions carefully:
 - Begin with a level 3 heading titled: ### ✨ Advanced findings
-- You MUST cite every sources. you MUST to format like this [Shows only the first author + et al. after the first citation if >2 authors](url "original citation with the title of the paper in italics and the newspaper in bold"). Exemple [Ralf Tautenhahn et al., 2008](https://doi.org/10.1186/1471-2105-9-504 "Ralf Tautenhahn, Christoph Böttcher, Steffen Neumann. *Highly sensitive feature detection for high resolution LC/MS.' **BMC Bioinformatics** 9, 504 (2008)").
+- You MUST cite every source. Inline citation format uses parentheses, not brackets: `[(FirstAuthor et al., Year)](url "full citation")`. The visible link text MUST be wrapped in parentheses — `(FirstAuthor et al., Year)` — never include the title in the visible text. The link `title` attribute MUST contain the full citation: `Author1, Author2, …. Year. Title. Journal.`. Example: `[(Ralf Tautenhahn et al., 2008)](https://doi.org/10.1186/1471-2105-9-504 "Ralf Tautenhahn, Christoph Böttcher, Steffen Neumann. 2008. Highly sensitive feature detection for high resolution LC/MS. BMC Bioinformatics.")`.
 - When it is the same section, combine paragraphs with the same sources or citations
 - DO NOT place references at the end of the document
 - Use markdown syntax to format the response
@@ -349,7 +349,7 @@ Do not format as JSON - just provide the answer as regular text."""
 # Prompt for formatting final answer (Profound mode)
 PROFOUND_FORMAT_ANSWER_PROMPT = """You are a scientific writing assistant helping to format a research summary or report. Follow these instructions carefully:
 - Begin with a level 3 heading titled: ### ✨ Perspicacite Profonde findings
-- You MUST cite every sources. you MUST to format like this [Shows only the first author + et al. after the first citation if >2 authors](url "original citation"). Exemple [Ralf Tautenhahn et al., 2008](https://doi.org/10.1186/1471-2105-9-504 "Ralf Tautenhahn, Christoph Böttcher, Steffen Neumann. 'Highly sensitive feature detection for high resolution LC/MS.' BMC Bioinformatics 9, 504 (2008)").
+- You MUST cite every source. Inline citation format uses parentheses, not brackets: `[(FirstAuthor et al., Year)](url "full citation")`. The visible link text MUST be wrapped in parentheses — `(FirstAuthor et al., Year)` — never include the title in the visible text. The link `title` attribute MUST contain the full citation: `Author1, Author2, …. Year. Title. Journal.`. Example: `[(Ralf Tautenhahn et al., 2008)](https://doi.org/10.1186/1471-2105-9-504 "Ralf Tautenhahn, Christoph Böttcher, Steffen Neumann. 2008. Highly sensitive feature detection for high resolution LC/MS. BMC Bioinformatics.")`.
 - DO NOT place references at the end of the document.
 - Use markdown syntax to format the response:
 - Use ## for main sections and ### for subsections, except at the beginning where you MUST NOT start with a heading.

@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal, Optional
-
+from typing import Literal
 
 _DOI_RE = r"(10\.\d{4,9}/[\w./()\-:]+)"
 # Relaxed DOI pattern for CITATION.cff `doi:` field — allows short registrant codes
@@ -43,7 +42,7 @@ PATTERNS = [
 class LibraryPaper:
     library: str
     doi: str
-    title: Optional[str]
+    title: str | None
     source: Literal["config", "bundle", "readme"]
     confidence: float
 
@@ -51,11 +50,11 @@ class LibraryPaper:
 async def resolve_library_paper(
     library: str,
     *,
-    bundle: Optional[dict] = None,
-    github_repo: Optional[str] = None,
-    config_map: Optional[dict[str, str]] = None,
-    readme_text: Optional[str] = None,
-) -> Optional[LibraryPaper]:
+    bundle: dict | None = None,
+    github_repo: str | None = None,
+    config_map: dict[str, str] | None = None,
+    readme_text: str | None = None,
+) -> LibraryPaper | None:
     """Resolve a library name to its canonical paper.
 
     Returns None when no source yields a DOI.

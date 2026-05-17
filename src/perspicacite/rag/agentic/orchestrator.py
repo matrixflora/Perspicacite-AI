@@ -1,25 +1,27 @@
 """Main agentic orchestrator with session management."""
 
+import asyncio
 import json
+import logging
 import re
 import time
 import uuid
-import asyncio
-import logging
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple
 from datetime import datetime
+from typing import Any, Optional
 
-from .intent import IntentClassifier, Intent
-from .planner import ResearchPlanner, Step, StepType, Plan, _log_steps_detail
-from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 from perspicacite.models.kb import chroma_collection_name_for_kb
-from perspicacite.retrieval.hybrid import hybrid_retrieval
-from perspicacite.rag.utils import format_references_academic
 from perspicacite.provenance.context import get_collector
+from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+from perspicacite.rag.utils import format_references_academic
+from perspicacite.retrieval.hybrid import hybrid_retrieval
 
 # SciLEx integration
 from perspicacite.search.scilex_adapter import SciLExAdapter
+
+from .intent import IntentClassifier
+from .planner import Plan, ResearchPlanner, Step, StepType, _log_steps_detail
 
 logger = logging.getLogger(__name__)
 
@@ -122,9 +124,9 @@ class EvidenceFacet:
     """One facet (sub-question) of a research query."""
 
     query: str
-    step_ids: List[str] = field(default_factory=list)
-    entries: List[Dict[str, Any]] = field(default_factory=list)
-    _seen_keys: Set[str] = field(default_factory=set, repr=False)
+    step_ids: list[str] = field(default_factory=list)
+    entries: list[dict[str, Any]] = field(default_factory=list)
+    _seen_keys: set[str] = field(default_factory=set, repr=False)
 
     @property
     def status(self) -> str:
@@ -159,14 +161,14 @@ class EvidenceFacet:
 
         return round(0.45 * count_score + 0.35 * rel_score + 0.20 * ft_score, 4)
 
-    def _entry_key(self, e: Dict[str, Any]) -> str:
+    def _entry_key(self, e: dict[str, Any]) -> str:
         doi = (e.get("doi") or "").strip().lower()
         if doi:
             return f"doi:{doi}"
         title = (e.get("title") or "").strip().lower()[:120]
         return f"title:{title}" if title else ""
 
-    def _add_entry(self, entry: Dict[str, Any]) -> bool:
+    def _add_entry(self, entry: dict[str, Any]) -> bool:
         """Add an entry if not a facet-local duplicate. Returns True if added."""
         k = self._entry_key(entry)
         if k and k in self._seen_keys:
@@ -186,7 +188,7 @@ class EvidenceStore:
     sub-query.  ``to_prompt_block()`` renders per-facet status for the replanner.
     """
 
-    facets: Dict[str, EvidenceFacet] = field(default_factory=dict)
+    facets: dict[str, EvidenceFacet] = field(default_factory=dict)
 
     def register_facet(self, facet_key: str, query: str) -> EvidenceFacet:
         if facet_key not in self.facets:
@@ -201,7 +203,7 @@ class EvidenceStore:
 
     def add_hits(
         self,
-        hits: List[Dict[str, Any]],
+        hits: list[dict[str, Any]],
         step_id: str,
         facet_key: str = "main",
     ) -> None:
@@ -215,22 +217,22 @@ class EvidenceStore:
 
     # Backward-compat alias
     def add_kb_hits(
-        self, hits: List[Dict[str, Any]], step_id: str = "", facet_key: str = "main"
+        self, hits: list[dict[str, Any]], step_id: str = "", facet_key: str = "main"
     ) -> None:
         self.add_hits(hits, step_id=step_id, facet_key=facet_key)
 
     @property
-    def all_entries(self) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
+    def all_entries(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for f in self.facets.values():
             out.extend(f.entries)
         return out
 
-    def gap_summary(self) -> Dict[str, str]:
+    def gap_summary(self) -> dict[str, str]:
         """Return {facet_key: status} for all facets."""
         return {k: f.status for k, f in self.facets.items()}
 
-    def facet_confidences(self) -> Dict[str, float]:
+    def facet_confidences(self) -> dict[str, float]:
         """Return {facet_key: confidence} for all facets."""
         return {k: f.confidence for k, f in self.facets.items()}
 
@@ -245,7 +247,7 @@ class EvidenceStore:
         """Render per-facet evidence + status for the replanner."""
         if not self.facets:
             return ""
-        sections: List[str] = []
+        sections: list[str] = []
         for key, facet in self.facets.items():
             status = facet.status.upper()
             header = f"[{status}] Facet: {facet.query}"
@@ -275,7 +277,7 @@ class Message:
     role: str  # "user", "assistant", "system", "tool"
     content: str
     timestamp: datetime = field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -283,23 +285,23 @@ class AgentSession:
     """Persistent session for agent conversations."""
 
     session_id: str
-    messages: List[Message] = field(default_factory=list)
-    knowledge_base: Optional[DynamicKnowledgeBase] = None
-    research_findings: List[Dict[str, Any]] = field(default_factory=list)
-    kb_name: Optional[str] = None
+    messages: list[Message] = field(default_factory=list)
+    knowledge_base: DynamicKnowledgeBase | None = None
+    research_findings: list[dict[str, Any]] = field(default_factory=list)
+    kb_name: str | None = None
     created_at: datetime = field(default_factory=datetime.now)
     last_active: datetime = field(default_factory=datetime.now)
 
     # User preferences for research depth (can be set per query)
-    max_papers_to_download: Optional[int] = None  # Override orchestrator default
-    evidence: Optional[EvidenceStore] = None
+    max_papers_to_download: int | None = None  # Override orchestrator default
+    evidence: EvidenceStore | None = None
 
-    def add_message(self, role: str, content: str, metadata: Optional[dict] = None):
+    def add_message(self, role: str, content: str, metadata: dict | None = None):
         """Add a message to the session."""
         self.messages.append(Message(role=role, content=content, metadata=metadata or {}))
         self.last_active = datetime.now()
 
-    def get_conversation_history(self, limit: int = 10) -> List[dict]:
+    def get_conversation_history(self, limit: int = 10) -> list[dict]:
         """Get conversation history as list of dicts."""
         return [{"role": m.role, "content": m.content} for m in self.messages[-limit:]]
 
@@ -323,9 +325,9 @@ class DocumentQualityAssessor:
     async def assess(
         self,
         query: str,
-        documents: List[Any],
+        documents: list[Any],
         step_purpose: str = "",
-    ) -> tuple[bool, List[str], float]:
+    ) -> tuple[bool, list[str], float]:
         """
         Assess document quality and sufficiency.
 
@@ -422,9 +424,9 @@ class AgenticOrchestrator:
         relevance_threshold: int = 3,
         max_papers_to_download: int = 10,
         map_reduce_max_papers: int = 8,
-        recency_weight: Optional[float] = None,
-        recency_half_life_years: Optional[float] = None,
-        kb_metas: Optional[list] = None,
+        recency_weight: float | None = None,
+        recency_half_life_years: float | None = None,
+        kb_metas: list | None = None,
         config: Any = None,
     ):
         self.llm = llm_client
@@ -459,13 +461,13 @@ class AgenticOrchestrator:
         self.quality_assessor = DocumentQualityAssessor(llm_client)
 
         # Session management
-        self.sessions: Dict[str, AgentSession] = {}
+        self.sessions: dict[str, AgentSession] = {}
         self._found_papers_lock = asyncio.Lock()
 
         # SciLEx adapter for literature search (multi-API aggregation)
         self.scilex_adapter = SciLExAdapter()
 
-    def _build_kb_retriever(self, default_kb_name: Optional[str] = None):
+    def _build_kb_retriever(self, default_kb_name: str | None = None):
         """Return a retriever for the KB_SEARCH step.
 
         Multi-KB request → MultiKBRetriever fanning across collections.
@@ -519,7 +521,7 @@ class AgenticOrchestrator:
             dkb._initialized = True
         return dkb
 
-    def get_or_create_session(self, session_id: Optional[str] = None) -> AgentSession:
+    def get_or_create_session(self, session_id: str | None = None) -> AgentSession:
         """Get existing session or create new one."""
         if session_id and session_id in self.sessions:
             return self.sessions[session_id]
@@ -539,11 +541,11 @@ class AgenticOrchestrator:
     async def chat(
         self,
         query: str,
-        session_id: Optional[str] = None,
-        kb_name: Optional[str] = None,
+        session_id: str | None = None,
+        kb_name: str | None = None,
         stream: bool = True,
-        max_papers_to_download: Optional[int] = None,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        max_papers_to_download: int | None = None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Main chat entry point with true agentic behavior.
 
@@ -761,8 +763,8 @@ class AgenticOrchestrator:
                 }
 
         # Step 3: Execute plan iteratively
-        step_results: Dict[str, Any] = {}
-        completed_steps: List[Step] = []
+        step_results: dict[str, Any] = {}
+        completed_steps: list[Step] = []
         replan_count = 0
 
         for iteration in range(self.max_iterations):
@@ -777,7 +779,7 @@ class AgenticOrchestrator:
                 logger.info("No more steps to execute")
                 break
 
-            to_run: List[Step] = []
+            to_run: list[Step] = []
             for s in batch:
                 if s.condition and not self._evaluate_condition(s.condition, step_results):
                     logger.info(f"Step {s.id} condition not met, skipping")
@@ -925,7 +927,7 @@ class AgenticOrchestrator:
                     logger.info("Sufficient results, moving to answer")
                     break
 
-        logger.info(f"\n=== Execution complete ===")
+        logger.info("\n=== Execution complete ===")
         logger.info(f"Completed {len(completed_steps)} steps")
         logger.info(f"Step results keys: {list(step_results.keys())}")
 
@@ -968,7 +970,7 @@ class AgenticOrchestrator:
 
             downloaded_count = 0
             for i, paper in enumerate(download_candidates, 1):
-                title = paper.get("title", "Unknown")[:50]
+                title = re.sub(r"[{}]", "", paper.get("title", "Unknown") or "Unknown")[:50]
                 yield {
                     "type": "thinking",
                     "message": f"Downloading paper {i}/{len(download_candidates)}: {title}...",
@@ -1009,7 +1011,7 @@ class AgenticOrchestrator:
             },
         )
 
-        answer_event: Dict[str, Any] = {
+        answer_event: dict[str, Any] = {
             "type": "answer",
             "content": answer,
             "session_id": session.session_id,
@@ -1055,9 +1057,9 @@ class AgenticOrchestrator:
         idx, lone = kb_parallel[0]
         old_id = lone.id
         top_k = lone.tool_input.get("top_k")
-        new_steps: List[Step] = []
+        new_steps: list[Step] = []
         for i, sq in enumerate(subs):
-            tool_input: Dict[str, Any] = {"query": sq}
+            tool_input: dict[str, Any] = {"query": sq}
             if top_k is not None:
                 tool_input["top_k"] = top_k
             new_steps.append(
@@ -1086,7 +1088,7 @@ class AgenticOrchestrator:
     # URL pre-processing
     # ------------------------------------------------------------------
 
-    async def _try_resolve_url(self, query: str) -> Optional[Dict[str, Any]]:
+    async def _try_resolve_url(self, query: str) -> dict[str, Any] | None:
         """Detect paper URL in query, fetch content, return normalized paper dict or None.
 
         Resolves the URL to a DOI (mapping arXiv IDs to their 10.48550/arXiv.<id> form)
@@ -1104,14 +1106,14 @@ class AgenticOrchestrator:
             return None
 
         url = url_match.group(0).rstrip(".,;:)")
-        from perspicacite.models import normalize_paper_dict, PaperSource
+        from perspicacite.models import PaperSource, normalize_paper_dict
         from perspicacite.pipeline.download.arxiv import get_arxiv_id_from_url
 
         # Resolve URL → (arxiv_id, doi). arXiv IDs map to their canonical DOI form
         # so retrieve_paper_content's discovery step can look them up in OpenAlex.
         arxiv_id = get_arxiv_id_from_url(url)
         bare_id = None
-        doi: Optional[str] = None
+        doi: str | None = None
         if arxiv_id:
             bare_id = arxiv_id.split("v")[0] if re.match(r".*v\d+$", arxiv_id) else arxiv_id
             doi = f"10.48550/arXiv.{bare_id}"
@@ -1215,8 +1217,8 @@ class AgenticOrchestrator:
         return q or "main"
 
     def _get_next_parallel_batch(
-        self, plan: Plan, completed: List[Step], results: Dict[str, Any]
-    ) -> List[Step]:
+        self, plan: Plan, completed: list[Step], results: dict[str, Any]
+    ) -> list[Step]:
         """Return all steps whose dependencies are satisfied (general DAG).
 
         Any ready steps that are *not* of type ANSWER run concurrently.
@@ -1224,7 +1226,7 @@ class AgenticOrchestrator:
         If only a single step is ready, it runs by itself.
         """
         completed_ids = {s.id for s in completed}
-        ready: List[Step] = []
+        ready: list[Step] = []
         for step in plan.steps:
             if step.id in completed_ids:
                 continue
@@ -1237,7 +1239,7 @@ class AgenticOrchestrator:
             return [answers[0]]
         return ready
 
-    def _evaluate_condition(self, condition: str, results: Dict[str, Any]) -> bool:
+    def _evaluate_condition(self, condition: str, results: dict[str, Any]) -> bool:
         """Evaluate a step condition."""
         # Simple condition evaluation
         condition_lower = condition.lower()
@@ -1253,7 +1255,7 @@ class AgenticOrchestrator:
         return True  # Default to executing
 
     async def _execute_step(
-        self, step: Step, original_query: str, step_results: Dict[str, Any], session: AgentSession
+        self, step: Step, original_query: str, step_results: dict[str, Any], session: AgentSession
     ) -> Any:
         """Execute a single step."""
 
@@ -1685,7 +1687,7 @@ class AgenticOrchestrator:
             or "knowledge base search failed" in low
             or "no knowledge base selected" in low
         ):
-            logger.info(f"KB_JUDGE: found failure phrase -> insufficient")
+            logger.info("KB_JUDGE: found failure phrase -> insufficient")
             return False
 
         max_judge_chars = 8000
@@ -1742,11 +1744,11 @@ class AgenticOrchestrator:
         self,
         query: str,
         plan: Plan,
-        completed_steps: List[Step],
-        step_results: Dict[str, Any],
-        session: Optional[AgentSession] = None,
-        eval_step_ids: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        completed_steps: list[Step],
+        step_results: dict[str, Any],
+        session: AgentSession | None = None,
+        eval_step_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Evaluate whether to continue, replan, or answer.
 
         Returns a dict with:
@@ -1755,7 +1757,7 @@ class AgenticOrchestrator:
           - ``"missing_aspects"``: list from the quality assessor (if any)
           - ``"evaluation_text"``: human-readable summary for the replanner
         """
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "decision": "continue",
             "gap_facets": [],
             "missing_aspects": [],
@@ -1771,7 +1773,7 @@ class AgenticOrchestrator:
             return result
 
         # --- Facet gap check (Phase 2) ---
-        gaps: Dict[str, str] = {}
+        gaps: dict[str, str] = {}
         if session and session.evidence:
             gaps = session.evidence.gap_summary()
         gap_facets = [k for k, v in gaps.items() if v in ("gap", "partial")]
@@ -1782,7 +1784,7 @@ class AgenticOrchestrator:
         ]
 
         if gap_facets and remaining_search:
-            covered_by_remaining: Set[str] = set()
+            covered_by_remaining: set[str] = set()
             if session and session.evidence:
                 for s in remaining_search:
                     f = session.evidence.facet_for_step(s.id)
@@ -1867,8 +1869,8 @@ class AgenticOrchestrator:
         return result
 
     def _get_recent_found_papers(
-        self, step_ids: Optional[List[str]] = None, limit: int = 5
-    ) -> List[Dict[str, Any]]:
+        self, step_ids: list[str] | None = None, limit: int = 5
+    ) -> list[dict[str, Any]]:
         """Return structured documents from _found_papers for quality assessment.
 
         Uses the accumulated structured paper data rather than parsing formatted
@@ -1882,7 +1884,7 @@ class AgenticOrchestrator:
         if step_ids:
             papers = [p for p in papers if p.get("_step_id") in step_ids] or papers
 
-        docs: List[Dict[str, Any]] = []
+        docs: list[dict[str, Any]] = []
         seen: set[str] = set()
         _content_cap = 12000
         for p in papers[-limit * 2 :]:
@@ -1905,7 +1907,7 @@ class AgenticOrchestrator:
                 break
         return docs
 
-    async def _analyze_results(self, query: str, step_results: Dict[str, Any]) -> str:
+    async def _analyze_results(self, query: str, step_results: dict[str, Any]) -> str:
         """Have LLM analyze the results."""
         # Combine results
         combined = []
@@ -1933,7 +1935,7 @@ Provide your analysis in a structured format:
 
         return await self.llm.complete(prompt, temperature=0.3)
 
-    async def _synthesize_results(self, query: str, step_results: Dict[str, Any]) -> str:
+    async def _synthesize_results(self, query: str, step_results: dict[str, Any]) -> str:
         """Have LLM synthesize multiple sources."""
         combined = []
         for step_id, result in step_results.items():
@@ -1964,7 +1966,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
         return await self.llm.complete(prompt, temperature=0.15)
 
     async def _per_paper_extraction_bullet(
-        self, query: str, paper: Dict[str, Any], list_index: int
+        self, query: str, paper: dict[str, Any], list_index: int
     ) -> str:
         """Single-paper LLM pass: bullets aligned to the user question."""
         title = str(paper.get("title", "Unknown"))[:220]
@@ -2004,9 +2006,9 @@ Provide a synthesized summary that combines the key insights from all sources.""
         )
         return await self.llm.complete(prompt, temperature=0.15)
 
-    async def _map_reduce_paper_bullets(self, query: str, papers: List[Dict[str, Any]]) -> str:
+    async def _map_reduce_paper_bullets(self, query: str, papers: list[dict[str, Any]]) -> str:
         """Top-N papers: parallel extraction bullets for final synthesis."""
-        indexed: List[tuple[int, Dict[str, Any]]] = []
+        indexed: list[tuple[int, dict[str, Any]]] = []
         for i, p in enumerate(papers, 1):
             ft = (p.get("full_text") or "").strip()
             ab = (p.get("abstract") or "").strip()
@@ -2018,12 +2020,12 @@ Provide a synthesized summary that combines the key insights from all sources.""
 
         sem = asyncio.Semaphore(4)
 
-        async def _one(li: int, p: Dict[str, Any]) -> str:
+        async def _one(li: int, p: dict[str, Any]) -> str:
             async with sem:
                 return await self._per_paper_extraction_bullet(query, p, li)
 
         parts = await asyncio.gather(*[_one(li, p) for li, p in indexed])
-        blocks: List[str] = []
+        blocks: list[str] = []
         for (li, p), text in zip(indexed, parts):
             t = (text or "").strip()
             if not t:
@@ -2043,7 +2045,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
         """
         if not session.evidence or len(session.evidence.facets) <= 1:
             return ""
-        sections: List[str] = []
+        sections: list[str] = []
         sections.append("Research facets investigated:")
         for key, facet in session.evidence.facets.items():
             status = facet.status.upper()
@@ -2057,10 +2059,10 @@ Provide a synthesized summary that combines the key insights from all sources.""
         self,
         query: str,
         plan: Plan,
-        step_results: Dict[str, Any],
+        step_results: dict[str, Any],
         session: AgentSession,
-        papers: Optional[List[Dict[str, Any]]] = None,
-    ) -> tuple[str, Dict[str, Any]]:
+        papers: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """Generate final answer and return ``(answer_text, citation_map)``."""
 
         logger.info("\n--- Generating Answer ---")
@@ -2229,8 +2231,8 @@ Generate your answer:"""
 
     @classmethod
     def _verify_citations(
-        cls, answer: str, papers: List[Dict[str, Any]]
-    ) -> tuple[str, Dict[str, Any]]:
+        cls, answer: str, papers: list[dict[str, Any]]
+    ) -> tuple[str, dict[str, Any]]:
         """Validate citation markers in the generated answer.
 
         Handles both single ``[N]`` and multi-citation ``[N, M]`` brackets.
@@ -2242,7 +2244,7 @@ Generate your answer:"""
         """
         valid_range = set(range(1, len(papers) + 1))
 
-        found_refs: Set[int] = set()
+        found_refs: set[int] = set()
         for m in cls._CITE_RE.finditer(answer):
             for num_str in m.group(1).split(","):
                 found_refs.add(int(num_str.strip()))
@@ -2269,7 +2271,7 @@ Generate your answer:"""
         cited_indices = sorted(valid_refs)
         uncited_indices = sorted(valid_range - valid_refs)
 
-        citation_map: Dict[str, Any] = {
+        citation_map: dict[str, Any] = {
             "cited": [
                 {
                     "index": i,
@@ -2303,9 +2305,9 @@ Generate your answer:"""
     def _compact_citations(
         cls,
         answer: str,
-        papers: List[Dict[str, Any]],
+        papers: list[dict[str, Any]],
         cited_indices: set[int],
-    ) -> tuple[str, List[Dict[str, Any]]]:
+    ) -> tuple[str, list[dict[str, Any]]]:
         """Remove uncited papers and renumber citation markers to be consecutive.
 
         Handles both single ``[N]`` and multi-citation ``[N, M]`` brackets.
@@ -2313,8 +2315,8 @@ Generate your answer:"""
         stays ``[1]``, ``[3]`` becomes ``[2]``, and ``[1, 3]`` becomes
         ``[1, 2]``.  Only cited papers are returned in the new list.
         """
-        old_to_new: Dict[int, int] = {}
-        compacted_papers: List[Dict[str, Any]] = []
+        old_to_new: dict[int, int] = {}
+        compacted_papers: list[dict[str, Any]] = []
         for new_idx, old_idx in enumerate(sorted(cited_indices), 1):
             old_to_new[old_idx] = new_idx
             compacted_papers.append(papers[old_idx - 1])
@@ -2330,10 +2332,10 @@ Generate your answer:"""
     async def _generate_single_paper_answer(
         self,
         query: str,
-        papers: List[Dict[str, Any]],
+        papers: list[dict[str, Any]],
         session: AgentSession,
         is_summary_request: bool = False,
-    ) -> tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Generate answer for a single paper with full text — no map-reduce.
 
         Uses the full paper text directly. If is_summary_request, produces a
@@ -2361,7 +2363,7 @@ Generate your answer:"""
             logger.info("Single-paper: URL-only query → summary mode")
         else:
             effective_question = query
-            logger.info(f"Single-paper: specific question → focused answer")
+            logger.info("Single-paper: specific question → focused answer")
 
         prompt = f"""You are a scientific research assistant. You have the full text of a single research paper.
 
@@ -2401,7 +2403,7 @@ Generate your answer:"""
         logger.info(f"Single-paper answer generated: {len(answer)} chars")
 
         # Build citation map for single paper (always [1])
-        citation_map: Dict[str, Any] = {
+        citation_map: dict[str, Any] = {
             "cited": [{"index": 1, "title": title, "doi": doi}],
             "uncited": [],
             "invalid_stripped": [],
@@ -2418,7 +2420,7 @@ Generate your answer:"""
         return answer, citation_map
 
     def _build_numbered_paper_list(
-        self, papers: List[Dict[str, Any]], max_abstract_chars: int = 800
+        self, papers: list[dict[str, Any]], max_abstract_chars: int = 800
     ) -> str:
         """Build a numbered paper list for LLM context with full citation info.
 
@@ -2464,8 +2466,8 @@ Generate your answer:"""
         return "\n".join(lines)
 
     async def _score_papers_for_relevance(
-        self, query: str, papers: List[Dict[str, Any]], min_score: int = 3
-    ) -> List[Dict[str, Any]]:
+        self, query: str, papers: list[dict[str, Any]], min_score: int = 3
+    ) -> list[dict[str, Any]]:
         """Use LLM to score papers for query relevance and filter low-scoring ones.
 
         Each paper is scored 1-5:
@@ -2522,9 +2524,10 @@ Generate your answer:"""
             '"2": {"score": N, "reason": "..."}, ...}}'
         )
 
-        def _parse_and_filter(response_text: str) -> Tuple[list, bool]:
+        def _parse_and_filter(response_text: str) -> tuple[list, bool]:
             """Parse LLM response and return (filtered_papers, is_complete)."""
-            import json as _json, re as _re
+            import json as _json
+            import re as _re
 
             json_match = _re.search(r"\{.*\}", response_text, _re.DOTALL)
             if not json_match:
@@ -2627,7 +2630,7 @@ Generate your answer:"""
             # relevance_score). KB hits are pre-trusted; literature without a successful
             # score is excluded from the paper list so synthesis falls back to raw step
             # text rather than unfiltered OpenAlex/SciLEx blobs.
-            retained: List[Dict[str, Any]] = []
+            retained: list[dict[str, Any]] = []
             for p in papers:
                 if p.get("source") == "kb_search":
                     p.setdefault("relevance_score", min_score)
@@ -2653,7 +2656,7 @@ Generate your answer:"""
             )
             return []
 
-    def _format_references_section(self, papers: List[Dict[str, Any]]) -> str:
+    def _format_references_section(self, papers: list[dict[str, Any]]) -> str:
         """Format a references section in academic citation style using shared utility.
 
         Uses markdown link format: [Author et al., Year](url "full citation")
@@ -2673,7 +2676,7 @@ Generate your answer:"""
         query: str,
         max_results: int = 10,
         step_id: str = "",
-        session: Optional[AgentSession] = None,
+        session: AgentSession | None = None,
     ) -> str:
         """Search academic literature using SciLEx (multi-API aggregation).
 
@@ -2729,7 +2732,7 @@ Generate your answer:"""
         query: str,
         max_results: int = 10,
         step_id: str = "",
-        session: Optional[AgentSession] = None,
+        session: AgentSession | None = None,
     ) -> str:
         """Fallback: Search OpenAlex directly via httpx."""
         import httpx
@@ -2786,9 +2789,9 @@ Generate your answer:"""
 
     def _accumulate_lit_evidence(
         self,
-        paper_dicts: List[Dict[str, Any]],
+        paper_dicts: list[dict[str, Any]],
         step_id: str,
-        session: Optional[AgentSession],
+        session: AgentSession | None,
     ) -> None:
         """Push literature search results into the faceted evidence store."""
         if not session or session.evidence is None or not paper_dicts:
@@ -2830,7 +2833,7 @@ Generate your answer:"""
 
         return "\n".join(lines)
 
-    def _summarize_findings(self, findings: List[Dict]) -> str:
+    def _summarize_findings(self, findings: list[dict]) -> str:
         """Summarize previous research findings."""
         if not findings:
             return ""
@@ -2845,7 +2848,6 @@ Generate your answer:"""
 
     def _format_papers(self, papers: list) -> str:
         """Format list of Paper models into readable string."""
-        from perspicacite.models.papers import Paper
 
         if not papers:
             return "No papers found."
@@ -2892,7 +2894,7 @@ Generate your answer:"""
                 d = d[len(prefix) :].strip()
         return d
 
-    def _paper_dedupe_key(self, p: Dict[str, Any]) -> str:
+    def _paper_dedupe_key(self, p: dict[str, Any]) -> str:
         """Prefer long title fingerprint so journal + bioRxiv (different DOIs) merge."""
         title = (p.get("title") or "").lower()
         fp = re.sub(r"[^a-z0-9]+", "", title)[:120]
@@ -2908,7 +2910,7 @@ Generate your answer:"""
             return f"title:{fp}"
         return f"unknown:{id(p)}"
 
-    def _paper_quality_tuple(self, p: Dict[str, Any]) -> tuple:
+    def _paper_quality_tuple(self, p: dict[str, Any]) -> tuple:
         """Higher is better: more in-corpus text, more abstract, citations, newer."""
         doi = self._normalize_doi_for_dedupe(p.get("doi"))
         is_biorxiv = doi.startswith("10.1101") if doi else False
@@ -2920,13 +2922,13 @@ Generate your answer:"""
             0 if is_biorxiv else 1,
         )
 
-    def _dedupe_paper_dicts(self, papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _dedupe_paper_dicts(self, papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Merge duplicates (same DOI or same normalized title, e.g. preprint + journal).
 
         Keeps the highest quality version of each paper (more abstract, more citations, newer).
         The winning paper retains its original source (kb_search or literature_search).
         """
-        best: Dict[str, Dict[str, Any]] = {}
+        best: dict[str, dict[str, Any]] = {}
 
         for p in papers:
             k = self._paper_dedupe_key(p)
@@ -2944,7 +2946,7 @@ Generate your answer:"""
         return out
 
     @staticmethod
-    def _normalize_authors(authors: Any) -> List[str]:
+    def _normalize_authors(authors: Any) -> list[str]:
         """Normalize authors to a list of strings.
 
         Handles various input formats:
@@ -2961,14 +2963,14 @@ Generate your answer:"""
             return [a.strip() for a in authors.split(",") if a.strip()]
         return []
 
-    def _chunks_with_figure_refs(self, step_results: Optional[Dict[str, Any]]) -> List[Any]:
+    def _chunks_with_figure_refs(self, step_results: dict[str, Any] | None) -> list[Any]:
         """Best-effort scan of ``step_results`` for DocumentChunk-like items with figure_refs.
 
         Used to surface multimodal candidates into the final-answer LLM call. The
         agentic flow today stores mostly paper dicts in ``step_results``, so this
         commonly returns ``[]`` — that's the graceful degradation path (text-only).
         """
-        out: List[Any] = []
+        out: list[Any] = []
         if not step_results:
             return out
         for v in step_results.values():
@@ -2983,7 +2985,7 @@ Generate your answer:"""
                     out.append(item)
         return out
 
-    def _extract_papers_from_results(self, step_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_papers_from_results(self, step_results: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract deduplicated paper list from accumulated found papers."""
         if not hasattr(self, "_found_papers") or not self._found_papers:
             return []
@@ -3021,7 +3023,7 @@ Generate your answer:"""
 
         return " ".join(words).strip()
 
-    async def _download_single_paper(self, paper: Dict[str, Any]) -> Dict[str, Any]:
+    async def _download_single_paper(self, paper: dict[str, Any]) -> dict[str, Any]:
         """Download and parse a single paper's content.
 
         Args:
@@ -3060,8 +3062,8 @@ Generate your answer:"""
         return paper
 
     async def _download_and_enrich_papers(
-        self, papers: List[Dict[str, Any]], relevance_threshold: int = 3, max_papers: int = 10
-    ) -> List[Dict[str, Any]]:
+        self, papers: list[dict[str, Any]], relevance_threshold: int = 3, max_papers: int = 10
+    ) -> list[dict[str, Any]]:
         """Download PDFs for relevant papers and extract full text.
 
         For literature surveys, downloads ALL relevant papers (score >= threshold)

@@ -6,7 +6,6 @@ Knob: PERSPICACITE_LIVE_CODE_CHUNKING=1 to opt in.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 
@@ -24,6 +23,7 @@ async def test_ingest_small_repo_produces_ast_chunks_and_symbols(tmp_path: Path)
     """Use the existing GitHub-KB ingest path on a small fixed repo,
     then verify the symbol index has the expected functions."""
     from perspicacite.pipeline.github_skill_bundle import ingest_github_repo  # type: ignore
+
     from perspicacite.pipeline.symbol_index import iter_symbols
 
     kb_dir = tmp_path / "kb"

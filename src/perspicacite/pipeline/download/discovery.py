@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 
 from perspicacite.logging import get_logger
+
 from .base import PaperDiscovery
 
 logger = get_logger("perspicacite.pipeline.download.discovery")
@@ -250,7 +251,7 @@ async def discover_paper_sources(
     # arXiv Atom API and re-save.
     cached = _read_discovery_cache(clean)
     if cached is not None:
-        from .arxiv import is_arxiv_doi, get_arxiv_id_from_doi
+        from .arxiv import get_arxiv_id_from_doi, is_arxiv_doi
         needs_enrich = is_arxiv_doi(clean) and (
             not cached.authors or cached.year is None or not cached.title
         )
@@ -343,7 +344,7 @@ async def discover_paper_sources(
     # authorships and publication_year often missing for the first weeks).
     arxiv_id_for_fallback = disc.arxiv_id
     if not arxiv_id_for_fallback:
-        from .arxiv import is_arxiv_doi, get_arxiv_id_from_doi
+        from .arxiv import get_arxiv_id_from_doi, is_arxiv_doi
         if is_arxiv_doi(clean):
             arxiv_id_for_fallback = get_arxiv_id_from_doi(clean)
     if arxiv_id_for_fallback and (not disc.authors or disc.year is None or not disc.title):

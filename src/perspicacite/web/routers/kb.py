@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -25,7 +25,6 @@ from perspicacite.models.kb import (
     chroma_collection_name_for_kb,
 )
 from perspicacite.web.state import app_state
-
 
 logger = logging.getLogger(__name__)
 
@@ -55,31 +54,31 @@ class KBCreateRequest(BaseModel):
         max_length=100,
         description="KB name (spaces will be converted to underscores)",
     )
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class PaperData(BaseModel):
     """Paper data from chat results, for adding to KB."""
 
     title: str
-    authors: List[str] = Field(default_factory=list)
-    year: Optional[int] = None
-    doi: Optional[str] = None
-    abstract: Optional[str] = None
-    citations: Optional[int] = None
-    file: Optional[str] = Field(default=None, description="Local PDF path (Zotero/Mendeley export)")
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    doi: str | None = None
+    abstract: str | None = None
+    citations: int | None = None
+    file: str | None = Field(default=None, description="Local PDF path (Zotero/Mendeley export)")
 
 
 class KBAddPapersRequest(BaseModel):
     """Request to add papers to a knowledge base."""
 
-    papers: List[PaperData]
+    papers: list[PaperData]
 
 
 class KBAddDOIsRequest(BaseModel):
     """Request to bulk-add papers from a list of DOIs."""
 
-    dois: List[str] = Field(..., min_length=1)
+    dois: list[str] = Field(..., min_length=1)
 
 
 # ---------------------------------------------------------------------------
@@ -542,9 +541,9 @@ async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
     if not kb:
         return {"error": f"Knowledge base '{name}' not found"}
 
-    from perspicacite.models.papers import Paper, Author, PaperSource
-    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+    from perspicacite.models.papers import Author, Paper, PaperSource
     from perspicacite.pipeline.download import retrieve_paper_content
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
     # Convert PaperData dicts to Paper models with deduplication check
     papers_to_add = []
@@ -882,11 +881,12 @@ async def add_bibtex_to_kb(name: str, request: Request):
         return {"error": "BibTeX content is empty"}
 
     # Parse BibTeX entries using bibtexparser (same as CLI)
-    from perspicacite.models.papers import PaperSource
-    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-    from perspicacite.pipeline.download import retrieve_paper_content
-    from perspicacite.pipeline.bibtex_kb import entries_to_papers_with_diagnostics
     import bibtexparser
+
+    from perspicacite.models.papers import PaperSource
+    from perspicacite.pipeline.bibtex_kb import entries_to_papers_with_diagnostics
+    from perspicacite.pipeline.download import retrieve_paper_content
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
     # Use bibtexparser to parse the BibTeX content
     try:
@@ -895,7 +895,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
         papers, dropped_entries = entries_to_papers_with_diagnostics(entries)
     except Exception as e:
         logger.error(f"BibTeX parsing failed: {e}")
-        return {"error": f"Failed to parse BibTeX: {str(e)}"}
+        return {"error": f"Failed to parse BibTeX: {e!s}"}
 
     total_entries = len(entries)
     if not papers:
@@ -1114,9 +1114,9 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
     if not kb:
         return {"error": f"Knowledge base '{name}' not found"}
 
-    from perspicacite.models.papers import Paper, Author, PaperSource
-    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+    from perspicacite.models.papers import Author, Paper, PaperSource
     from perspicacite.pipeline.download import retrieve_paper_content
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
     pdf_config = app_state.config.pdf_download if app_state.config else None
     pdf_kw = _get_pdf_fallback_kwargs(pdf_config)
@@ -1395,8 +1395,8 @@ async def build_capsules_for_kb_async(name: str, force: bool = False) -> dict:
     async def _runner():
         from perspicacite.pipeline.capsule_builder import (
             build_capsule,
-            resolve_paper_from_metadata,
             locate_cached_pdf,
+            resolve_paper_from_metadata,
         )
         for i, row in enumerate(rows):
             paper = resolve_paper_from_metadata(row)
@@ -1465,7 +1465,7 @@ async def fetch_paper_resources_async(name: str, paper_id: str, body: dict | Non
 
     paper = resolve_paper_from_metadata(row)
     cap_dir = capsule_dir_for(paper, root=app_state.config.capsule.root)
-    setattr(paper, "_kb_name", name)
+    paper._kb_name = name
 
     job_id = await app_state.job_registry.create("external_fetch", total=0)
 

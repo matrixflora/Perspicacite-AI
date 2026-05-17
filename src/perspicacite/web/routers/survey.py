@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter
+from pydantic import BaseModel
 
 from perspicacite.web.state import app_state
-
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +18,7 @@ router = APIRouter()
 class SurveySelectionRequest(BaseModel):
     """Request to update paper selection for literature survey."""
     session_id: str
-    selected_paper_ids: List[str]
+    selected_paper_ids: list[str]
 
 
 class SurveyGenerateRequest(BaseModel):
@@ -31,7 +29,6 @@ class SurveyGenerateRequest(BaseModel):
 @router.get("/api/survey/{session_id}")
 async def get_survey_session(session_id: str):
     """Get literature survey session status and papers."""
-    from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
     from perspicacite.models.rag import RAGMode
 
     # Get the literature survey mode from RAGEngine
@@ -82,7 +79,6 @@ async def get_survey_session(session_id: str):
 @router.post("/api/survey/{session_id}/select")
 async def update_survey_selection(session_id: str, request: SurveySelectionRequest):
     """Update paper selection for literature survey."""
-    from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
     from perspicacite.models.rag import RAGMode
 
     survey_mode = None
@@ -106,8 +102,6 @@ async def update_survey_selection(session_id: str, request: SurveySelectionReque
 @router.post("/api/survey/{session_id}/generate")
 async def generate_survey_report(session_id: str):
     """Generate deep analysis report for selected papers."""
-    from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
-    from perspicacite.models.rag import RAGResponse
     from perspicacite.models.rag import RAGMode
 
     survey_mode = None
@@ -131,4 +125,4 @@ async def generate_survey_report(session_id: str):
         }
     except Exception as e:
         logger.error(f"Failed to generate survey report: {e}")
-        return {"error": f"Failed to generate report: {str(e)}"}
+        return {"error": f"Failed to generate report: {e!s}"}

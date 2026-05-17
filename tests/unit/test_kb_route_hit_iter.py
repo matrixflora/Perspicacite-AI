@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from perspicacite.rag.kb_router import KBRouteHit, route_kbs, _bm25_cache_clear
+from perspicacite.rag.kb_router import KBRouteHit, _bm25_cache_clear, route_kbs
 
 
 def test_kb_route_hit_destructures_into_name_and_score():

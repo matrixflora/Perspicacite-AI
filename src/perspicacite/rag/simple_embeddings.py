@@ -3,7 +3,6 @@
 This avoids the LiteLLM import issues.
 """
 
-from typing import Any
 
 import httpx
 
@@ -78,11 +77,11 @@ class SimpleOpenAIEmbeddingProvider:
 
         try:
             all_embeddings = []
-            
+
             async with httpx.AsyncClient(timeout=60.0) as client:
                 for i in range(0, len(valid_texts), self.batch_size):
                     batch = valid_texts[i:i + self.batch_size]
-                    
+
                     response = await client.post(
                         "https://api.openai.com/v1/embeddings",
                         headers={
@@ -96,7 +95,7 @@ class SimpleOpenAIEmbeddingProvider:
                     )
                     response.raise_for_status()
                     data = response.json()
-                    
+
                     batch_embeddings = [item["embedding"] for item in data["data"]]
                     all_embeddings.extend(batch_embeddings)
 

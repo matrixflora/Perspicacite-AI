@@ -6,12 +6,11 @@ and retrieve_paper_content.
 
 from __future__ import annotations
 
-import pytest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi import HTTPException
-
 
 # ---------------------------------------------------------------------------
 # Helpers: fake dependencies

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from datetime import datetime
-from typing import Any, List, Tuple
+from typing import Any
 
 
-def extract_key_terms(query: str, min_length: int = 3) -> List[str]:
+def extract_key_terms(query: str, min_length: int = 3) -> list[str]:
     """Extract important terms from a query for context relevance scoring (v1)."""
     stopwords = {
         "the", "and", "or", "of", "to", "a", "in", "that", "it",
@@ -80,13 +79,13 @@ def _get_meta_dict(doc: Any) -> dict:
     return {"citation": "Unknown"}
 
 
-def reorder_documents_by_relevance(query: str, documents: List[Any]) -> List[Any]:
+def reorder_documents_by_relevance(query: str, documents: list[Any]) -> list[Any]:
     """Reorder documents by term frequency + position + metadata (profonde.py v1)."""
     if not documents:
         return documents
 
     key_terms = extract_key_terms(query)
-    scored_chunks: List[Tuple[Any, float]] = []
+    scored_chunks: list[tuple[Any, float]] = []
 
     for i, doc in enumerate(documents):
         if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):

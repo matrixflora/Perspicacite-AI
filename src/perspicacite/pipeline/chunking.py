@@ -5,12 +5,11 @@ This module provides basic chunking strategies. For advanced strategies
 """
 
 import re
-from typing import Literal
 
 from perspicacite.logging import get_logger
 from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 from perspicacite.models.kb import ChunkConfig
-from perspicacite.models.papers import Paper, PaperSource
+from perspicacite.models.papers import Paper
 
 logger = get_logger("perspicacite.pipeline.chunking")
 

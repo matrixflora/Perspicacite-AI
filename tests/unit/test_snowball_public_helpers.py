@@ -1,10 +1,11 @@
 from __future__ import annotations
-import pytest
+
 import httpx
+import pytest
 
 from perspicacite.pipeline.snowball import (
-    openalex_id_for_doi,
     fetch_cited_by_works,
+    openalex_id_for_doi,
 )
 
 

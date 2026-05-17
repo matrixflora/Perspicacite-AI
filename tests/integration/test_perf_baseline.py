@@ -26,7 +26,7 @@ import pytest
 # picks up tests/e2e/conftest.py automatically only for tests under
 # tests/e2e/, so we re-import the helper class here.
 chromadb = pytest.importorskip("chromadb")
-np = pytest.importorskip("numpy")  # noqa: F841
+np = pytest.importorskip("numpy")
 
 from perspicacite.models.papers import Author, Paper, PaperSource  # noqa: E402
 

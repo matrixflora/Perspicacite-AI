@@ -3,42 +3,77 @@
 This module contains common functions used across all RAG modes to reduce code duplication.
 """
 
+import re
 from typing import Any, List
 
 from perspicacite.models.rag import SourceReference
 
 
-def format_references(sources: List[SourceReference]) -> str:
+def strip_bibtex_braces(s: str | None) -> str:
+    # DBLP and other BibTeX-sourced fields wrap proper nouns in {…} to prevent
+    # downstream lowercasing. They leak into the UI raw if not stripped.
+    if not s:
+        return ""
+    return re.sub(r"[{}]", "", s)
+
+
+def clean_scholar_author_blob(s: str | None) -> str:
+    # Google Scholar's scraped author field often arrives as
+    # "LF Nothias, D Petras, R Schmid… - Nature …, 2020" — a single string
+    # with the journal+year glued on after " - " (hyphen-minus), " – " (en),
+    # or " — " (em). Split on whichever appears first and drop the tail.
+    # Also strip a trailing ", YYYY" remnant if the dash was missed entirely.
+    if not s:
+        return ""
+    s = str(s)
+    for sep in (" - ", " – ", " — "):
+        if sep in s:
+            s = s.split(sep, 1)[0]
+            break
+    s = re.sub(r",\s*\d{4}\s*$", "", s)
+    return s.rstrip(" …,.")
+
+
+def format_references(sources: list[SourceReference]) -> str:
     """Format sources as a references section.
 
-    Args:
-        sources: List of source references
-
-    Returns:
-        Formatted references string in markdown
+    Delegates to ``format_references_academic`` so the displayed format
+    matches: BibTeX braces stripped, authors collapsed to ``First et al.``,
+    DOI rendered as a clickable link with the full citation in the hover
+    title attribute. Kept as a thin wrapper because many callers pass
+    ``SourceReference`` objects rather than raw dicts.
     """
     if not sources:
         return ""
 
-    lines = ["---", "## References"]
-    for i, src in enumerate(sources, 1):
-        ref = f"[{i}] {src.title}"
-        if src.authors:
-            ref += f" - {src.authors}"
-        if src.year:
-            ref += f" ({src.year})"
-        if src.doi:
-            ref += f" - DOI: {src.doi}"
-        lines.append(ref)
+    papers: list[dict[str, Any]] = []
+    for src in sources:
+        authors = src.authors
+        # SourceReference.authors can arrive as list[str] or comma-joined str.
+        if isinstance(authors, str):
+            author_list = [a.strip() for a in authors.split(",") if a.strip()]
+        elif isinstance(authors, list):
+            author_list = [str(a) for a in authors]
+        else:
+            author_list = []
+        papers.append({
+            "title": src.title,
+            "authors": author_list,
+            "year": src.year,
+            "journal": src.journal,
+            "doi": src.doi,
+        })
 
-    return "\n".join(lines)
+    body = format_references_academic(papers)
+    # Original API expected a leading ``---`` separator; preserve it.
+    return "---\n" + body if body else ""
 
 
 def prepare_sources(
-    documents: List[Any],
+    documents: list[Any],
     max_docs: int = 10,
     dedupe_by: str = "title",
-) -> List[SourceReference]:
+) -> list[SourceReference]:
     """Prepare source references from documents with deduplication.
 
     Args:
@@ -125,7 +160,7 @@ def get_doc_citation(doc: Any) -> str:
     return "Unknown"
 
 
-def format_documents_for_prompt(documents: List[Any]) -> str:
+def format_documents_for_prompt(documents: list[Any]) -> str:
     """Format documents for inclusion in LLM prompt.
 
     Args:
@@ -185,7 +220,7 @@ IMPORTANT: Do not put entire paragraphs in bold. Only individual important words
 Your response should be easy to read with clear visual structure."""
 
 
-def format_references_academic(papers: List[dict]) -> str:
+def format_references_academic(papers: list[dict]) -> str:
     """Format papers as academic references with markdown links.
 
     Uses markdown link format: [Author et al., Year](url "full citation")
@@ -202,27 +237,42 @@ def format_references_academic(papers: List[dict]) -> str:
     ref_lines = ["## References\n"]
 
     for i, paper in enumerate(papers, 1):
-        title = paper.get("title", "Unknown Title")
+        title = strip_bibtex_braces(paper.get("title", "Unknown Title")) or "Unknown Title"
         authors = paper.get("authors", [])
-        year = paper.get("year", "n.d.")
+        year_raw = paper.get("year", "")
+        journal = strip_bibtex_braces(paper.get("journal", "")) or ""
         doi = paper.get("doi", "")
-        
+        url_field = paper.get("url", "") or ""
+
         # Normalize DOI - remove existing URL prefix if present
         if doi:
             doi = doi.strip()
             for prefix in ("https://doi.org/", "http://dx.doi.org/", "doi:"):
                 if doi.lower().startswith(prefix.lower()):
                     doi = doi[len(prefix):].strip()
-        
-        url = f"https://doi.org/{doi}" if doi else ""
+
+        url = f"https://doi.org/{doi}" if doi else (url_field or "")
 
         # Normalize authors to list (handle both list and comma-separated string)
         if isinstance(authors, str):
-            authors = [a.strip() for a in authors.split(",") if a.strip()]
+            # Single-string author field — Google Scholar packs the journal
+            # name and year onto the end ("… - Nature …, 2020"); strip that
+            # tail before splitting on commas.
+            cleaned_blob = clean_scholar_author_blob(authors)
+            authors = [a.strip() for a in cleaned_blob.split(",") if a.strip()]
         elif not isinstance(authors, list):
             authors = []
+        # Even when authors arrives as a list, individual entries may still
+        # carry the Scholar "- Journal, Year" tail (one author per Paper.author
+        # is sometimes the whole blob).
+        authors = [
+            strip_bibtex_braces(clean_scholar_author_blob(a))
+            for a in authors if a
+        ]
+        # Drop any leftover empties from the cleanup pass.
+        authors = [a for a in authors if a]
 
-        # Format authors: "FirstAuthor et al." if >2 authors
+        # Format authors compactly: "FirstAuthor et al." if >2 authors
         if len(authors) == 0:
             author_str = "Unknown"
         elif len(authors) == 1:
@@ -232,17 +282,27 @@ def format_references_academic(papers: List[dict]) -> str:
         else:
             author_str = f"{authors[0]} et al."
 
-        # Format full citation (for title attribute of the link)
-        if authors:
-            full_citation = f"{', '.join(authors)}. {year}. {title}."
-        else:
-            full_citation = f"{title}. {year}."
+        # Year — keep as plain string; only fall back to n.d. when truly missing.
+        year_str = str(year_raw).strip() if year_raw not in (None, "") else "n.d."
 
-        # Use markdown link format
-        if url:
-            ref_lines.append(f'{i}. [{author_str}, {year}]({url} "{full_citation}")')
-        else:
-            ref_lines.append(f"{i}. {author_str}, {year}. {title}.")
+        title_clean = title.rstrip(". ")
+        journal_clean = (journal or "").rstrip(". ")
+
+        # Format the user asked for — plain text citation, links only on
+        # the trailing DOI/URL (not on the visible citation text):
+        #   N) Author et al., "Title", *Journal* (Year). DOI: 10.xxx/yyy
+        # Journal italic via markdown, year in parens at the end of the
+        # citation, then a separate clickable DOI/URL afterwards.
+        parts = [f'{author_str},', f'"{title_clean}",']
+        if journal_clean:
+            parts.append(f'*{journal_clean}*')
+        parts.append(f'({year_str}).')
+        line = f'{i}) ' + " ".join(parts)
+        if doi:
+            line += f' DOI: [{doi}](https://doi.org/{doi})'
+        elif url:
+            line += f' [link]({url})'
+        ref_lines.append(line)
 
     return "\n".join(ref_lines)
 
@@ -323,7 +383,7 @@ def flatten_paper_results_to_chunks(
 
     Returns an empty list when there are no chunks or none have metadata.
     """
-    from perspicacite.models.documents import DocumentChunk, ChunkMetadata
+    from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 
     out: list[DocumentChunk] = []
     for paper in paper_results or []:
@@ -368,9 +428,26 @@ def format_paper_results_for_prompt(
 
     sections: list[str] = []
     for i, paper in enumerate(papers, 1):
-        title = paper.get("title", "Unknown")
+        title = strip_bibtex_braces(paper.get("title", "Unknown")) or "Unknown"
         authors = paper.get("authors", "")
+        # Normalize authors to a human-readable string before handing the
+        # paper to the LLM. Lists got Python-repr'd into the prompt (e.g.
+        # "['Jiabin Tang', 'Lianghao Xia']") and the model faithfully
+        # reproduced that in its citations.
+        if isinstance(authors, list):
+            cleaned = [strip_bibtex_braces(str(a)) for a in authors if a]
+            if len(cleaned) == 0:
+                authors_str = ""
+            elif len(cleaned) <= 3:
+                authors_str = ", ".join(cleaned)
+            else:
+                authors_str = f"{cleaned[0]} et al."
+        else:
+            authors_str = strip_bibtex_braces(
+                clean_scholar_author_blob(str(authors))
+            ) if authors else ""
         year = paper.get("year", "")
+        journal = strip_bibtex_braces(paper.get("journal", "")) or ""
         doi = paper.get("doi", "")
         score = paper.get("paper_score", 0)
         full_text = paper.get("full_text", "")
@@ -378,8 +455,10 @@ def format_paper_results_for_prompt(
         header = f"[Paper {i}]"
         if title:
             header += f" {title}"
-        if authors:
-            header += f" — {authors}"
+        if authors_str:
+            header += f" — {authors_str}"
+        if journal:
+            header += f" | {journal}"
         if year:
             header += f" ({year})"
         if doi:

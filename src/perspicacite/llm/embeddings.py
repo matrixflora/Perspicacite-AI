@@ -1,10 +1,7 @@
 """Embedding providers for vector search."""
 
-from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Protocol
-
-import numpy as np
 
 from perspicacite.logging import get_logger
 

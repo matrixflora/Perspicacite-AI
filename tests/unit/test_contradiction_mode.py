@@ -1,6 +1,7 @@
 """Unit tests for ContradictionRAGMode."""
 
 import json
+
 import pytest
 
 from perspicacite.config.schema import Config
@@ -297,6 +298,6 @@ async def test_contradiction_error_resilience(monkeypatch):
 @pytest.mark.asyncio
 async def test_contradiction_exported_from_modes():
     """ContradictionRAGMode is exported from perspicacite.rag.modes."""
-    from perspicacite.rag.modes import ContradictionRAGMode  # noqa: F401
+    from perspicacite.rag.modes import ContradictionRAGMode
 
     assert ContradictionRAGMode is not None

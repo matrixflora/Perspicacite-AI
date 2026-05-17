@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # F3 — suggested_action hint plumbing
 # ---------------------------------------------------------------------------
@@ -121,8 +120,9 @@ def test_is_deterministic_fail_negative_for_random_error():
 
 def test_litellm_banner_suppressed_at_import():
     # Importing the client module flips the global flag.
-    import perspicacite.llm.client  # noqa: F401
     import litellm
+
+    import perspicacite.llm.client  # noqa: F401
 
     assert getattr(litellm, "suppress_debug_info", False) is True
 

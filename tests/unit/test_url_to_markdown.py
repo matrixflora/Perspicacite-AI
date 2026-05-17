@@ -20,7 +20,6 @@ from perspicacite.pipeline.download.url_to_markdown import (
     fetch_url_as_markdown,
 )
 
-
 # ---------------------------------------------------------------------------
 # _parse_github_repo
 # ---------------------------------------------------------------------------

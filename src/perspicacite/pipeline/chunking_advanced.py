@@ -21,11 +21,11 @@ Usage:
 from __future__ import annotations
 
 import re
-from typing import Callable, List, Optional, Tuple, Any, Dict
+from collections.abc import Callable
+from typing import Any
 
 from perspicacite.logging import get_logger
 from perspicacite.models.documents import ChunkMetadata, DocumentChunk
-from perspicacite.models.kb import ChunkConfig
 from perspicacite.models.papers import Paper
 
 logger = get_logger("perspicacite.pipeline.chunking_advanced")
@@ -84,12 +84,12 @@ REFS_HEADER_PATTERN = re.compile(
 # Tokenizer Functions
 # =============================================================================
 
-def _whitespace_tokenize(text: str) -> List[str]:
+def _whitespace_tokenize(text: str) -> list[str]:
     """Fallback whitespace tokenizer."""
     return text.split()
 
 
-def _candidate_tokenizer_ids(model_name: str) -> List[str]:
+def _candidate_tokenizer_ids(model_name: str) -> list[str]:
     """Return candidate HF model ids for tokenizer loading."""
     candidates = [model_name]
     if model_name.startswith("sentence-transformers/bge-"):
@@ -100,9 +100,9 @@ def _candidate_tokenizer_ids(model_name: str) -> List[str]:
 
 
 def get_tokenizer(
-    provider: Optional[str] = None,
-    model_name: Optional[str] = None
-) -> Callable[[str], List[int]]:
+    provider: str | None = None,
+    model_name: str | None = None
+) -> Callable[[str], list[int]]:
     """
     Get a tokenizer function that maps text -> list of token ids.
     
@@ -133,7 +133,7 @@ def get_tokenizer(
                 last_err = e
                 logger.warning(f"chunking: failed to load tokenizer for {cand}: {e}")
         if last_err is not None:
-            logger.warning(f"chunking: all tokenizer candidates failed, using whitespace fallback")
+            logger.warning("chunking: all tokenizer candidates failed, using whitespace fallback")
 
     # Fallback to whitespace
     logger.debug("chunking: using whitespace fallback tokenizer")
@@ -144,7 +144,7 @@ def get_tokenizer(
 # Section Detection
 # =============================================================================
 
-def split_into_sections(text: str) -> List[Tuple[str, str]]:
+def split_into_sections(text: str) -> list[tuple[str, str]]:
     """
     Split text into sections based on scientific document headers.
     
@@ -158,9 +158,9 @@ def split_into_sections(text: str) -> List[Tuple[str, str]]:
         List of (section_name, section_content) tuples
     """
     lines = text.splitlines()
-    sections: List[Tuple[str, List[str]]] = []
+    sections: list[tuple[str, list[str]]] = []
     current_name = "_full"
-    current_buf: List[str] = []
+    current_buf: list[str] = []
 
     for line in lines:
         candidate = line.strip()
@@ -177,15 +177,15 @@ def split_into_sections(text: str) -> List[Tuple[str, str]]:
 
     # Convert to output format and filter references
     out = [(name, "\n".join(buf).strip()) for name, buf in sections if "\n".join(buf).strip()]
-    filtered: List[Tuple[str, str]] = []
-    
+    filtered: list[tuple[str, str]] = []
+
     for name, sect_text in out:
         header = (name or "").strip()
         if REFS_HEADER_PATTERN.match(header):
             logger.info(f"chunking: dropping reference section '{header[:80]}'")
             continue
         filtered.append((name, sect_text))
-    
+
     logger.info(f"chunking: produced {len(filtered)} sections after reference filtering")
     return filtered
 
@@ -194,7 +194,7 @@ def split_into_sections(text: str) -> List[Tuple[str, str]]:
 # Sentence Splitting
 # =============================================================================
 
-def _split_sentences(text: str) -> List[str]:
+def _split_sentences(text: str) -> list[str]:
     """
     Lightweight sentence splitter tolerant to scientific text.
     
@@ -206,9 +206,9 @@ def _split_sentences(text: str) -> List[str]:
     """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     parts = [p.strip() for p in text.split("\n") if p.strip()]
-    sentences: List[str] = []
+    sentences: list[str] = []
     buffer = []
-    
+
     for part in parts:
         chunks = re.split(r"(?<=[.!?])\s+", part)
         for ch in chunks:
@@ -228,10 +228,10 @@ def _split_sentences(text: str) -> List[str]:
                     sentences.append(" ".join(buffer))
                     buffer = []
                 sentences.append(ch)
-    
+
     if buffer:
         sentences.append(" ".join(buffer))
-    
+
     return sentences
 
 
@@ -241,10 +241,10 @@ def _split_sentences(text: str) -> List[str]:
 
 def chunk_by_tokens(
     text: str,
-    encode: Callable[[str], List[int]],
+    encode: Callable[[str], list[int]],
     max_tokens: int,
     overlap_tokens: int = 0,
-) -> List[str]:
+) -> list[str]:
     """
     Chunk text by token counts with fixed overlap.
     
@@ -264,23 +264,23 @@ def chunk_by_tokens(
     if not tokens:
         return [text]
 
-    chunks: List[str] = []
+    chunks: list[str] = []
     start = 0
-    
+
     while start < len(tokens):
         end = min(start + max_tokens, len(tokens))
-        
+
         # Map token span back to text
         ratio_start = start / max(1, len(tokens))
         ratio_end = end / max(1, len(tokens))
         cs = int(ratio_start * len(text))
         ce = int(ratio_end * len(text))
         sub = text[cs:ce]
-        
+
         chunk_text = sub.strip()
         if chunk_text:
             chunks.append(chunk_text)
-        
+
         if end == len(tokens):
             break
         start = max(0, end - overlap_tokens)
@@ -288,7 +288,7 @@ def chunk_by_tokens(
     return [c for c in chunks if c]
 
 
-def _get_sentence_embedder(model_name: Optional[str]) -> Optional[Any]:
+def _get_sentence_embedder(model_name: str | None) -> Any | None:
     """Load sentence transformer model for semantic chunking."""
     if SentenceTransformer is None or model_name is None:
         return None
@@ -302,13 +302,13 @@ def _get_sentence_embedder(model_name: Optional[str]) -> Optional[Any]:
 
 def chunk_by_semantics(
     text: str,
-    encode: Callable[[str], List[int]],
-    embed_model_name: Optional[str],
+    encode: Callable[[str], list[int]],
+    embed_model_name: str | None,
     threshold: float,
     max_tokens: int,
     min_tokens: int,
     overlap_tokens: int,
-) -> List[str]:
+) -> list[str]:
     """
     Chunk text using semantic cohesion with hard token caps.
     
@@ -353,8 +353,8 @@ def chunk_by_semantics(
             return 0.0
         return float(np.dot(a, b) / denom)
 
-    chunks: List[str] = []
-    cur_sent_indices: List[int] = []
+    chunks: list[str] = []
+    cur_sent_indices: list[int] = []
     cur_tokens = 0
     cur_centroid = None
 
@@ -362,11 +362,11 @@ def chunk_by_semantics(
         nonlocal cur_sent_indices, cur_tokens, cur_centroid
         if not cur_sent_indices:
             return
-        
+
         chunk_text = " ".join(sentences[i] for i in cur_sent_indices).strip()
         if chunk_text:
             chunks.append(chunk_text)
-        
+
         # Prepare overlap
         if overlap_tokens > 0 and cur_sent_indices:
             overlap = []
@@ -386,7 +386,7 @@ def chunk_by_semantics(
 
     for idx, (s, v) in enumerate(zip(sentences, sent_vecs)):
         s_tokens = len(encode(s))
-        
+
         if not cur_sent_indices:
             cur_sent_indices = [idx]
             cur_tokens = s_tokens
@@ -439,17 +439,17 @@ class AdvancedChunker:
     - agentic: LLM-based intelligent chunking (requires llm_client)
     - section_aware: Respects document section boundaries
     """
-    
+
     def __init__(
         self,
         method: str = "token",
         max_tokens: int = 800,
         overlap_tokens: int = 120,
-        min_tokens: Optional[int] = None,
-        provider: Optional[str] = None,
-        model_name: Optional[str] = None,
+        min_tokens: int | None = None,
+        provider: str | None = None,
+        model_name: str | None = None,
         semantic_threshold: float = 0.65,
-        embed_model_name: Optional[str] = None,
+        embed_model_name: str | None = None,
         section_aware: bool = False,
     ):
         """
@@ -475,15 +475,15 @@ class AdvancedChunker:
         self.semantic_threshold = semantic_threshold
         self.embed_model_name = embed_model_name or "sentence-transformers/all-MiniLM-L6-v2"
         self.section_aware = section_aware
-        
+
         self.encode = get_tokenizer(provider=provider, model_name=model_name)
-    
+
     async def chunk_text(
         self,
         text: str,
         paper: Paper,
-        llm_client: Optional[Any] = None,
-    ) -> List[DocumentChunk]:
+        llm_client: Any | None = None,
+    ) -> list[DocumentChunk]:
         """
         Chunk text into DocumentChunks.
         
@@ -497,10 +497,10 @@ class AdvancedChunker:
         """
         if not text.strip():
             return []
-        
+
         if self.section_aware:
             return await self._chunk_section_aware(text, paper, llm_client)
-        
+
         # Get raw chunks based on method
         if self.method == "semantic":
             raw_chunks = chunk_by_semantics(
@@ -516,25 +516,25 @@ class AdvancedChunker:
                 raw_chunks = await self._chunk_agentic(text, llm_client)
         else:  # token
             raw_chunks = chunk_by_tokens(text, self.encode, self.max_tokens, self.overlap_tokens)
-        
+
         # Convert to DocumentChunks
         return self._to_document_chunks(raw_chunks, paper)
-    
+
     async def _chunk_section_aware(
         self,
         text: str,
         paper: Paper,
-        llm_client: Optional[Any],
-    ) -> List[DocumentChunk]:
+        llm_client: Any | None,
+    ) -> list[DocumentChunk]:
         """Chunk respecting section boundaries."""
         sections = split_into_sections(text)
-        all_chunks: List[DocumentChunk] = []
+        all_chunks: list[DocumentChunk] = []
         chunk_index = 0
-        
+
         for section_name, section_text in sections:
             if not section_text.strip():
                 continue
-            
+
             # Create temporary chunker for this section
             section_chunker = AdvancedChunker(
                 method=self.method if self.method != "agentic" else "token",
@@ -547,7 +547,7 @@ class AdvancedChunker:
                 embed_model_name=self.embed_model_name,
                 section_aware=False,  # Don't recurse
             )
-            
+
             try:
                 section_chunks = await section_chunker.chunk_text(section_text, paper, llm_client)
 
@@ -566,7 +566,7 @@ class AdvancedChunker:
                         section=section_name,
                     )
                     chunk_index += 1
-                
+
                 all_chunks.extend(section_chunks)
             except Exception as e:
                 logger.warning(f"chunking: error processing section '{section_name}': {e}")
@@ -588,14 +588,14 @@ class AdvancedChunker:
                 )
                 all_chunks.append(chunk)
                 chunk_index += 1
-        
+
         return all_chunks
-    
+
     async def _chunk_agentic(
         self,
         text: str,
         llm_client: Any,
-    ) -> List[str]:
+    ) -> list[str]:
         """Agentic chunking using LLM span partitioning.
 
         Slides over the text in character windows, asks the LLM to return
@@ -614,15 +614,15 @@ class AdvancedChunker:
         min_tokens = self.min_tokens
 
         # --- helpers ---
-        def _split_span_by_tokens(span_text: str) -> List[str]:
+        def _split_span_by_tokens(span_text: str) -> list[str]:
             if not span_text:
                 return []
             if len(self.encode(span_text)) <= self.max_tokens:
                 return [span_text]
             parts = re.split(r"(?<=[.!?;:])\s+", span_text)
             if len(parts) > 1:
-                out: List[str] = []
-                buf: List[str] = []
+                out: list[str] = []
+                buf: list[str] = []
                 buf_tok = 0
                 for p in parts:
                     p = p.strip()
@@ -638,7 +638,7 @@ class AdvancedChunker:
                         buf_tok += t
                 if buf:
                     out.append(" ".join(buf).strip())
-                final: List[str] = []
+                final: list[str] = []
                 for piece in out:
                     if len(self.encode(piece)) <= self.max_tokens:
                         final.append(piece)
@@ -657,7 +657,7 @@ class AdvancedChunker:
             return [" ".join(words[:mid]), " ".join(words[mid:])]
 
         # --- main loop ---
-        chunks: List[str] = []
+        chunks: list[str] = []
         pending_small = ""
         text_len = len(text)
         pos = 0
@@ -692,7 +692,7 @@ class AdvancedChunker:
                 continue
 
             # Parse spans
-            spans: List[Tuple[int, int]] = []
+            spans: list[tuple[int, int]] = []
             if response:
                 try:
                     import json as _json
@@ -712,7 +712,7 @@ class AdvancedChunker:
                     logger.warning(f"chunking: failed to parse agentic spans: {e}")
 
             # Normalize spans → sorted, clipped, contiguous
-            norm_spans: List[Tuple[int, int]] = []
+            norm_spans: list[tuple[int, int]] = []
             if spans:
                 spans.sort(key=lambda x: (x[0], x[1]))
                 cur = 0
@@ -733,7 +733,7 @@ class AdvancedChunker:
                 norm_spans = [(0, wlen)]
 
             # Enforce token constraints: merge small, split large
-            window_chunks: List[str] = []
+            window_chunks: list[str] = []
             buffer = pending_small if pending_small else ""
             pending_small = ""
 
@@ -765,7 +765,7 @@ class AdvancedChunker:
 
         # Apply token-based overlap
         if self.overlap_tokens > 0 and chunks:
-            overlapped: List[str] = []
+            overlapped: list[str] = []
             for j, ch in enumerate(chunks):
                 if j == 0:
                     overlapped.append(ch)
@@ -779,15 +779,15 @@ class AdvancedChunker:
 
         logger.info(f"chunking: agentic produced {len(chunks)} chunks")
         return chunks
-    
+
     def _to_document_chunks(
         self,
-        raw_chunks: List[str],
+        raw_chunks: list[str],
         paper: Paper,
-    ) -> List[DocumentChunk]:
+    ) -> list[DocumentChunk]:
         """Convert raw text chunks to DocumentChunk objects."""
-        chunks: List[DocumentChunk] = []
-        
+        chunks: list[DocumentChunk] = []
+
         for idx, chunk_text in enumerate(raw_chunks):
             chunk = DocumentChunk(
                 id=f"{paper.id}_{idx}",
@@ -804,25 +804,25 @@ class AdvancedChunker:
                 ),
             )
             chunks.append(chunk)
-        
+
         return chunks
 
 
-def _format_authors(authors: List[Any]) -> Optional[str]:
+def _format_authors(authors: list[Any]) -> str | None:
     """Format authors list to string."""
     if not authors:
         return None
-    
+
     names = []
     for author in authors:
         if hasattr(author, "family") and author.family:
             names.append(author.family)
         elif hasattr(author, "name"):
             names.append(author.name.split()[-1])
-    
+
     if not names:
         return None
-    
+
     if len(names) == 1:
         return names[0]
     elif len(names) == 2:

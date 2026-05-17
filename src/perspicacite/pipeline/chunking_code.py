@@ -12,7 +12,7 @@ from __future__ import annotations
 import ast
 import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 from perspicacite.models.documents import ChunkMetadata, DocumentChunk
 from perspicacite.models.papers import Paper
@@ -304,7 +304,7 @@ def _chunk_notebook(text: str, paper: Paper, *, file_path: str) -> list[Document
 try:
     import importlib
 
-    importlib.import_module("tree_sitter_languages")  # noqa: F401
+    importlib.import_module("tree_sitter_languages")
     HAS_TREE_SITTER = True
 except Exception:
     HAS_TREE_SITTER = False
@@ -326,7 +326,7 @@ _TS_NODE_TYPES = {
 
 def _chunk_treesitter(
     text: str, paper: Paper, *, file_path: str, language: str
-) -> Optional[list[DocumentChunk]]:
+) -> list[DocumentChunk] | None:
     """Tree-sitter-backed chunker for non-Python languages.
 
     Returns None when the optional dep isn't installed OR when the parser
@@ -395,7 +395,7 @@ def _chunk_treesitter(
     return chunks
 
 
-def _ts_extract_name(node: Any) -> Optional[str]:
+def _ts_extract_name(node: Any) -> str | None:
     """Best-effort name extraction: scan children for an ``identifier`` /
     ``type_identifier`` / ``name`` node and use its text."""
     for child in node.children:
@@ -417,10 +417,10 @@ def chunk_code(
     paper: Paper,
     *,
     language: str,
-    file_path: Optional[str],
+    file_path: str | None,
     chunk_size: int,
     chunk_overlap: int,
-) -> Optional[list[DocumentChunk]]:
+) -> list[DocumentChunk] | None:
     """Dispatch entry. Returns None when no backend applies (caller falls
     back to the splitter)."""
     fp = file_path or ""

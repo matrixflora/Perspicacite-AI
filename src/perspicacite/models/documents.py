@@ -1,6 +1,6 @@
 """Document chunk models."""
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,48 +14,48 @@ class ChunkMetadata(BaseModel):
 
     paper_id: str
     chunk_index: int
-    section: Optional[str] = None
-    page_number: Optional[int] = None
+    section: str | None = None
+    page_number: int | None = None
     source: PaperSource = PaperSource.BIBTEX
-    title: Optional[str] = None
-    authors: Optional[str] = None
-    year: Optional[int] = None
-    doi: Optional[str] = None
-    url: Optional[str] = None
+    title: str | None = None
+    authors: str | None = None
+    year: int | None = None
+    doi: str | None = None
+    url: str | None = None
     # Local-doc / smart-chunking extensions (all optional):
-    content_type: Optional[str] = None  # "pdf" | "markdown" | "code" | "text"
-    language: Optional[str] = None  # python | typescript | ...
-    heading_path: Optional[list[str]] = None  # markdown heading stack
-    source_file_path: Optional[str] = None  # absolute path for local files
+    content_type: str | None = None  # "pdf" | "markdown" | "code" | "text"
+    language: str | None = None  # python | typescript | ...
+    heading_path: list[str] | None = None  # markdown heading stack
+    source_file_path: str | None = None  # absolute path for local files
     # ASB-aligned provenance (Cycle A 2026-05-13) — all optional, additive.
-    source_section: Optional[str] = None
-    page: Optional[int] = None
-    char_span: Optional[tuple[int, int]] = None
+    source_section: str | None = None
+    page: int | None = None
+    char_span: tuple[int, int] | None = None
     figure_refs: list[str] = Field(default_factory=list)
     table_refs: list[str] = Field(default_factory=list)
     resource_refs: list[str] = Field(default_factory=list)
-    parent_paper_id: Optional[str] = None
+    parent_paper_id: str | None = None
     is_external: bool = False
     # Sub-project A (code-aware chunking) extensions — all optional.
-    symbol_name: Optional[str] = None
-    symbol_kind: Optional[str] = None  # "function" | "class" | "method" | "cell" | "module"
-    parent_class: Optional[str] = Field(
+    symbol_name: str | None = None
+    symbol_kind: str | None = None  # "function" | "class" | "method" | "cell" | "module"
+    parent_class: str | None = Field(
         None,
         description="If symbol_kind is a method, the enclosing class name. None otherwise.",
     )
-    start_line: Optional[int] = None   # 1-indexed inclusive
-    end_line: Optional[int] = None     # 1-indexed inclusive
-    docstring: Optional[str] = None    # ≤500 chars, truncated
+    start_line: int | None = None   # 1-indexed inclusive
+    end_line: int | None = None     # 1-indexed inclusive
+    docstring: str | None = None    # ≤500 chars, truncated
     imports: list[str] = Field(default_factory=list)
 
     # Sub-project B (per-type embedding routing) — records which embedder
     # actually produced the chunk's vector. None when not yet embedded.
-    embedding_model: Optional[str] = None
+    embedding_model: str | None = None
 
     # Cite-graph enrichment fields (2026-05-15 spec).
-    source_via: Optional[Literal["bundle", "enrichment", "cite_graph", "cite_graph_script"]] = None
-    cited_tool: Optional[str] = None
-    discovery_score: Optional[float] = None
+    source_via: Literal["bundle", "enrichment", "cite_graph", "cite_graph_script"] | None = None
+    cited_tool: str | None = None
+    discovery_score: float | None = None
 
     def __repr__(self) -> str:
         return (
@@ -72,7 +72,7 @@ class DocumentChunk(BaseModel):
     id: str
     text: str
     metadata: ChunkMetadata
-    embedding: Optional[list[float]] = None
+    embedding: list[float] | None = None
 
     def __repr__(self) -> str:
         text_preview = self.text[:50].replace("\n", " ")

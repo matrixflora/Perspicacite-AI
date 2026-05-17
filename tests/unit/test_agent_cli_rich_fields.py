@@ -14,7 +14,6 @@ import pytest
 
 from perspicacite.llm.agent_cli import AgentCLIClient
 
-
 CLAUDE_JSON_PAYLOAD = json.dumps(
     {
         "type": "result",

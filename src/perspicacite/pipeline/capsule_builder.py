@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,7 @@ def write_metadata(
         "capsule_version": CAPSULE_VERSION,
         "producer": "perspicacite",
         "producer_version": producer_version,
-        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "paper_id": paper.id,
         "title": paper.title,
         "authors": [a.model_dump() for a in (paper.authors or [])],
@@ -128,8 +128,8 @@ def resolve_figure_refs(text: str, figures: list[RawFigure]) -> list[str]:
 
 def write_blocks(
     capsule_dir: Path, *, text: str,
-    figures: "list[RawFigure] | None" = None,
-    resources: "list[dict] | None" = None,
+    figures: list[RawFigure] | None = None,
+    resources: list[dict] | None = None,
 ) -> int:
     """Section-split ``text`` and emit one paragraph-block per row into
     ``text/blocks.jsonl``.

@@ -89,7 +89,7 @@ def fetch_url(url: str, *, timeout: float = 30.0) -> str | None:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return r.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+    except (urllib.error.URLError, OSError, TimeoutError):
         return None
 
 
@@ -207,12 +207,16 @@ async def audit_asb(findings: dict[str, Any]) -> None:
     section("Phase 2: ASB (capsule artifacts)")
     from perspicacite.models.papers import Paper, PaperSource
     from perspicacite.pipeline.capsule_builder import (
-        capsule_dir_for, write_metadata, write_blocks, write_resources,
-    )
-    from perspicacite.pipeline.symbol_index import (
-        write_chunks_symbols, iter_symbols,
+        capsule_dir_for,
+        write_blocks,
+        write_metadata,
+        write_resources,
     )
     from perspicacite.pipeline.chunking_code import _chunk_python_ast
+    from perspicacite.pipeline.symbol_index import (
+        iter_symbols,
+        write_chunks_symbols,
+    )
 
     out: dict[str, Any] = {}
     findings["asb"] = out
@@ -320,8 +324,8 @@ async def audit_kg_memory(findings: dict[str, Any]) -> None:
 
 async def _audit_session_store(out: dict[str, Any]) -> None:
     from perspicacite.memory.session_store import SessionStore
+    from perspicacite.models.kb import ChunkConfig, KnowledgeBase
     from perspicacite.models.messages import Message
-    from perspicacite.models.kb import KnowledgeBase, ChunkConfig
 
     tmpdir = Path(tempfile.mkdtemp(prefix="audit_session_"))
     try:
@@ -369,10 +373,10 @@ async def _audit_session_store(out: dict[str, Any]) -> None:
 async def _audit_provenance(out: dict[str, Any]) -> None:
     """Real bug check: ProvenanceStore needs SessionStore.init_db() to create
     the `provenance` table — silent data loss when used standalone."""
-    from perspicacite.provenance.collector import ProvenanceCollector
-    from perspicacite.provenance.store import ProvenanceStore
-    from perspicacite.provenance.context import collecting
     from perspicacite.memory.session_store import SessionStore
+    from perspicacite.provenance.collector import ProvenanceCollector
+    from perspicacite.provenance.context import collecting
+    from perspicacite.provenance.store import ProvenanceStore
 
     tmpdir = Path(tempfile.mkdtemp(prefix="audit_prov_"))
     try:
@@ -511,8 +515,13 @@ async def audit_manuscript(findings: dict[str, Any]) -> None:
     findings["manuscript"] = out
 
     from perspicacite.models.rag import (
-        RAGRequest, RAGResponse, RAGMode, SourceReference, StreamEvent,
-        CodeExcerpt, FigureRef,
+        CodeExcerpt,
+        FigureRef,
+        RAGMode,
+        RAGRequest,
+        RAGResponse,
+        SourceReference,
+        StreamEvent,
     )
 
     # 4a) RAGRequest validation — does it accept the kb_names multi-KB field?
@@ -609,8 +618,8 @@ async def audit_manuscript(findings: dict[str, Any]) -> None:
 
     # 4d) LiteratureSurveyRAGMode instantiation (real execute requires populated KB + LLM)
     try:
-        from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
         from perspicacite.config.schema import Config
+        from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
         cfg = Config()
         mode = LiteratureSurveyRAGMode(cfg)
         out["lit_survey_mode_init"] = {
@@ -653,7 +662,7 @@ async def audit_instrumentation(findings: dict[str, Any]) -> None:
 
     # 5b) bm25s router cache resilience — cache hit then miss, with mocked rebuilder
     try:
-        from perspicacite.rag.kb_router import route_kbs, _bm25_cache_clear
+        from perspicacite.rag.kb_router import _bm25_cache_clear, route_kbs
         _bm25_cache_clear()
         kb_ctx = {
             "biochem": "alphafold protein structure prediction folding",
@@ -696,6 +705,7 @@ async def audit_instrumentation(findings: dict[str, Any]) -> None:
     # 5c) Robust failure path — bad URL to snowball-public-helper
     try:
         import httpx
+
         from perspicacite.pipeline.snowball import openalex_id_for_doi
         async with httpx.AsyncClient() as client:
             # nonsense DOI that should miss both primary and arxiv-fallback

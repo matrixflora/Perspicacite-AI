@@ -27,24 +27,25 @@ Main entry point:
             print(result.sections)       # None unless from PMC/arXiv HTML
 """
 
-from .unified import retrieve_paper_content
-from .base import DownloadResult, ContentResult, PDFDownloader, PaperContent, PaperDiscovery
-from .fallback import get_pdf_with_fallback, get_content_with_fallback
-from .unpaywall import get_open_access_url
-from .alternative import download_from_alternative_endpoint as get_pdf_from_alternative_endpoint
-
 # Publisher-specific modules (for direct access)
-from . import unpaywall
-from . import arxiv
-from . import wiley
-from . import elsevier
-from . import aaas
-from . import acs
-from . import rsc
-from . import springer
-from . import alternative
-from . import openalex_oa
-from . import pmc
+from . import (
+    aaas,
+    acs,
+    alternative,
+    arxiv,
+    elsevier,
+    openalex_oa,
+    pmc,
+    rsc,
+    springer,
+    unpaywall,
+    wiley,
+)
+from .alternative import download_from_alternative_endpoint as get_pdf_from_alternative_endpoint
+from .base import ContentResult, DownloadResult, PaperContent, PaperDiscovery, PDFDownloader
+from .fallback import get_content_with_fallback, get_pdf_with_fallback
+from .unified import retrieve_paper_content
+from .unpaywall import get_open_access_url
 
 __all__ = [
     # Unified pipeline (preferred)

@@ -13,12 +13,10 @@ Optional headers (not set here) from the same spec: ``Authorization`` (OAuth),
 ``Accept: application/pdf`` is also supported by Elsevier for direct PDF bytes.
 """
 
-from typing import Any
 
 import httpx
 
-from perspicacite.logging import get_logger
-from .base import logger, ContentResult
+from .base import ContentResult, logger
 
 
 async def get_content_from_elsevier(
@@ -81,7 +79,7 @@ async def get_content_from_elsevier(
         else:
             error_msg = f"HTTP {e.response.status_code}"
             logger.error("elsevier_api_http_error", doi=doi, status=e.response.status_code)
-        
+
         return ContentResult(
             success=False,
             content=None,

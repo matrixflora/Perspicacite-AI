@@ -1,6 +1,6 @@
 """Document processing pipeline."""
 
-__all__ = ["PDFDownloader", "DownloadResult", "ContentResult"]
+__all__ = ["ContentResult", "DownloadResult", "PDFDownloader"]
 
 # Lazy imports
 def __getattr__(name):

@@ -4,7 +4,6 @@ import httpx
 import pytest
 
 from perspicacite.pipeline.download.html_capture import (
-    HtmlCapture,
     _classify_tier,
     capture_landing_html,
 )

@@ -17,7 +17,7 @@ def _paper():
 def test_constant_is_false_when_dep_missing():
     # Treat as a runtime probe — the constant equals importability.
     expected = importlib.util.find_spec("tree_sitter_languages") is not None
-    assert HAS_TREE_SITTER == expected
+    assert expected == HAS_TREE_SITTER
 
 
 @pytest.mark.skipif(not HAS_TREE_SITTER, reason="tree_sitter_languages not installed")

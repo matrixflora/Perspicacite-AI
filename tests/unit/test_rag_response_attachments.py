@@ -1,8 +1,8 @@
 from perspicacite.models.rag import (
     CodeExcerpt,
     FigureRef,
-    RAGResponse,
     RAGMode,
+    RAGResponse,
 )
 
 

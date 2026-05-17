@@ -1,6 +1,5 @@
 # tests/unit/test_llm_cache_key.py
 """Tests for cache-key stability and isolation (Wave 2.1)."""
-import pytest
 
 from perspicacite.llm.cache import build_cache_key
 

@@ -7,7 +7,7 @@ This module implements hybrid retrieval as described in the release package:
 - Score normalization and combination
 """
 
-from typing import Any, List, Tuple
+from typing import Any
 
 import numpy as np
 from rank_bm25 import BM25Okapi
@@ -81,7 +81,7 @@ def combine_scores(
 async def determine_weights_with_llm(
     query: str,
     llm: Any,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Use LLM to determine optimal weights for vector and BM25 retrieval.
 
@@ -155,7 +155,7 @@ DO NOT include any explanation or additional text in your response.
 
 
 def compute_bm25_scores(
-    documents: List[str],
+    documents: list[str],
     query: str,
 ) -> np.ndarray:
     """
@@ -185,13 +185,13 @@ def compute_bm25_scores(
 
 async def hybrid_retrieval(
     query: str,
-    documents: List[Any],
-    vector_scores: List[float],
+    documents: list[Any],
+    vector_scores: list[float],
     vector_weight: float = 0.5,
     bm25_weight: float = 0.5,
     use_llm_weights: bool = False,
     llm: Any = None,
-) -> List[Tuple[Any, float]]:
+) -> list[tuple[Any, float]]:
     """
     Perform hybrid retrieval combining vector similarity and BM25.
 
@@ -298,10 +298,10 @@ class HybridRetriever:
     async def retrieve(
         self,
         query: str,
-        documents: List[Any],
-        vector_scores: List[float],
+        documents: list[Any],
+        vector_scores: list[float],
         llm: Any = None,
-    ) -> List[Tuple[Any, float]]:
+    ) -> list[tuple[Any, float]]:
         """
         Retrieve documents using hybrid scoring.
 

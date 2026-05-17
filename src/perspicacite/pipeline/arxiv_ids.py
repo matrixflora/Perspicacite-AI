@@ -21,7 +21,6 @@ All You Need" (6 538 citations).
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 import httpx
 
@@ -41,7 +40,7 @@ _ARXIV_DOI_RE = re.compile(
 _ARXIV_TITLE_RE = re.compile(r"<title>([^<]+)</title>", re.DOTALL)
 
 
-def parse_arxiv_doi(doi: Optional[str]) -> Optional[str]:
+def parse_arxiv_doi(doi: str | None) -> str | None:
     """Return arXiv id (e.g. ``2005.11401``) or None if not an arXiv DOI."""
     if not doi:
         return None
@@ -51,7 +50,7 @@ def parse_arxiv_doi(doi: Optional[str]) -> Optional[str]:
 
 async def resolve_arxiv_title(
     arxiv_id: str, client: httpx.AsyncClient,
-) -> Optional[str]:
+) -> str | None:
     """Resolve an arXiv id to its paper title via the arXiv Atom API.
 
     Returns ``None`` on network error, malformed response, or when fewer

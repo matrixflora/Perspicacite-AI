@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-import pytest
-
-from perspicacite.pipeline.capsule_builder import write_resources, resolve_resource_refs
+from perspicacite.pipeline.capsule_builder import resolve_resource_refs, write_resources
 
 
 def test_write_resources_emits_records(tmp_path):

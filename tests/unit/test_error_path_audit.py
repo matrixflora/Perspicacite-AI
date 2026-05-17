@@ -1,12 +1,12 @@
 """End-to-end error-path audit (Wave 3.4)."""
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from perspicacite.config.schema import LLMConfig
 from perspicacite.llm.agent_cli import AgentCLIClient
 from perspicacite.llm.client import AsyncLLMClient
-from perspicacite.llm.errors import AuthError, LLMError, RateLimitError
+from perspicacite.llm.errors import AuthError, RateLimitError
 
 
 def _make_proc_mock(returncode: int, stderr: bytes, stdout: bytes = b""):
@@ -40,9 +40,8 @@ async def test_codex_auth_expired_raises_auth_error():
         returncode=1,
         stderr=b"Please run 'codex login' to authenticate first.",
     )
-    with patch("asyncio.create_subprocess_exec", new=factory):
-        with pytest.raises(AuthError) as exc:
-            await cli.complete([{"role": "user", "content": "hi"}])
+    with patch("asyncio.create_subprocess_exec", new=factory), pytest.raises(AuthError) as exc:
+        await cli.complete([{"role": "user", "content": "hi"}])
     assert exc.value.provider == "agent_cli"
 
 
@@ -129,6 +128,5 @@ async def test_rate_limit_wins_when_both_patterns_match():
         returncode=1,
         stderr=b"Rate limit reached. Try again in 5m. (HTTP 401)",
     )
-    with patch("asyncio.create_subprocess_exec", new=factory):
-        with pytest.raises(RateLimitError):
-            await cli.complete([{"role": "user", "content": "hi"}])
+    with patch("asyncio.create_subprocess_exec", new=factory), pytest.raises(RateLimitError):
+        await cli.complete([{"role": "user", "content": "hi"}])

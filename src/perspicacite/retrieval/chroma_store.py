@@ -3,11 +3,11 @@
 from typing import Any
 
 import chromadb
+
 # Note: IncludeEnum was removed in ChromaDB 0.6.0+, use Include type instead
 try:
     from chromadb.api.types import IncludeEnum
 except ImportError:
-    from chromadb.api.types import Include
     IncludeEnum = None  # Will use literal values instead
 
 from perspicacite.llm.embeddings import EmbeddingProvider

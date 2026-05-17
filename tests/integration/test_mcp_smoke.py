@@ -22,7 +22,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Module-level: import the server + helpers
 # ---------------------------------------------------------------------------
@@ -34,8 +33,8 @@ fastmcp_spec = __import__("importlib").util.find_spec("fastmcp")
 if fastmcp_spec is None:
     pytest.skip("fastmcp not installed", allow_module_level=True)
 
-from perspicacite.mcp import server as _srv  # noqa: E402
 from perspicacite.llm.mcp_sampling import current_mcp_context, use_mcp_context  # noqa: E402
+from perspicacite.mcp import server as _srv  # noqa: E402
 
 mcp = _srv.mcp
 

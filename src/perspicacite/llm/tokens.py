@@ -1,6 +1,5 @@
 """Token counting and management utilities."""
 
-from typing import Any
 
 from perspicacite.logging import get_logger
 

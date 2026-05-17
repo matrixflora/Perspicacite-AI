@@ -1,7 +1,6 @@
 """Tests for normalize_paper_dict and Paper model normalization."""
 
-import pytest
-from perspicacite.models import normalize_paper_dict, PaperSource, Author
+from perspicacite.models import Author, PaperSource, normalize_paper_dict
 
 
 class TestNormalizePaperDict:

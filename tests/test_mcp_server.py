@@ -7,8 +7,8 @@ Uses direct module loading to avoid heavy import chains.
 Run: PYTHONPATH=src pytest tests/test_mcp_server.py -v
 """
 
-import json
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -356,6 +356,7 @@ async def test_screen_papers_tool_doi_candidate(monkeypatch):
 @pytest.mark.asyncio
 async def test_add_dois_to_kb_uninitialized():
     import json
+
     from perspicacite.mcp import server as s
 
     saved = s.mcp_state.initialized
@@ -407,6 +408,7 @@ async def test_generate_report_accepts_contradiction_mode(monkeypatch):
 @pytest.mark.asyncio
 async def test_add_dois_to_kb_oversize():
     import json
+
     from perspicacite.mcp import server as s
 
     saved = s.mcp_state.initialized

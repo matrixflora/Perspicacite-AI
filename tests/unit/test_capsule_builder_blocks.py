@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-import pytest
 
 from perspicacite.pipeline.capsule_builder import write_blocks
 

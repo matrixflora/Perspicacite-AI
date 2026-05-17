@@ -5,8 +5,9 @@ from __future__ import annotations
 import io
 import json
 import zipfile
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 
 def build_rocrate_bundle(
@@ -74,7 +75,7 @@ def _build_ro_crate_metadata(
     prov_by_msg: dict[str, dict[str, Any]],
     sources: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     graph: list[dict[str, Any]] = [
         {
             "@type": "CreativeWork",

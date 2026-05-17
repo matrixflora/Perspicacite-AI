@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 
@@ -58,7 +58,7 @@ _LANG_TO_LC: dict[str, Language] = {
 }
 
 
-def infer_content_type(path: Path) -> tuple[str, Optional[str]]:
+def infer_content_type(path: Path) -> tuple[str, str | None]:
     """Map file extension to ``(content_type, language)``.
 
     ``content_type`` is one of ``{"pdf", "markdown", "code", "text"}``.
@@ -208,7 +208,7 @@ async def chunk_document(
     paper: Paper,
     *,
     content_type: str,
-    language: Optional[str],
+    language: str | None,
     config: Any,
 ) -> list[DocumentChunk]:
     """Dispatch chunking by content type.

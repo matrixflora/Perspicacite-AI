@@ -1,7 +1,7 @@
 """Message and session models."""
 
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -39,7 +39,7 @@ class Conversation(BaseModel):
     """A conversation (chat thread)."""
 
     id: str = Field(default_factory=lambda: str(uuid4()))
-    title: Optional[str] = None
+    title: str | None = None
     kb_name: str = "default"
     messages: list[Message] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.now)

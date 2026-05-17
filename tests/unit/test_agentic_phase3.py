@@ -8,17 +8,16 @@ Tests pure functions and dataclass methods that require no LLM access:
 Run: PYTHONPATH=src pytest tests/unit/test_agentic_phase3.py -v
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from perspicacite.rag.agentic.orchestrator import (
     AgenticOrchestrator,
     AgentSession,
-    EvidenceFacet,
     EvidenceStore,
 )
 from perspicacite.rag.agentic.planner import Plan, Step, StepType
-
 
 # ---------------------------------------------------------------------------
 # _build_facet_overview

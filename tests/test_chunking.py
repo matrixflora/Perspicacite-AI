@@ -7,7 +7,6 @@ Tests the chunking dispatcher (rag/chunking.py) and advanced chunker
 Run: PYTHONPATH=src pytest tests/test_chunking.py -v
 """
 
-import asyncio
 import importlib.util
 import sys
 from pathlib import Path

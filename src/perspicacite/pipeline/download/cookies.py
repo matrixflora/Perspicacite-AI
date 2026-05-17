@@ -22,9 +22,10 @@ surfaces stale entries via :mod:`perspicacite.logging`. The CLI
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from typing import Any
 
 # 7 days = soon enough that we should nag the user to re-import
 EXPIRY_SOON_SECONDS = 7 * 24 * 3600
@@ -51,7 +52,7 @@ class HostCookieSummary:
         d = asdict(self)
         if self.fresh_max_expiry is not None:
             d["fresh_max_expiry_iso"] = datetime.fromtimestamp(
-                self.fresh_max_expiry, tz=timezone.utc
+                self.fresh_max_expiry, tz=UTC
             ).isoformat()
         return d
 
@@ -111,7 +112,7 @@ class CookieDomainWarning:
         d = asdict(self)
         if self.soonest_expiry is not None:
             d["soonest_expiry_iso"] = datetime.fromtimestamp(
-                self.soonest_expiry, tz=timezone.utc
+                self.soonest_expiry, tz=UTC
             ).isoformat()
         return d
 

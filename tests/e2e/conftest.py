@@ -23,7 +23,6 @@ np = pytest.importorskip("numpy")
 
 from perspicacite.models.papers import Author, Paper, PaperSource
 
-
 # ---------------------------------------------------------------------------
 # Deterministic mocks
 # ---------------------------------------------------------------------------

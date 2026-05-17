@@ -173,9 +173,43 @@ async def enrich_papers_with_pdf(
     rsc_api_key: str | None = None,
     springer_api_key: str | None = None,
     pdf_cache_dir: str | None = None,
+    abstract_only: bool = False,
 ) -> dict[str, int]:
-    """Download content and set paper.full_text where possible."""
+    """Download content and set paper.full_text where possible.
+
+    When ``abstract_only=True`` the PDF pipeline is bypassed: each paper
+    with a DOI gets only the discovery-tier abstract (no PDF download,
+    no structured XML fetch). Stats reflect PDF *attempts*, so the
+    expected line in this mode is ``attempted=0`` plus a non-zero
+    ``abstract_only_fetched`` count.
+    """
     stats = {"attempted": 0, "success": 0, "failed": 0, "skipped_no_doi": 0, "local_pdf": 0}
+    if abstract_only:
+        stats["abstract_only_fetched"] = 0
+        stats["abstract_only_failed"] = 0
+        for paper in papers:
+            if not paper.doi:
+                stats["skipped_no_doi"] += 1
+                continue
+            try:
+                result = await retrieve_paper_content(
+                    paper.doi,
+                    url=paper.url,
+                    http_client=http_client,
+                    pdf_parser=None,
+                    unpaywall_email=unpaywall_email,
+                    abstract_only=True,
+                )
+                if result.success and result.abstract:
+                    if not paper.abstract:
+                        paper.abstract = result.abstract
+                    stats["abstract_only_fetched"] += 1
+                else:
+                    stats["abstract_only_failed"] += 1
+            except Exception as ex:
+                logger.warning("bibtex_abstract_only_failed", doi=paper.doi, error=str(ex))
+                stats["abstract_only_failed"] += 1
+        return stats
     for paper in papers:
         # Try local PDF first (BibTeX ``file`` field mapped to pdf_url)
         local_path = _parse_local_file_field(paper.pdf_url)
@@ -298,6 +332,7 @@ async def create_kb_from_bibtex(
             rsc_api_key=pdf_cfg.rsc_api_key,
             springer_api_key=pdf_cfg.springer_api_key,
             pdf_cache_dir=(pdf_cfg.cache_dir if pdf_cfg.cache_pdfs else None),
+            abstract_only=(config.knowledge_base.ingest_mode == "abstract_only"),
         )
 
     dkb_config = KnowledgeBaseConfig(
@@ -407,6 +442,7 @@ async def add_bibtex_to_existing_kb(
             rsc_api_key=pdf_cfg.rsc_api_key,
             springer_api_key=pdf_cfg.springer_api_key,
             pdf_cache_dir=(pdf_cfg.cache_dir if pdf_cfg.cache_pdfs else None),
+            abstract_only=(config.knowledge_base.ingest_mode == "abstract_only"),
         )
 
     # Connect to existing KB collection

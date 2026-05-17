@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 def test_extract_doi_candidates():
     from perspicacite.pipeline.external.resources import extract_doi_candidates
@@ -34,7 +32,9 @@ def test_extract_zenodo_record_ids():
 
 def test_no_match():
     from perspicacite.pipeline.external.resources import (
-        extract_doi_candidates, extract_github_repos, extract_zenodo_record_ids,
+        extract_doi_candidates,
+        extract_github_repos,
+        extract_zenodo_record_ids,
     )
     assert extract_doi_candidates("nothing here") == []
     assert extract_github_repos("nothing here") == []

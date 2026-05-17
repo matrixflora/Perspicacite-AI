@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 def test_detects_imrad():
     from perspicacite.pipeline.parsers.section_splitter import split_sections

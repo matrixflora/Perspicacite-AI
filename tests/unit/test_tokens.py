@@ -1,6 +1,5 @@
 """Tests for token management utilities."""
 
-import pytest
 
 from perspicacite.llm.tokens import (
     calculate_available_tokens,

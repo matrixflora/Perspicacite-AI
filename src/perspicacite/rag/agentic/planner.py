@@ -1,11 +1,11 @@
 """Dynamic research planning with LLM."""
 
-import logging
-from enum import Enum, auto
-from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
 import json
+import logging
 import re
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class StepType(Enum):
 _STEP_TYPE_VALUE_SET = frozenset(m.value for m in StepType)
 
 
-def coerce_step_type(raw: Any, *, tool: Optional[str] = None) -> StepType:
+def coerce_step_type(raw: Any, *, tool: str | None = None) -> StepType:
     """Map LLM output to ``StepType`` (handles synonyms the model invents)."""
     if isinstance(raw, StepType):
         return raw
@@ -104,22 +104,22 @@ class Step:
     id: str
     type: StepType
     description: str
-    tool: Optional[str] = None
-    tool_input: Dict[str, Any] = field(default_factory=dict)
-    depends_on: List[str] = field(default_factory=list)
-    condition: Optional[str] = None  # Execute only if condition met
+    tool: str | None = None
+    tool_input: dict[str, Any] = field(default_factory=dict)
+    depends_on: list[str] = field(default_factory=list)
+    condition: str | None = None  # Execute only if condition met
 
 
 @dataclass
 class Plan:
     """A research plan."""
-    steps: List[Step]
+    steps: list[Step]
     reasoning: str
     estimated_steps: int
     can_answer_from_history: bool = False
 
 
-def _log_steps_detail(steps: List[Step], label: str) -> None:
+def _log_steps_detail(steps: list[Step], label: str) -> None:
     """Structured log of every planned step (tool_input, deps, full description)."""
     logger.info(f"{label}: {len(steps)} step(s)")
     for i, s in enumerate(steps, 1):
@@ -139,19 +139,19 @@ def _log_steps_detail(steps: List[Step], label: str) -> None:
 
 class ResearchPlanner:
     """Generates dynamic research plans using LLM."""
-    
+
     def __init__(self, llm_client):
         self.llm = llm_client
-    
+
     async def create_plan(
         self,
         query: str,
         intent_result,
-        available_tools: List[str],
-        conversation_history: Optional[List[dict]] = None,
-        previous_findings: Optional[str] = None,
-        active_kb_name: Optional[str] = None,
-        available_papers: Optional[List[Dict[str, Any]]] = None,
+        available_tools: list[str],
+        conversation_history: list[dict] | None = None,
+        previous_findings: str | None = None,
+        active_kb_name: str | None = None,
+        available_papers: list[dict[str, Any]] | None = None,
     ) -> Plan:
         """
         Create a dynamic research plan.
@@ -168,16 +168,16 @@ class ResearchPlanner:
         Returns:
             Plan with steps to execute
         """
-        
+
         context_parts = []
-        
+
         if conversation_history:
             context_parts.append("Previous conversation:")
             for msg in conversation_history[-3:]:
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")[:300]
                 context_parts.append(f"  {role}: {content}")
-        
+
         if previous_findings:
             context_parts.append(f"\nPrevious findings:\n{previous_findings[:500]}")
 
@@ -196,7 +196,7 @@ class ResearchPlanner:
                 "Already available papers (pre-fetched, no search needed):\n"
                 + "\n".join(paper_lines)
             )
-        
+
         context = "\n".join(context_parts)
 
         query_complexity = getattr(intent_result, "query_complexity", "simple")
@@ -223,7 +223,7 @@ For the FIRST wave of kb_search steps ONLY (when ACTIVE KNOWLEDGE BASE applies):
 - Example: "FBMN vs GNPS workflows" → separate kb_search queries for each side (minimal phrases from the query).
 - After that wave, use literature_search / answer as usual; set depends_on so later steps wait for ALL parallel kb steps when needed.
 """
-        
+
         simple_search_rules = """
 SIMPLE query path (query complexity is simple — one focused topic, no explicit comparison):
 1. CLEAN THE QUERY: Strip conversational preamble ("what is", "tell me about", etc.).
@@ -360,7 +360,7 @@ Return JSON only (no markdown):
                 estimated_steps=len(steps),
                 can_answer_from_history=result.get("can_answer_from_history", False)
             )
-            
+
         except Exception as e:
             logger.error(f"Error in planning: {e}", exc_info=True)
             if "response" in locals() and response:
@@ -371,7 +371,7 @@ Return JSON only (no markdown):
                 )
             else:
                 logger.info("Planner LLM response on failure: (none)")
-            
+
             return await self._build_fallback_plan(
                 query,
                 intent_result,
@@ -387,16 +387,16 @@ Return JSON only (no markdown):
         intent_result,
         available_tools,
         error=None,
-        active_kb_name: Optional[str] = None,
+        active_kb_name: str | None = None,
         query_complexity: str = "simple",
     ):
         """Build an intent-aware fallback plan when LLM planning fails."""
         from .intent import Intent
-        
+
         clean_query = self._clean_query_for_search(query)
         intent = intent_result.intent
-        fallback_steps: List[Step] = []
-        
+        fallback_steps: list[Step] = []
+
         if intent == Intent.NATURAL_PRODUCTS_ONLY:
             if "lotus_search" in available_tools:
                 fallback_steps.append(Step(
@@ -406,7 +406,7 @@ Return JSON only (no markdown):
                     tool="lotus_search",
                     tool_input={"query": clean_query}
                 ))
-        
+
         elif intent == Intent.PAPERS_ONLY:
             if "literature_search" in available_tools:
                 sub_queries = (
@@ -424,7 +424,7 @@ Return JSON only (no markdown):
                         tool_input={"query": sub_q},
                         depends_on=[],
                     ))
-        
+
         elif intent == Intent.COMBINED_RESEARCH:
             step_counter = 1
             composite_subs = (
@@ -471,7 +471,7 @@ Return JSON only (no markdown):
                         depends_on=[],
                     ))
                     step_counter += 1
-        
+
         else:
             if "literature_search" in available_tools:
                 fallback_steps.append(Step(
@@ -490,7 +490,7 @@ Return JSON only (no markdown):
             description="Generate answer",
             depends_on=pre_answer_ids,
         ))
-        
+
         logger.warning(
             f"Using fallback plan with {len(fallback_steps)} steps (intent: {intent.name}); "
             f"error={error!r}"
@@ -502,7 +502,7 @@ Return JSON only (no markdown):
             reasoning=f"LLM planning failed ({error}). Fallback for intent {intent.name}.",
             estimated_steps=len(fallback_steps)
         )
-    
+
     @staticmethod
     def _clean_query_for_search(query: str) -> str:
         """Remove conversational preamble from a query for use as a search term."""
@@ -519,7 +519,7 @@ Return JSON only (no markdown):
                 cleaned = cleaned[len(prefix):].strip()
                 break
         return cleaned
-    
+
     @staticmethod
     def _decompose_query(clean_query: str) -> list:
         """Extract the core topic from a query. Only adds a second sub-query
@@ -533,11 +533,11 @@ Return JSON only (no markdown):
             base_topic = parts[0].strip()
             aspect = parts[1].strip()
             return [base_topic, f"{base_topic} {aspect}"]
-        
+
         return [clean_query]
 
     @staticmethod
-    def _composite_subqueries(clean_query: str) -> List[str]:
+    def _composite_subqueries(clean_query: str) -> list[str]:
         """Split a comparison / multi-entity query into 2-3 search phrases (regex only)."""
         q = (clean_query or "").strip()
         if not q:
@@ -557,7 +557,7 @@ Return JSON only (no markdown):
                 return [a, b][:3]
         return [q]
 
-    async def composite_subqueries_with_llm(self, clean_query: str) -> List[str]:
+    async def composite_subqueries_with_llm(self, clean_query: str) -> list[str]:
         """Split a composite query into 2-3 search phrases.
 
         Tries regex first via ``_composite_subqueries``.  If that yields only a
@@ -592,15 +592,15 @@ Return JSON only (no markdown):
             logger.warning(f"LLM composite decomposition failed: {e}")
 
         return regex_result
-    
+
     async def replan(
         self,
         query: str,
         current_plan: Plan,
-        completed_steps: List[Step],
-        step_results: Dict[str, Any],
+        completed_steps: list[Step],
+        step_results: dict[str, Any],
         evaluation: str,
-        evidence_summary: Optional[str] = None,
+        evidence_summary: str | None = None,
     ) -> Plan:
         """
         Replan based on evaluation of current results.
@@ -615,7 +615,7 @@ Return JSON only (no markdown):
         Returns:
             Updated plan
         """
-        
+
         results_summary = []
         for step in completed_steps:
             result = step_results.get(step.id, "No result")
@@ -735,7 +735,7 @@ Valid JSON only:"""
                         tool_input=step_data.get("tool_input", {}),
                         depends_on=step_data.get("depends_on", [])
                     ))
-                
+
                 # Append new steps to current plan
                 current_plan.steps.extend(new_steps)
                 current_plan.estimated_steps = len(current_plan.steps)

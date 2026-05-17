@@ -2,10 +2,20 @@
    with title, authors, year, journal, abstract, content-type badge, references_count.
    Opened by openPaperDetail(doi); closed by closePaperDetail(). */
 
-function openPaperDetail(doi) {
+function openPaperDetail(doi, registryKey) {
     const panel = document.getElementById('paper-detail-panel');
     if (!panel) return;
+    // When there's no DOI we can still render a useful panel from the
+    // SourceReference fields stashed by the chat stream (see chat.js
+    // window.__sourceRegistry). Title + authors + journal + abstract
+    // (in chunk_text) + URL is enough.
     if (!doi) {
+        const src = (window.__sourceRegistry || {})[registryKey];
+        if (src) {
+            panel.hidden = false;
+            renderPaperDetailFromSource(panel, src);
+            return;
+        }
         panel.hidden = false;
         panel.innerHTML = '<div class="paper-detail-inner">' +
             '<button class="paper-detail-close" onclick="closePaperDetail()">&#x2715;</button>' +
@@ -243,3 +253,65 @@ async function sendToZotero(doi, buttonEl) {
 
 window.sendToZotero = sendToZotero;
 window.ensureZoteroStatus = ensureZoteroStatus;
+
+// Render details panel directly from a SourceReference (no /api/paper hit).
+// Used for web-fallback papers that have no DOI — we still want the user
+// to see the abstract, authors, journal, and an "open in source" link.
+function renderPaperDetailFromSource(panel, src) {
+    function esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    // Google Scholar packs the journal+year onto the end of the author
+    // field: "LF Nothias, D Petras… - Nature Methods, 2020". Strip that
+    // tail before splitting so the displayed author line is clean.
+    function cleanAuthorBlob(s) {
+        if (!s) return '';
+        s = String(s);
+        const dashIdx = s.indexOf(' - ');
+        if (dashIdx !== -1) s = s.slice(0, dashIdx);
+        return s.replace(/[\s…,.]+$/, '');
+    }
+    let authorsField;
+    if (Array.isArray(src.authors) && src.authors.length) {
+        authorsField = src.authors.map(cleanAuthorBlob).filter(Boolean).join(', ');
+    } else if (typeof src.authors === 'string') {
+        authorsField = cleanAuthorBlob(src.authors);
+    } else {
+        authorsField = '';
+    }
+    const year = src.year ? String(src.year) : '';
+    const journal = src.journal ? esc(src.journal) : '';
+    const provider = src.source ? esc(String(src.source).replace(/_/g, ' ')) : '';
+    const abstract = src.chunk_text || '';
+    // Build the citation line piece-by-piece so we don't leave dangling
+    // separators or em-dashes when fields are missing.
+    const metaSegments = [];
+    if (authorsField) metaSegments.push(esc(authorsField));
+    if (year) metaSegments.push(esc(year));
+    if (journal) metaSegments.push('<i>' + journal + '</i>');
+    let html = '<div class="paper-detail-inner">';
+    html += '<button class="paper-detail-close" onclick="closePaperDetail()">&#x2715;</button>';
+    html += '<h3 class="paper-detail-title">' + esc(src.title || 'Untitled') + '</h3>';
+    if (metaSegments.length) {
+        html += '<p class="paper-detail-meta">' + metaSegments.join(' · ') + '</p>';
+    }
+    if (provider) {
+        html += '<p class="paper-detail-meta"><b>Source provider:</b> ' + provider + '</p>';
+    }
+    if (src.url) {
+        html += '<p><a href="' + esc(src.url) +
+            '" target="_blank" rel="noopener noreferrer">Open in source ↗</a></p>';
+    }
+    if (abstract) {
+        html += '<div class="paper-detail-abstract-label">Abstract</div>';
+        html += '<div class="paper-detail-abstract">' + esc(abstract) + '</div>';
+    } else {
+        html += '<p class="paper-detail-meta"><i>No abstract was retrieved for this paper.</i></p>';
+    }
+    html += '</div>';
+    panel.innerHTML = html;
+}
+window.openPaperDetail = openPaperDetail;
+window.renderPaperDetailFromSource = renderPaperDetailFromSource;

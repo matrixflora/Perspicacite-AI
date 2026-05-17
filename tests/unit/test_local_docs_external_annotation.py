@@ -5,7 +5,6 @@ is_external=True when external_metadata is provided, and pre-processes
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

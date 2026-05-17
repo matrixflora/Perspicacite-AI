@@ -1,8 +1,8 @@
 """Test configuration and fixtures."""
 
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -30,7 +30,7 @@ def mock_llm_client():
             return "This is a mock LLM response."
 
         async def stream(self, messages: list[dict], **kwargs):
-            for word in "This is a mock LLM response.".split():
+            for word in ["This", "is", "a", "mock", "LLM", "response."]:
                 yield word + " "
 
     return MockLLM()

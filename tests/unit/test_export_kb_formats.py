@@ -1,6 +1,5 @@
 """Verify export_kb writes the right files for each format (Wave 4.5)."""
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 

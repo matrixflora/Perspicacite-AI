@@ -16,7 +16,6 @@ import os
 
 import httpx
 
-from perspicacite.logging import get_logger
 from .base import logger
 
 

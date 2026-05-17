@@ -12,10 +12,9 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
-
 
 _REASON_MAX = 200
 
@@ -40,9 +39,7 @@ class CheckpointState:
     def remaining_ids(self, *, retry_failed: bool = False) -> Iterator[str]:
         for pid in self.planned_ids:
             outcome = self.processed.get(pid)
-            if outcome is None:
-                yield pid
-            elif retry_failed and outcome.startswith("failed"):
+            if outcome is None or (retry_failed and outcome.startswith("failed")):
                 yield pid
 
     def is_complete(self) -> bool:
@@ -60,7 +57,7 @@ class CheckpointState:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "CheckpointState":
+    def from_dict(cls, d: dict) -> CheckpointState:
         return cls(
             kb_name=d.get("kb_name", ""),
             operation=d.get("operation", ""),
@@ -84,7 +81,7 @@ class CheckpointStore:
         if not self.path.exists():
             return None
         try:
-            with open(self.path, "r", encoding="utf-8") as fh:
+            with open(self.path, encoding="utf-8") as fh:
                 data = json.load(fh)
         except (json.JSONDecodeError, OSError):
             # Corrupt / unreadable file → treat as missing. Caller can

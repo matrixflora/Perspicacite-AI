@@ -1,5 +1,5 @@
 """Verify LiteLLM rate-limit exceptions are re-raised as our type (Wave 3.1)."""
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

@@ -10,7 +10,7 @@ Note: This uses a basic approach. For production, consider using:
 from typing import Any
 
 from perspicacite.logging import get_logger
-from perspicacite.models.papers import Paper, PaperSource, Author
+from perspicacite.models.papers import Paper
 
 logger = get_logger("perspicacite.search.google_scholar")
 

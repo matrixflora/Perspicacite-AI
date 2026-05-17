@@ -32,8 +32,8 @@ import os
 import sys
 import time
 import traceback
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -44,30 +44,19 @@ sys.path.insert(0, str(ROOT / "src"))
 from perspicacite.config.schema import (
     CiteGraphConfig,
     KnowledgeBaseConfig,
-    MultimodalConfig,
-    MultimodalMode,
 )
-from perspicacite.models.documents import ChunkMetadata, DocumentChunk
+from perspicacite.llm.embeddings import TypedEmbeddingProvider
 from perspicacite.models.papers import Paper, PaperSource
-from perspicacite.models.rag import CodeExcerpt, FigureRef, RAGMode, RAGResponse, StreamEvent
-from perspicacite.pipeline.chunking_code import chunk_code, _chunk_python_ast
+from perspicacite.models.rag import StreamEvent
+from perspicacite.pipeline.chunking_code import _chunk_python_ast
+from perspicacite.pipeline.cite_graph import (
+    enrich_kb_from_cite_graph,
+)
 from perspicacite.pipeline.symbol_index import (
-    append_symbols,
     iter_symbols,
-    symbols_from_chunks,
     write_chunks_symbols,
 )
-from perspicacite.pipeline.library_doi import resolve_library_paper
-from perspicacite.pipeline.cite_graph import (
-    CiteHit,
-    apply_cite_graph_filters,
-    enrich_kb_from_cite_graph,
-    score_cite_hit,
-)
-from perspicacite.rag.code_excerpts import build_github_source_url, collect_code_excerpts
-from perspicacite.rag.figure_refs import collect_figure_refs
-from perspicacite.llm.embeddings import TypedEmbeddingProvider
-
+from perspicacite.rag.code_excerpts import collect_code_excerpts
 
 RESULTS_DIR = ROOT / "tests" / "audit" / "results"
 RESULTS_DIR.mkdir(exist_ok=True, parents=True)
@@ -157,7 +146,7 @@ async def audit_article(article: dict[str, Any], findings: dict[str, Any]) -> No
 
     if source is None:
         art_findings["sub_a"] = {"status": "fetch_failed"}
-        print(f"  [A] fetch failed; skipping AST analysis")
+        print("  [A] fetch failed; skipping AST analysis")
     else:
         size_kb = round(len(source) / 1024, 1)
         print(f"  [A] fetched {size_kb} KB in {fetch_s}s")
@@ -226,7 +215,7 @@ async def audit_article(article: dict[str, Any], findings: dict[str, Any]) -> No
         print(f"  [C] {len(excerpts)} code excerpts, sample URL: {first_url}")
 
     # --- B. TypedEmbeddingProvider routing (smoke; no live key) ---------
-    print(f"  [B] TypedEmbeddingProvider routing smoke test")
+    print("  [B] TypedEmbeddingProvider routing smoke test")
     text_stub = _StubEmbedder("text-embedding-3-small", dim=4)
     code_stub = _StubEmbedder("codestral-embed", dim=4)
     tp = TypedEmbeddingProvider(
@@ -251,7 +240,7 @@ async def audit_article(article: dict[str, Any], findings: dict[str, Any]) -> No
           f"model_name={tp.model_name}")
 
     # --- C: SSE event factories ----------------------------------------
-    print(f"  [C] SSE event factory smoke")
+    print("  [C] SSE event factory smoke")
     ev_code = StreamEvent.code_excerpt({
         "id": "x", "language": "python", "text": "def f(): pass",
         "source_url": "https://github.com/x/y/blob/z/f.py#L1-L2",

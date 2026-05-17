@@ -22,25 +22,25 @@ import argparse
 import asyncio
 import json
 import os
+
+# Make repo importable when run as a script.
+import sys
 import time
 import traceback
 from pathlib import Path
 from typing import Any
 
-# Make repo importable when run as a script.
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from perspicacite.config.schema import (
     Config,
+    KnowledgeBaseConfig,
     LLMConfig,
     LLMProviderConfig,
-    KnowledgeBaseConfig,
 )
 from perspicacite.llm.budget import BudgetTracker, set_budget_tracker
 from perspicacite.llm.client import AsyncLLMClient
 from perspicacite.llm.embeddings import create_embedding_provider
-
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR = Path(__file__).parent / "results"

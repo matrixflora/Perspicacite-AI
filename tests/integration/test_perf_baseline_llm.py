@@ -22,7 +22,6 @@ Baseline lives at ``tests/data/perf_baseline_llm.json``.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import subprocess

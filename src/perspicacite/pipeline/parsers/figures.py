@@ -72,7 +72,7 @@ def extract_figures(pdf_path: Path, min_px: int = 100) -> list[RawFigure]:
 
 
 def _extract_via_pymupdf(pdf_path: Path, min_px: int) -> list[RawFigure]:
-    import fitz  # noqa: PLC0415
+    import fitz
 
     doc = fitz.open(str(pdf_path))
     results: list[RawFigure] = []
@@ -186,7 +186,7 @@ def parse_panel_labels(caption: str) -> list[str]:
     return labels
 
 
-def assign_subcomponents(page_results: list["RawFigure"]) -> None:
+def assign_subcomponents(page_results: list[RawFigure]) -> None:
     """In-place: tag every record with figure_number + subcomponent_label.
 
     Strategy
@@ -231,7 +231,7 @@ def assign_subcomponents(page_results: list["RawFigure"]) -> None:
         min_h = min((rf.record.bbox[3] - rf.record.bbox[1]) for rf in sortable) or 1.0
         row_tol = max(min_h * 0.5, 5.0)
 
-        def _key(rf: "RawFigure") -> tuple[int, float]:
+        def _key(rf: RawFigure) -> tuple[int, float]:
             x0, y0, _, _ = rf.record.bbox  # type: ignore[misc]
             row_bucket = int(y0 // row_tol)
             return (row_bucket, x0)
@@ -251,12 +251,12 @@ def _detect_caption_via_ocr(page, bbox) -> str:
     if not os.environ.get("ASB_OCR"):
         return ""
     try:
-        import pytesseract  # noqa: PLC0415
-        from PIL import Image  # noqa: PLC0415
+        import pytesseract
+        from PIL import Image
     except ImportError:
         return ""
     try:
-        import fitz  # noqa: PLC0415
+        import fitz
         strip_rect = fitz.Rect(
             bbox.x0,
             bbox.y1,
@@ -270,7 +270,7 @@ def _detect_caption_via_ocr(page, bbox) -> str:
         for line in ocr_text.splitlines():
             if line.strip().lower().startswith(_CAPTION_PREFIXES):
                 return line.strip()
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return ""
 

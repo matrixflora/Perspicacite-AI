@@ -7,8 +7,8 @@ and exposes helpers used by per-mode RAG hooks.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from perspicacite.logging import get_logger
 from perspicacite.models.documents import DocumentChunk
