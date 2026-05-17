@@ -233,7 +233,7 @@ class DBLPSPARQLSearchProvider:
     """Search DBLP via SPARQL (citation-ranked) with SemOpenAlex abstract enrichment.
 
     Phase 1: POST to sparql.dblp.org — returns papers whose titles match
-             query keywords, ordered by keyword score × citation count.
+             query keywords, ordered by keyword score x citation count.
     Phase 2: POST to semopenalex.org/sparql — batch-fetches abstracts for
              the DOIs from phase 1. Failures degrade gracefully (no abstract).
     """

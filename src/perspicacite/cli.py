@@ -126,6 +126,7 @@ def serve(
     os.environ["PERSPICACITE_CONFIG"] = str(config)
 
     import uvicorn
+
     from perspicacite.web import app
 
     if config.mcp.enabled:
@@ -165,6 +166,16 @@ def serve(
     default=None,
     help="Chroma persist directory (default: from config database.chroma_path)",
 )
+@click.option(
+    "--ingest-mode",
+    "ingest_mode",
+    type=click.Choice(["auto", "full_text", "abstract_only"]),
+    default=None,
+    help=(
+        "Override knowledge_base.ingest_mode for this run. "
+        "'abstract_only' skips PDF download (~80% faster for large corpora)."
+    ),
+)
 @click.pass_context
 def create_kb(
     ctx: click.Context,
@@ -173,16 +184,19 @@ def create_kb(
     from_bibtex: Path | None,
     session_db: Path | None,
     chroma_dir: Path | None,
+    ingest_mode: str | None,
 ) -> None:
     """Create a new knowledge base (from BibTeX when --from-bibtex is set)."""
     config = ctx.obj["config"]
+    if ingest_mode is not None:
+        config.knowledge_base.ingest_mode = ingest_mode
 
     if not from_bibtex:
         # Empty-KB creation: register the metadata + provision the Chroma
         # collection. Papers can be added later via `add-to-kb` or via
         # POST /api/kb/{name}/dois/async.
-        from perspicacite.web.state import AppState
         from perspicacite.models.kb import KnowledgeBase, chroma_collection_name_for_kb
+        from perspicacite.web.state import AppState
 
         async def _create_empty() -> dict[str, Any]:
             state = AppState()
@@ -288,6 +302,16 @@ def create_kb(
     default=None,
     help="Chroma persist directory (default: from config database.chroma_path)",
 )
+@click.option(
+    "--ingest-mode",
+    "ingest_mode",
+    type=click.Choice(["auto", "full_text", "abstract_only"]),
+    default=None,
+    help=(
+        "Override knowledge_base.ingest_mode for this run. "
+        "'abstract_only' skips PDF download (~80% faster for large corpora)."
+    ),
+)
 @click.pass_context
 def add_to_kb(
     ctx: click.Context,
@@ -295,9 +319,12 @@ def add_to_kb(
     from_bibtex: Path,
     session_db: Path | None,
     chroma_dir: Path | None,
+    ingest_mode: str | None,
 ) -> None:
     """Add papers from a BibTeX file to an existing knowledge base."""
     config = ctx.obj["config"]
+    if ingest_mode is not None:
+        config.knowledge_base.ingest_mode = ingest_mode
 
     session_db = session_db or Path("data/perspicacite.db")
     chroma_dir = chroma_dir or config.database.chroma_path
@@ -338,6 +365,7 @@ def add_to_kb(
 def list_kb(ctx: click.Context, as_json: bool) -> None:
     """List all knowledge bases (name, paper count, chunk count, embedding model)."""
     import asyncio
+
     from perspicacite.web.state import AppState
 
     async def _run() -> None:
@@ -482,12 +510,13 @@ def ingest_local(
 
 def _start_mcp_and_web(config, app) -> None:
     """Start MCP server and web server on a single port."""
-    import uvicorn
+    import asyncio
     from contextlib import asynccontextmanager
+
+    import uvicorn
 
     # Initialize MCP state
     from perspicacite.mcp.server import mcp, mcp_state
-    import asyncio
 
     asyncio.get_event_loop().run_until_complete(mcp_state.initialize(config))
 
@@ -499,9 +528,8 @@ def _start_mcp_and_web(config, app) -> None:
 
     @asynccontextmanager
     async def combined_lifespan(app_instance):
-        async with original_lifespan(app_instance):
-            async with mcp_app.lifespan(app_instance):
-                yield
+        async with original_lifespan(app_instance), mcp_app.lifespan(app_instance):
+            yield
 
     app.router.lifespan_context = combined_lifespan
 
@@ -566,8 +594,8 @@ async def _run_query(
     model: str | None,
 ) -> None:
     """Run a RAG query and print the answer + sources to stdout."""
-    from perspicacite.web.state import AppState
     from perspicacite.models.rag import RAGMode, RAGRequest
+    from perspicacite.web.state import AppState
 
     state = AppState()
     await state.initialize()
@@ -818,10 +846,13 @@ def pubmed_search_cmd(
 def build_capsule_cmd(ctx, paper_id: str, kb: str, force: bool) -> None:
     """Build (or rebuild) a per-paper capsule."""
     import asyncio
+
     from perspicacite.pipeline.capsule_builder import (
         build_capsule as _build,
-        resolve_paper_from_metadata,
+    )
+    from perspicacite.pipeline.capsule_builder import (
         locate_cached_pdf,
+        resolve_paper_from_metadata,
     )
     from perspicacite.web.state import AppState
 
@@ -855,10 +886,13 @@ def build_capsule_cmd(ctx, paper_id: str, kb: str, force: bool) -> None:
 def build_capsules_cmd(ctx, kb_name: str, force: bool) -> None:
     """Build capsules for every paper in a KB."""
     import asyncio
+
     from perspicacite.pipeline.capsule_builder import (
         build_capsule as _build,
-        resolve_paper_from_metadata,
+    )
+    from perspicacite.pipeline.capsule_builder import (
         locate_cached_pdf,
+        resolve_paper_from_metadata,
     )
     from perspicacite.web.state import AppState
 
@@ -934,7 +968,7 @@ def fetch_resources_cmd(
             raise SystemExit(1)
         paper = resolve_paper_from_metadata(row)
         cap_dir = capsule_dir_for(paper, root=state.config.capsule.root)
-        setattr(paper, "_kb_name", kb_name)
+        paper._kb_name = kb_name
 
         class _CLIRegistry:
             async def publish(self, _job_id, payload):
@@ -1162,11 +1196,11 @@ def search_to_kb_cmd(
         perspicacite search-to-kb -q "metabolomics LLM annotation" \\
             -k metabolomics_llm --dry-run
     """
-    from perspicacite.web.state import AppState
     from perspicacite.pipeline.search_to_kb import (
         SearchFilter,
         search_filter_and_ingest,
     )
+    from perspicacite.web.state import AppState
 
     async def _run() -> None:
         state = AppState()
@@ -1211,7 +1245,7 @@ def search_to_kb_cmd(
                 hits = report.rephrase_hits_per_variant.get(v, 0)
                 click.echo(f"      [{hits:>3} hits] {v}")
         if report.kb_created:
-            click.echo(f"  • KB created")
+            click.echo("  • KB created")
         click.echo(
             f"  • searched={report.searched} candidates={report.candidates} "
             f"filtered_out={report.filtered_out}"
@@ -1310,7 +1344,7 @@ def delete_kb_cmd(
                 + (f" + collection {kb.collection_name}" if collection_dropped else "")
             )
         else:
-            click.echo(f"✗ KB metadata row not deleted (race?)", err=True)
+            click.echo("✗ KB metadata row not deleted (race?)", err=True)
             sys.exit(1)
 
     asyncio.run(_run())
@@ -1374,9 +1408,9 @@ def expand_kb_cmd(
         perspicacite expand-kb -k diamond_sensors --direction backward \\
             --dry-run
     """
-    from perspicacite.web.state import AppState
     from perspicacite.pipeline.search_to_kb import SearchFilter
     from perspicacite.pipeline.snowball import expand_kb_via_citations
+    from perspicacite.web.state import AppState
 
     async def _run() -> None:
         state = AppState()
@@ -1468,6 +1502,7 @@ def cli_enrich_cite_graph(
         perspicacite enrich-cite-graph my-kb --openalex-id W3177828909
     """
     import asyncio
+
     from perspicacite.pipeline.cite_graph import enrich_kb_from_cite_graph
 
     if not tool and not doi and not openalex_id:
@@ -1523,8 +1558,8 @@ def export_kb_cmd(
         perspicacite export-kb -k diamond_sensors -o ~/exports/diamond
         perspicacite export-kb -k metabo_llm -o ./exports/metabo --with-supplementary
     """
-    from perspicacite.web.state import AppState
     from perspicacite.pipeline.export_kb import export_kb
+    from perspicacite.web.state import AppState
 
     async def _run() -> None:
         state = AppState()
@@ -1600,6 +1635,7 @@ def check_cookies_cmd(
     """
     from http.cookiejar import MozillaCookieJar
     from pathlib import Path
+
     from perspicacite.pipeline.download.cookies import (
         check_cookie_freshness_for_domains,
     )
