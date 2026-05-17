@@ -240,3 +240,59 @@ async def test_execute_calls_prepare_kb_context_and_store_references():
 
     assert prepare_called, "_prepare_kb_context was not called"
     assert store_called, "_store_references_to_all_kbs was not called"
+
+
+async def test_execute_stream_calls_prepare_kb_context_and_store_references():
+    """execute_stream() should call _prepare_kb_context and _store_references_to_all_kbs."""
+    from perspicacite.models.rag import RAGMode, RAGRequest
+    from perspicacite.rag.modes.literature_survey import PaperCandidate
+
+    mode = _make_mode()
+
+    prepare_called = []
+    store_called = []
+
+    async def fake_prepare(request, vs, ep):
+        prepare_called.append(True)
+        return ("", set())
+
+    async def fake_store(papers, kb_names, query):
+        store_called.append(True)
+        return 0
+
+    fake_candidate = PaperCandidate(
+        id="doi:10.1/x",
+        title="Paper X",
+        authors=[],
+        year=2021,
+        abstract="Abstract text.",
+        doi="10.1/x",
+    )
+
+    with (
+        patch.object(mode, "_prepare_kb_context", side_effect=fake_prepare),
+        patch.object(mode, "_store_references_to_all_kbs", side_effect=fake_store),
+        patch.object(mode, "_broad_search", new=AsyncMock(return_value=["__marker__"])),
+        patch.object(mode, "_convert_to_candidates", return_value=[fake_candidate]),
+        patch.object(mode, "_analyze_abstracts_batch", new=AsyncMock(return_value=[])),
+        patch.object(mode, "_generate_recommendations", new=AsyncMock(return_value=None)),
+    ):
+        request = RAGRequest(
+            query="protein folding",
+            mode=RAGMode.LITERATURE_SURVEY,
+            kb_name="kb-a",
+            kb_names=["kb-a", "kb-b"],
+        )
+        # Drain the async generator
+        events = []
+        async for event in mode.execute_stream(
+            request=request,
+            llm=AsyncMock(),
+            vector_store=AsyncMock(),
+            embedding_provider=AsyncMock(),
+            tools=MagicMock(),
+        ):
+            events.append(event)
+
+    assert prepare_called, "_prepare_kb_context was not called in execute_stream()"
+    assert store_called, "_store_references_to_all_kbs was not called in execute_stream()"

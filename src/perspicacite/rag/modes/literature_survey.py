@@ -192,19 +192,10 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
 
         # Phase 1: Broad search
         logger.info("phase_1_search")
-        papers = await self._broad_search(request.query)
+        papers = await self._broad_search(request.query, request.databases)
 
         # Pre-filter: remove papers already in any provided KB
-        if known_paper_ids and papers:
-            before_count = len(papers)
-            papers = [
-                p for p in papers
-                if (getattr(p, "id", None) not in known_paper_ids)
-                and (not getattr(p, "doi", None) or getattr(p, "doi", None) not in known_paper_ids)
-            ]
-            filtered_count = before_count - len(papers)
-            if filtered_count:
-                logger.info("survey_known_papers_filtered", count=filtered_count)
+        papers = self._filter_known_papers(papers, known_paper_ids)
 
         if not papers:
             return RAGResponse(
@@ -314,16 +305,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         papers = await self._broad_search(request.query, request.databases)
 
         # Pre-filter: remove papers already in any provided KB
-        if known_paper_ids and papers:
-            before_count = len(papers)
-            papers = [
-                p for p in papers
-                if (getattr(p, "id", None) not in known_paper_ids)
-                and (not getattr(p, "doi", None) or getattr(p, "doi", None) not in known_paper_ids)
-            ]
-            filtered_count = before_count - len(papers)
-            if filtered_count:
-                logger.info("survey_known_papers_filtered", count=filtered_count)
+        papers = self._filter_known_papers(papers, known_paper_ids)
 
         if not papers:
             yield StreamEvent.status("Literature Survey: No papers found")
@@ -553,6 +535,29 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             kb_names=kb_names,
         )
         return context_block, all_known_ids
+
+    def _filter_known_papers(
+        self,
+        papers: list[Any],
+        known_paper_ids: set[str],
+    ) -> list[Any]:
+        """Remove papers already present in any provided KB.
+
+        A paper is excluded when its ``id`` or ``doi`` appears in
+        ``known_paper_ids``.  Papers with no identifiers are kept.
+        """
+        if not known_paper_ids or not papers:
+            return papers
+        before_count = len(papers)
+        filtered = [
+            p for p in papers
+            if (getattr(p, "id", None) not in known_paper_ids)
+            and (not getattr(p, "doi", None) or getattr(p, "doi", None) not in known_paper_ids)
+        ]
+        filtered_count = before_count - len(filtered)
+        if filtered_count:
+            logger.info("survey_known_papers_filtered", count=filtered_count)
+        return filtered
 
     async def _store_references_to_all_kbs(
         self,
