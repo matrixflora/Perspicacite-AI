@@ -354,6 +354,7 @@ async def search_literature(
     databases: list[str] | None = None,
     min_relevance: float = 0.0,
     relevance_method: str = "bm25",
+    exclude_kb: str | None = None,
 ) -> str:
     """
     Search academic databases for scientific papers matching a query.
@@ -384,6 +385,9 @@ async def search_literature(
 
             Each returned paper gets a ``relevance_score`` field; ``llm``
             also adds ``relevance_reason``.
+        exclude_kb: Optional KB name. Papers whose DOI already exists in
+            this knowledge base are removed from the results before
+            returning, so callers only see literature not yet ingested.
 
     Returns:
         JSON with list of papers including title, authors, year, doi, abstract.
@@ -415,6 +419,24 @@ async def search_literature(
             apis=databases or ["semantic_scholar", "openalex", "pubmed"],
             article_type=article_type,
         )
+
+        # ── Dedup against existing KB (optional) ───────────────────────
+        if exclude_kb:
+            from perspicacite.models.kb import chroma_collection_name_for_kb
+            collection = chroma_collection_name_for_kb(exclude_kb)
+            filtered_papers = []
+            for paper in papers:
+                if paper.doi:
+                    try:
+                        already = await state.vector_store.paper_exists(
+                            collection, paper.doi,
+                        )
+                        if already:
+                            continue
+                    except Exception:
+                        pass  # dedup is best-effort; don't drop on error
+                filtered_papers.append(paper)
+            papers = filtered_papers
 
         # Convert Paper models to dicts
         results = []
