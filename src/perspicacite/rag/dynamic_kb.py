@@ -459,6 +459,7 @@ Abstract:
                         "doi": getattr(hit["metadata"], "doi", None),
                         "chunks": [{"chunk_index": 0, "text": hit["text"]}],
                         "full_text": hit["text"],
+                        "kb_name": getattr(self, "kb_name", None),
                     }
                     for hit in hit_chunks
                 ]
@@ -493,6 +494,9 @@ Abstract:
                 "doi": getattr(meta, "doi", None),
                 "chunks": chunks_list,
                 "full_text": full_text,
+                # F-15: tag with the KB this retriever wraps so SourceReference
+                # carries kb_name through to the caller (single-KB path).
+                "kb_name": getattr(self, "kb_name", None),
             })
 
         logger.info(
