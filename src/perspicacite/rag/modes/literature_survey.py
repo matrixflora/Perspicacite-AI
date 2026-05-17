@@ -184,19 +184,27 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
 
         logger.info("literature_survey_start", query=request.query, session_id=session_id)
 
-        # Multi-KB: literature_survey doesn't read from a KB, but if a caller
-        # passed multiple kb_names for storage targeting, only the first will
-        # be used. Log the decision once so it's visible in traces.
-        if request.kb_names and len(request.kb_names) > 1:
-            logger.info(
-                "survey_multi_kb_storage",
-                selected_storage_kb=_target_kb(request),
-                other_kbs=list(request.kb_names[1:]),
-            )
+        # Prepare KB context: retrieve semantically similar papers from all
+        # provided KBs and collect ALL known paper_ids for pre-filtering.
+        kb_context_block, known_paper_ids = await self._prepare_kb_context(
+            request, vector_store, embedding_provider
+        )
 
         # Phase 1: Broad search
         logger.info("phase_1_search")
         papers = await self._broad_search(request.query)
+
+        # Pre-filter: remove papers already in any provided KB
+        if known_paper_ids and papers:
+            before_count = len(papers)
+            papers = [
+                p for p in papers
+                if (getattr(p, "id", None) not in known_paper_ids)
+                and (not getattr(p, "doi", None) or getattr(p, "doi", None) not in known_paper_ids)
+            ]
+            filtered_count = before_count - len(papers)
+            if filtered_count:
+                logger.info("survey_known_papers_filtered", count=filtered_count)
 
         if not papers:
             return RAGResponse(
@@ -257,7 +265,14 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             _c.add_trace("recommend")
 
         # Return interim response - user needs to select papers
-        summary = self._generate_interim_summary(session)
+        summary = self._generate_interim_summary(session, known_context=kb_context_block)
+
+        # Store references to extra KBs (indices 1..n) for future re-ingestion
+        all_kb_names = list(request.kb_names or [request.kb_name])
+        recommended_papers = [p for p in session.papers if p.recommended]
+        await self._store_references_to_all_kbs(
+            recommended_papers, all_kb_names, request.query
+        )
 
         return RAGResponse(
             answer=summary,
@@ -287,21 +302,28 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         session = SurveySession(session_id=session_id, query=request.query)
         self.sessions[session_id] = session
 
-        # Multi-KB: literature_survey doesn't read from a KB, but if a caller
-        # passed multiple kb_names for storage targeting, only the first will
-        # be used. Log the decision once so it's visible in traces.
-        if request.kb_names and len(request.kb_names) > 1:
-            logger.info(
-                "survey_multi_kb_storage",
-                selected_storage_kb=_target_kb(request),
-                other_kbs=list(request.kb_names[1:]),
-            )
+        # Prepare KB context
+        kb_context_block, known_paper_ids = await self._prepare_kb_context(
+            request, vector_store, embedding_provider
+        )
 
         yield StreamEvent.status("Literature Survey: Initializing...")
 
         # Phase 1: Search
         yield StreamEvent.status("Literature Survey: Searching across academic databases...")
         papers = await self._broad_search(request.query, request.databases)
+
+        # Pre-filter: remove papers already in any provided KB
+        if known_paper_ids and papers:
+            before_count = len(papers)
+            papers = [
+                p for p in papers
+                if (getattr(p, "id", None) not in known_paper_ids)
+                and (not getattr(p, "doi", None) or getattr(p, "doi", None) not in known_paper_ids)
+            ]
+            filtered_count = before_count - len(papers)
+            if filtered_count:
+                logger.info("survey_known_papers_filtered", count=filtered_count)
 
         if not papers:
             yield StreamEvent.status("Literature Survey: No papers found")
@@ -366,7 +388,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             _c.add_trace("recommend")
 
         # Emit summary
-        summary = self._generate_interim_summary(session)
+        summary = self._generate_interim_summary(session, known_context=kb_context_block)
         yield StreamEvent.content(summary)
 
         # Emit metadata for UI
@@ -381,6 +403,14 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 "recommended_count": sum(1 for p in session.papers if p.recommended),
             })
         )
+
+        # Store references to extra KBs
+        all_kb_names = list(request.kb_names or [request.kb_name])
+        recommended_papers = [p for p in session.papers if p.recommended]
+        await self._store_references_to_all_kbs(
+            recommended_papers, all_kb_names, request.query
+        )
+
         yield StreamEvent.done(
             conversation_id=session_id,
             tokens_used=0,
@@ -905,7 +935,9 @@ Respond with theme names separated by commas, or "None" if no match."""
 
         logger.info("recommendations_complete", count=len(recommendations))
 
-    def _generate_interim_summary(self, session: SurveySession) -> str:
+    def _generate_interim_summary(
+        self, session: SurveySession, known_context: str = ""
+    ) -> str:
         """Generate interim summary for user selection."""
         lines = [
             f"# Literature Survey: {session.query}",
@@ -952,6 +984,16 @@ Respond with theme names separated by commas, or "None" if no match."""
             lines.append(f"  - Citations: {p.citation_count} | Relevance: {p.relevance_score}/5")
             lines.append(f"  - Why: {p.reason}")
             lines.append("")
+
+        if known_context:
+            lines.extend([
+                "",
+                "---",
+                "",
+                "## Already in Your Knowledge Base(s)",
+                "",
+                known_context,
+            ])
 
         return "\n".join(lines)
 

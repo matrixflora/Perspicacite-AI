@@ -110,8 +110,11 @@ async def test_literature_survey_execute_accepts_kb_names_no_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_literature_survey_logs_multi_kb_storage_warning(monkeypatch):
-    """When kb_names has >1 entry, a `survey_multi_kb_storage` info log fires
-    naming the chosen storage target (kb_names[0]) and the others.
+    """When kb_names has >1 entry, a `survey_kb_context_prepared` info log fires
+    listing all provided kb_names.
+
+    The old `survey_multi_kb_storage` event was replaced in Task 4 by the
+    _prepare_kb_context() call which emits `survey_kb_context_prepared`.
 
     We patch the module-level structlog logger to capture calls directly,
     which is more robust than caplog (structlog isn't routed through stdlib
@@ -147,11 +150,10 @@ async def test_literature_survey_logs_multi_kb_storage_warning(monkeypatch):
     ):
         pass
 
-    matching = [(ev, kw) for ev, kw in captured if ev == "survey_multi_kb_storage"]
-    assert matching, f"survey_multi_kb_storage not logged. Got: {[e for e,_ in captured]}"
+    matching = [(ev, kw) for ev, kw in captured if ev == "survey_kb_context_prepared"]
+    assert matching, f"survey_kb_context_prepared not logged. Got: {[e for e,_ in captured]}"
     _, kw = matching[0]
-    assert kw["selected_storage_kb"] == "primary"
-    assert kw["other_kbs"] == ["secondary", "tertiary"]
+    assert set(kw["kb_names"]) == {"primary", "secondary", "tertiary"}
 
 
 @pytest.mark.asyncio
