@@ -35,6 +35,7 @@ class PaperSource(str, Enum):
     ADS = "ads"
     OPENCITATIONS = "opencitations"
     GOOGLE_SCHOLAR = "google_scholar"
+    DBLP_SPARQL = "dblp_sparql"
 
 
 class Author(BaseModel):
