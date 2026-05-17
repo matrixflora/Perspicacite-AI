@@ -4,9 +4,6 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
-
 # ── _resolve_api_key ──────────────────────────────────────────────────────────
 
 def test_resolve_api_key_uses_config_value():
@@ -70,8 +67,8 @@ def test_parse_response_handles_multiline_array():
 # ── _build_paper ───────────────────────────────────────────────────────────────
 
 def test_build_paper_full_entry():
-    from perspicacite.search.openrouter_fallback import _build_paper
     from perspicacite.models.papers import PaperSource
+    from perspicacite.search.openrouter_fallback import _build_paper
 
     entry = {
         "title": "AlphaFold",
@@ -99,11 +96,15 @@ def test_build_paper_uses_url_hash_when_no_doi():
     assert paper is not None
     assert paper.doi is None
     assert paper.id.startswith("openrouter:")
+    # Hash must be stable across calls (not randomised by PYTHONHASHSEED)
+    paper2 = _build_paper(entry)
+    assert paper is not None and paper2 is not None
+    assert paper.id == paper2.id
 
 
 def test_build_paper_source_is_openrouter_web():
-    from perspicacite.search.openrouter_fallback import _build_paper
     from perspicacite.models.papers import PaperSource
+    from perspicacite.search.openrouter_fallback import _build_paper
     paper = _build_paper({"title": "Test", "url": "https://arxiv.org/abs/1"})
     assert paper.source == PaperSource.OPENROUTER_WEB
 
@@ -150,7 +151,6 @@ _VALID_OR_RESPONSE = json.dumps({
 })
 
 
-@pytest.mark.asyncio
 async def test_search_returns_papers_on_valid_response():
     from perspicacite.search.openrouter_fallback import openrouter_academic_search
 
@@ -169,7 +169,6 @@ async def test_search_returns_papers_on_valid_response():
     assert papers[0].year == 2017
 
 
-@pytest.mark.asyncio
 async def test_search_returns_empty_on_http_error():
     from perspicacite.search.openrouter_fallback import openrouter_academic_search
 
@@ -181,7 +180,29 @@ async def test_search_returns_empty_on_http_error():
     assert papers == []
 
 
-@pytest.mark.asyncio
+async def test_search_returns_empty_on_http_status_error():
+    import httpx
+
+    from perspicacite.search.openrouter_fallback import openrouter_academic_search
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError(
+        "401 Unauthorized", request=MagicMock(), response=MagicMock()
+    ))
+    mock_resp.json = MagicMock(return_value={})
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    with patch("perspicacite.search.openrouter_fallback.httpx.AsyncClient",
+               return_value=mock_client):
+        papers = await openrouter_academic_search("test", api_key="sk-bad")
+
+    assert papers == []
+
+
 async def test_search_returns_empty_when_no_api_key(monkeypatch):
     from perspicacite.search.openrouter_fallback import openrouter_academic_search
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
@@ -189,7 +210,6 @@ async def test_search_returns_empty_when_no_api_key(monkeypatch):
     assert papers == []
 
 
-@pytest.mark.asyncio
 async def test_search_returns_empty_on_malformed_json():
     from perspicacite.search.openrouter_fallback import openrouter_academic_search
 
@@ -203,7 +223,6 @@ async def test_search_returns_empty_on_malformed_json():
     assert papers == []
 
 
-@pytest.mark.asyncio
 async def test_search_uses_env_var_key(monkeypatch):
     from perspicacite.search.openrouter_fallback import openrouter_academic_search
 
@@ -219,7 +238,6 @@ async def test_search_uses_env_var_key(monkeypatch):
     assert call_kwargs["headers"]["Authorization"] == "Bearer sk-from-env"
 
 
-@pytest.mark.asyncio
 async def test_search_passes_allowed_domains_to_payload():
     from perspicacite.search.openrouter_fallback import openrouter_academic_search
 
