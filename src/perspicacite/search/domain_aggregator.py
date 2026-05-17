@@ -300,6 +300,19 @@ def build_aggregator(config: Any) -> DomainAwareAggregator:
                         "AppleWebKit/537.36 (KHTML, like Gecko) "
                         "Chrome/120.0.0.0 Safari/537.36",
                     )),
+                    openrouter_fallback_enabled=bool(
+                        getattr(scholar_cfg, "openrouter_fallback_enabled", False)
+                    ),
+                    openrouter_api_key=str(
+                        getattr(scholar_cfg, "openrouter_api_key", "")
+                    ),
+                    openrouter_fallback_model=str(
+                        getattr(scholar_cfg, "openrouter_fallback_model",
+                                "deepseek/deepseek-chat")
+                    ),
+                    openrouter_fallback_domains=list(
+                        getattr(scholar_cfg, "openrouter_fallback_domains", [])
+                    ) or None,
                 ))
             else:
                 logger.info("build_aggregator_scholar_skipped_not_enabled")
