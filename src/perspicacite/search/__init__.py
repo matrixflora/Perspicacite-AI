@@ -7,6 +7,7 @@ from perspicacite.search.domain_aggregator import DomainAwareAggregator, build_a
 from perspicacite.search.domain_classifier import DomainClassifier
 from perspicacite.search.europepmc_search import EuropePMCSearchProvider
 from perspicacite.search.google_scholar import GoogleScholarSearch, SearchAggregator
+from perspicacite.search.google_scholar_playwright import GoogleScholarPlaywrightProvider
 from perspicacite.search.inspire_search import INSPIREHEPSearchProvider
 from perspicacite.search.protocols import SearchProvider
 from perspicacite.search.pubchem_search import PubChemSearchProvider
@@ -19,6 +20,7 @@ __all__ = [
     "DomainAwareAggregator",
     "DomainClassifier",
     "EuropePMCSearchProvider",
+    "GoogleScholarPlaywrightProvider",
     "GoogleScholarSearch",
     "INSPIREHEPSearchProvider",
     "PubChemSearchProvider",

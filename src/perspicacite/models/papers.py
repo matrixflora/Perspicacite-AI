@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -34,6 +34,7 @@ class PaperSource(str, Enum):
     INSPIRE_HEP = "inspire_hep"
     ADS = "ads"
     OPENCITATIONS = "opencitations"
+    GOOGLE_SCHOLAR = "google_scholar"
 
 
 class Author(BaseModel):
@@ -42,9 +43,9 @@ class Author(BaseModel):
     model_config = {"frozen": True}
 
     name: str
-    given: Optional[str] = None
-    family: Optional[str] = None
-    orcid: Optional[str] = None
+    given: str | None = None
+    family: str | None = None
+    orcid: str | None = None
 
     def __repr__(self) -> str:
         return f"Author(name='{self.name}')"
@@ -59,26 +60,26 @@ class Paper(BaseModel):
     id: str = Field(description="Unique ID: DOI, PMID, or generated UUID")
     title: str
     authors: list[Author] = Field(default_factory=list)
-    abstract: Optional[str] = None
-    year: Optional[int] = None
-    journal: Optional[str] = None
-    doi: Optional[str] = None
-    pmid: Optional[str] = None
-    url: Optional[str] = None
-    pdf_url: Optional[str] = None
-    citation_count: Optional[int] = None
+    abstract: str | None = None
+    year: int | None = None
+    journal: str | None = None
+    doi: str | None = None
+    pmid: str | None = None
+    url: str | None = None
+    pdf_url: str | None = None
+    citation_count: int | None = None
     source: PaperSource = PaperSource.BIBTEX
     keywords: list[str] = Field(default_factory=list)
-    full_text: Optional[str] = None
+    full_text: str | None = None
     # Pipeline content-tier marker carried from PaperContent.content_type:
     # one of "structured" | "full_text" | "abstract" | "none". None when
     # the paper was loaded outside the unified download pipeline.
-    content_type: Optional[str] = None
+    content_type: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("year")
     @classmethod
-    def validate_year(cls, v: Optional[int]) -> Optional[int]:
+    def validate_year(cls, v: int | None) -> int | None:
         """Validate year is reasonable."""
         if v is None:
             return v
@@ -91,7 +92,7 @@ class Paper(BaseModel):
         return f"Paper(id='{self.id}', title='{self.title[:50]}...')"
 
     @property
-    def first_author(self) -> Optional[str]:
+    def first_author(self) -> str | None:
         """Get first author name or None."""
         if self.authors:
             return self.authors[0].name
