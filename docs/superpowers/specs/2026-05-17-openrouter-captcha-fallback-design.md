@@ -6,7 +6,7 @@
 
 **Architecture:** A self-contained `_openrouter_fallback.py` helper module is called from the CAPTCHA branch in `google_scholar_playwright.py`. The aggregator and all callers are unaffected — the Scholar provider still returns `list[Paper]` as usual. Papers sourced from the fallback carry `source=PaperSource.OPENROUTER_WEB` for provenance tracing.
 
-**Tech Stack:** `httpx` (already a dependency), OpenRouter Chat Completions API, `openrouter:web_search` server tool (Exa engine), `deepseek/deepseek-v2-fast` as the default model (configurable).
+**Tech Stack:** `httpx` (already a dependency), OpenRouter Chat Completions API, `openrouter:web_search` server tool (Exa engine), `deepseek/deepseek-chat` as the default model (configurable). *(Note: the original spec referenced `deepseek/deepseek-chat` which is retired on OpenRouter; updated to `deepseek/deepseek-chat` in commit `843ca49`.)*
 
 ---
 
@@ -41,7 +41,7 @@ async def openrouter_academic_search(
     query: str,
     *,
     api_key: str,
-    model: str = "deepseek/deepseek-v2-fast",
+    model: str = "deepseek/deepseek-chat",
     max_results: int = 10,
     allowed_domains: list[str] | None = None,
     timeout: float = 20.0,
@@ -144,7 +144,7 @@ OPENROUTER_WEB = "openrouter_web"
 ```python
 openrouter_fallback_enabled: bool = True
 openrouter_api_key: str = ""          # also read from OPENROUTER_API_KEY env var
-openrouter_fallback_model: str = "deepseek/deepseek-v2-fast"
+openrouter_fallback_model: str = "deepseek/deepseek-chat"
 openrouter_fallback_domains: list[str] = [
     "arxiv.org", "biorxiv.org", "chemrxiv.org",
     "pubmed.ncbi.nlm.nih.gov", "europepmc.org",
