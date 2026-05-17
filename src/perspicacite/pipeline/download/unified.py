@@ -141,6 +141,10 @@ async def retrieve_paper_content(
         return _none_result(doi)
 
     biorxiv_abstract_fallback: PaperContent | None = None
+    # Per-step audit trail surfaced on the final PaperContent.attempts so
+    # the caller can tell *why* the pipeline produced no content (vs.
+    # the previous silent "no content" reason).
+    attempts: list[dict[str, Any]] = []
 
     if http_client is not None:
         client = http_client
@@ -296,6 +300,7 @@ async def retrieve_paper_content(
                     aaas_api_key=aaas_api_key,
                     rsc_api_key=rsc_api_key,
                     springer_api_key=springer_api_key,
+                    attempts=attempts,
                 )
                 if pdf_result and pdf_cache_dir:
                     # Persist the winning bytes so the next ingest is free.
@@ -324,7 +329,7 @@ async def retrieve_paper_content(
         if elsevier_api_key:
             result = await get_content_from_elsevier(clean, elsevier_api_key, client)
             if result.success and result.content:
-                return PaperContent(
+                pc = PaperContent(
                     success=True,
                     doi=clean,
                     content_type="full_text",
@@ -333,6 +338,15 @@ async def retrieve_paper_content(
                     content_source="elsevier",
                     metadata=_metadata_from_discovery(disc, clean),
                 )
+                pc.attempts.extend(attempts)
+                return pc
+            attempts.append({
+                "source": "elsevier",
+                "status": "error" if result.error else "miss",
+                **({"error": result.error} if result.error else {}),
+            })
+        elif clean.lower().startswith(("10.1016/", "10.1006/", "10.1053/")):
+            attempts.append({"source": "elsevier", "status": "skip", "reason": "no_api_key"})
 
         # ── STEP 3b: ALTERNATIVE ENDPOINT (last-resort PDF fallback) ────
         # User-configured private/institutional repository. Demoted to
@@ -374,14 +388,16 @@ async def retrieve_paper_content(
             return biorxiv_abstract_fallback
 
         # ── STEP 5: DISCARD ─────────────────────────────────────────────
-        logger.warning("unified_no_content", doi=clean)
-        return PaperContent(
+        logger.warning("unified_no_content", doi=clean, attempts=len(attempts))
+        pc = PaperContent(
             success=False,
             doi=clean,
             content_type="none",
             content_source="none",
             metadata=_metadata_from_discovery(disc, clean),
         )
+        pc.attempts.extend(attempts)
+        return pc
 
     except Exception as e:
         logger.error("unified_pipeline_error", doi=clean, error=str(e))
@@ -402,8 +418,20 @@ async def _try_pdf_sources(
     aaas_api_key: str | None = None,
     rsc_api_key: str | None = None,
     springer_api_key: str | None = None,
+    attempts: list[dict[str, Any]] | None = None,
 ) -> tuple[bytes, str] | None:
-    """Try PDF sources in priority order. Returns (bytes, source_label) or None."""
+    """Try PDF sources in priority order. Returns (bytes, source_label) or None.
+
+    When ``attempts`` is provided, each tier appends a {source,status,...}
+    record so the caller can surface why nothing worked.
+    """
+
+    def _record(src: str, status: str, **extra: Any) -> None:
+        if attempts is None:
+            return
+        rec: dict[str, Any] = {"source": src, "status": status}
+        rec.update(extra)
+        attempts.append(rec)
 
     # 3a. Publisher OA PDF via discovery OA URL
     if disc.oa_url:
@@ -411,12 +439,14 @@ async def _try_pdf_sources(
         data = await downloader.download(disc.oa_url, http_client=client)
         if data and len(data) > 1000:
             return data, "publisher_oa_pdf"
+        _record("publisher_oa_pdf", "miss", url=disc.oa_url)
 
     # 3b. arXiv PDF
     if disc.arxiv_id or is_arxiv_doi(doi) or (url and is_arxiv_url(url)):
         pdf = await download_from_arxiv(doi=doi, url=url, http_client=client)
         if pdf:
             return pdf, "arxiv_pdf"
+        _record("arxiv_pdf", "miss")
 
     # 3c. Unpaywall PDF URL
     if disc.unpaywall_pdf_url:
@@ -424,42 +454,60 @@ async def _try_pdf_sources(
         data = await downloader.download(disc.unpaywall_pdf_url, http_client=client)
         if data and len(data) > 1000:
             return data, "unpaywall_pdf"
+        _record("unpaywall_pdf", "miss", url=disc.unpaywall_pdf_url)
 
     # 3d. OpenAlex OA PDF
     pdf = await download_pdf_from_openalex_oa(doi, client)
     if pdf:
         return pdf, "openalex_oa_pdf"
+    _record("openalex_oa_pdf", "miss")
 
     # 3e. Publisher-specific APIs
     if is_acs_doi(doi):
         pdf = await download_from_acs(doi, client)
         if pdf:
             return pdf, "acs_pdf"
+        _record("acs_pdf", "miss")
 
     if is_rsc_doi(doi):
-        pdf = await download_from_rsc(doi, rsc_api_key, client)
-        if pdf:
-            return pdf, "rsc_pdf"
+        if not rsc_api_key:
+            _record("rsc_pdf", "skip", reason="no_api_key")
+        else:
+            pdf = await download_from_rsc(doi, rsc_api_key, client)
+            if pdf:
+                return pdf, "rsc_pdf"
+            _record("rsc_pdf", "miss")
 
     if is_aaas_doi(doi):
-        pdf = await download_from_aaas(doi, aaas_api_key, client)
-        if pdf:
-            return pdf, "aaas_pdf"
+        if not aaas_api_key:
+            _record("aaas_pdf", "skip", reason="no_api_key")
+        else:
+            pdf = await download_from_aaas(doi, aaas_api_key, client)
+            if pdf:
+                return pdf, "aaas_pdf"
+            _record("aaas_pdf", "miss")
 
     if is_springer_doi(doi):
-        pdf = await download_from_springer(doi, springer_api_key, client)
-        if pdf:
-            return pdf, "springer_pdf"
+        if not springer_api_key:
+            _record("springer_pdf", "skip", reason="no_api_key")
+        else:
+            pdf = await download_from_springer(doi, springer_api_key, client)
+            if pdf:
+                return pdf, "springer_pdf"
+            _record("springer_pdf", "miss",
+                    hint="API key present but no PDF returned — check entitlement or DOI type")
 
     if doi.lower().startswith("10.1002/"):
         pdf = await download_from_wiley_direct(doi, client)
         if pdf:
             return pdf, "wiley_pdf"
+        _record("wiley_pdf", "miss")
 
     if wiley_tdm_token:
         pdf = await download_from_wiley_tdm(doi, wiley_tdm_token, client)
         if pdf:
             return pdf, "wiley_tdm_pdf"
+        _record("wiley_tdm_pdf", "miss")
 
     return None
 

@@ -558,38 +558,74 @@ def _compose_embedding_text(
 
 def _chunk_to_metadata(metadata: ChunkMetadata) -> dict[str, Any]:
     """Convert ChunkMetadata to Chroma metadata dict.
-    
+
     ChromaDB only accepts simple types: str, int, float, bool.
-    None values are not allowed.
+    None values are not allowed. List values are stored as JSON strings
+    under the ``<field>_json`` key so we can round-trip them via
+    ``_metadata_to_chunk``.
     """
     result: dict[str, Any] = {
         "paper_id": metadata.paper_id,
         "chunk_index": metadata.chunk_index,
         "source": metadata.source.value if metadata.source else "bibtex",
     }
-    
-    # Only add non-None values
-    if metadata.section is not None:
-        result["section"] = metadata.section
-    if metadata.page_number is not None:
-        result["page_number"] = metadata.page_number
-    if metadata.title is not None:
-        result["title"] = metadata.title
-    if metadata.authors is not None:
-        result["authors"] = metadata.authors
-    if metadata.year is not None:
-        result["year"] = metadata.year
-    if metadata.doi is not None:
-        result["doi"] = metadata.doi
-    if metadata.url is not None:
-        result["url"] = metadata.url
-        
+
+    # Scalar identity / metadata fields
+    scalar_fields = (
+        "section", "page_number", "title", "authors", "year", "doi", "url",
+        "content_type", "language", "source_file_path",
+        "source_section", "page", "parent_paper_id",
+        "symbol_name", "symbol_kind", "parent_class",
+        "start_line", "end_line", "docstring",
+        "embedding_model", "source_via", "cited_tool", "discovery_score",
+    )
+    for field in scalar_fields:
+        val = getattr(metadata, field, None)
+        if val is not None:
+            result[field] = val
+
+    # Bool fields (False is meaningful, not "missing")
+    result["is_external"] = bool(getattr(metadata, "is_external", False))
+
+    # Tuple-encoded char span -> "start,end" string (Chroma can't store tuples)
+    cs = getattr(metadata, "char_span", None)
+    if cs is not None and len(cs) == 2:
+        result["char_span"] = f"{int(cs[0])},{int(cs[1])}"
+
+    # List fields -> JSON string ("[]" omitted)
+    import json as _json
+    for field in ("heading_path", "figure_refs", "table_refs", "resource_refs", "imports"):
+        val = getattr(metadata, field, None)
+        if val:
+            result[f"{field}_json"] = _json.dumps(list(val))
+
     return result
 
 
 def _metadata_to_chunk(metadata: dict[str, Any]) -> ChunkMetadata:
     """Convert Chroma metadata dict to ChunkMetadata."""
+    import json as _json
+
     from perspicacite.models.papers import PaperSource
+
+    def _list(key: str) -> list[Any]:
+        raw = metadata.get(f"{key}_json")
+        if not raw:
+            return []
+        try:
+            parsed = _json.loads(raw)
+            return list(parsed) if isinstance(parsed, list) else []
+        except Exception:
+            return []
+
+    cs_raw = metadata.get("char_span")
+    char_span: tuple[int, int] | None = None
+    if isinstance(cs_raw, str) and "," in cs_raw:
+        try:
+            a, b = cs_raw.split(",", 1)
+            char_span = (int(a), int(b))
+        except Exception:
+            char_span = None
 
     return ChunkMetadata(
         paper_id=metadata.get("paper_id", ""),
@@ -602,6 +638,29 @@ def _metadata_to_chunk(metadata: dict[str, Any]) -> ChunkMetadata:
         year=metadata.get("year"),
         doi=metadata.get("doi"),
         url=metadata.get("url"),
+        content_type=metadata.get("content_type"),
+        language=metadata.get("language"),
+        heading_path=_list("heading_path") or None,
+        source_file_path=metadata.get("source_file_path"),
+        source_section=metadata.get("source_section"),
+        page=metadata.get("page"),
+        char_span=char_span,
+        figure_refs=_list("figure_refs"),
+        table_refs=_list("table_refs"),
+        resource_refs=_list("resource_refs"),
+        parent_paper_id=metadata.get("parent_paper_id"),
+        is_external=bool(metadata.get("is_external", False)),
+        symbol_name=metadata.get("symbol_name"),
+        symbol_kind=metadata.get("symbol_kind"),
+        parent_class=metadata.get("parent_class"),
+        start_line=metadata.get("start_line"),
+        end_line=metadata.get("end_line"),
+        docstring=metadata.get("docstring"),
+        imports=_list("imports"),
+        embedding_model=metadata.get("embedding_model"),
+        source_via=metadata.get("source_via"),
+        cited_tool=metadata.get("cited_tool"),
+        discovery_score=metadata.get("discovery_score"),
     )
 
 

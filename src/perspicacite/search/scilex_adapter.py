@@ -32,6 +32,32 @@ class SciLExAdapter:
     def __init__(self, api_config: dict[str, Any] | None = None):
         self._scilex_available = self._check_scilex()
         self.api_config = api_config or {}
+        # F-19 (audit 2026-05-16): per-database error visibility. Populated
+        # by the most-recent search() call. ``{}`` means "no errors";
+        # callers can check this to distinguish "the upstream API was
+        # down" from "the query had no hits".
+        self.last_errors_by_database: dict[str, str] = {}
+
+    @classmethod
+    def from_config(cls, config: Any) -> "SciLExAdapter":
+        """Build adapter wired up to API keys declared in ``config.yml``.
+
+        Reads ``pdf_download.semantic_scholar_api_key`` (and the publisher
+        keys) and shapes them into the per-API ``api_config`` dict that
+        SciLEx expects. Env-var fallbacks still apply inside
+        :meth:`_build_api_config`.
+        """
+        api_config: dict[str, dict[str, Any]] = {}
+        pdf = getattr(config, "pdf_download", None) if config else None
+        if pdf is not None:
+            mapping = {
+                "semantic_scholar": getattr(pdf, "semantic_scholar_api_key", None),
+                "springer": getattr(pdf, "springer_api_key", None),
+            }
+            for api, key in mapping.items():
+                if key:
+                    api_config[api] = {"api_key": key}
+        return cls(api_config=api_config)
 
     def _check_scilex(self) -> bool:
         """Check if SciLEx is installed."""
@@ -66,6 +92,8 @@ class SciLExAdapter:
             logger.warning("scilex_not_available_fallback")
             return []
 
+        # Reset per-call error trail (F-19).
+        self.last_errors_by_database = {}
         return await asyncio.to_thread(
             self._scilex_search_sync,
             query,
@@ -177,6 +205,14 @@ class SciLExAdapter:
                         logger.info(f"Successfully collected from {api_name}")
                     except Exception as api_error:
                         logger.warning(f"API {api_name} failed: {api_error}")
+                        # F-19: surface to the caller. SciLEx labels APIs in
+                        # CamelCase ("Arxiv"); we lower it back to the form
+                        # the public MCP tool exposed.
+                        canonical = next(
+                            (k for k, v in api_name_map.items() if v == api_name),
+                            api_name.lower(),
+                        )
+                        self.last_errors_by_database[canonical] = str(api_error)[:200]
                         continue
 
                 # Phase 2: Manual aggregation
@@ -255,6 +291,13 @@ class SciLExAdapter:
                 # Convert to Paper models
                 papers = self._map_dataframe_to_papers(df_deduped)
 
+                # F-4: second-pass dedup by normalized title to catch
+                # records that survived SciLEx's DOI-only dedup because the
+                # two sources returned different DOIs (or one had None) for
+                # the same paper. Casing + punctuation + whitespace are
+                # collapsed before comparison.
+                papers = self._dedupe_by_normalized_title(papers)
+
                 # Post-filter by article_type
                 if article_type:
                     papers = self._filter_by_article_type(papers, article_type)
@@ -306,6 +349,46 @@ class SciLExAdapter:
                 filtered.append(p)
 
         return filtered
+
+    @staticmethod
+    def _normalize_title_for_dedupe(title: str | None) -> str:
+        """Collapse a title to its dedupe fingerprint.
+
+        Lowercased, ASCII-folded, leading articles stripped, all
+        non-alphanumeric characters dropped, then truncated to 120 chars.
+        Two records that differ only in casing, punctuation, or a leading
+        "The"/"A"/"An" produce the same fingerprint.
+        """
+        if not title:
+            return ""
+        import re as _re
+        import unicodedata as _ud
+        s = _ud.normalize("NFKD", str(title)).encode("ascii", "ignore").decode("ascii")
+        s = s.lower().strip()
+        # Strip a single leading article — surprisingly common variant.
+        for art in ("the ", "a ", "an "):
+            if s.startswith(art):
+                s = s[len(art):]
+                break
+        s = _re.sub(r"[^a-z0-9]+", "", s)
+        return s[:120]
+
+    def _dedupe_by_normalized_title(self, papers: list[Paper]) -> list[Paper]:
+        """Keep the first paper for each normalized-title key. Records with
+        empty titles are passed through unchanged."""
+        seen: set[str] = set()
+        out: list[Paper] = []
+        for p in papers:
+            key = self._normalize_title_for_dedupe(p.title)
+            if not key:
+                out.append(p)
+                continue
+            if key in seen:
+                logger.debug("scilex_title_dedup_drop", title=p.title[:80])
+                continue
+            seen.add(key)
+            out.append(p)
+        return out
 
     def _build_api_config(self, apis: list[str]) -> dict[str, Any]:
         """Build API configuration dict for SciLEx.

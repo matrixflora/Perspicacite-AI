@@ -389,7 +389,7 @@ async def search_literature(
     from perspicacite.search.scilex_adapter import SciLExAdapter
 
     try:
-        adapter = SciLExAdapter()
+        adapter = SciLExAdapter.from_config(state.config)
         if not adapter.available:
             # SciLEx is an optional extra; without it, this tool has no
             # backend. Tell the caller how to install it instead of
@@ -479,7 +479,30 @@ async def search_literature(
             min_relevance=min_relevance,
             method=relevance_method if min_relevance > 0 else "none",
         )
-        return _json_ok({"query": query, "total_results": len(results), "papers": results})
+        # F-19: surface per-database failures so external agents can tell
+        # "no matches" from "the upstream DB was down".
+        errors_by_db = dict(adapter.last_errors_by_database)
+        databases_queried = databases or ["semantic_scholar", "openalex", "pubmed"]
+        all_dbs_failed = (
+            bool(errors_by_db)
+            and len(errors_by_db) >= len(databases_queried)
+            and not results
+        )
+        payload: dict[str, Any] = {
+            "query": query, "total_results": len(results), "papers": results,
+        }
+        if errors_by_db:
+            payload["errors_by_database"] = errors_by_db
+        if all_dbs_failed:
+            payload["success"] = False
+            payload["error"] = (
+                "All queried databases failed; see errors_by_database for details."
+            )
+            return _json_error(
+                payload["error"],
+                **{k: v for k, v in payload.items() if k != "error"},
+            )
+        return _json_ok(payload)
 
     except Exception as e:
         logger.error("mcp_search_literature_error", error=str(e))
@@ -2215,19 +2238,43 @@ async def ingest_urls_to_kb(
     from perspicacite.integrations.local_docs import (
         ingest_local_documents as _ingest,
     )
+    from perspicacite.pipeline.download.arxiv import is_arxiv_url
     from perspicacite.pipeline.download.url_to_markdown import (
         fetch_url_as_markdown,
     )
+
+    def _arxiv_id_from_url(u: str) -> str | None:
+        """Extract bare arxiv id from /abs/ or /pdf/ URL forms."""
+        m = _re.search(r"arxiv\.org/(?:abs|pdf|html)/([0-9]{4}\.[0-9]{4,5})", u)
+        if m:
+            return m.group(1)
+        m = _re.search(r"arxiv\.org/(?:abs|pdf)/([a-z\-]+/[0-9]+)", u)
+        return m.group(1) if m else None
 
     cache_dir = Path("data/url_cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     results: list[dict] = []
     written_paths: list[Path] = []
+    arxiv_dois: list[tuple[str, str]] = []  # (original_url, arxiv_doi)
     async with httpx.AsyncClient(
         timeout=30.0, follow_redirects=True,
     ) as http_client:
         for url in urls:
+            # Route arxiv URLs through the structured-fulltext DOI pipeline
+            # rather than the generic HTML fetcher — the abstract page is
+            # the only thing url-to-markdown would extract from an /abs/
+            # URL, whereas the DOI pipeline pulls the full paper.
+            if is_arxiv_url(url):
+                aid = _arxiv_id_from_url(url)
+                if aid:
+                    arxiv_dois.append((url, f"10.48550/arxiv.{aid}"))
+                    results.append({
+                        "url": url, "status": "arxiv_routed",
+                        "doi": f"10.48550/arxiv.{aid}",
+                    })
+                    continue
+
             slug = _re.sub(r"[^a-zA-Z0-9.]+", "_", url.lower())[:120] or "url"
             dest = cache_dir / f"{slug}.md"
             try:
@@ -2252,8 +2299,72 @@ async def ingest_urls_to_kb(
                     "error": str(exc)[:200],
                 })
 
-    if not written_paths:
+    # Process arxiv URLs via the structured-fulltext DOI ingest path.
+    arxiv_chunks = 0
+    if arxiv_dois:
+        from perspicacite.models.papers import Author, Paper, PaperSource
+        from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+
+        kb_meta = await state.session_store.get_kb_metadata(kb_name)
+        if kb_meta is not None:
+            dkb = DynamicKnowledgeBase(
+                vector_store=state.vector_store,
+                embedding_service=state.embedding_provider,
+            )
+            dkb.collection_name = kb_meta.collection_name
+            dkb._initialized = True
+            arxiv_papers: list[Paper] = []
+            for original_url, doi in arxiv_dois:
+                try:
+                    pc = await retrieve_paper_content(
+                        doi, pdf_parser=state.pdf_parser, url=original_url,
+                    )
+                except Exception as exc:
+                    for r in results:
+                        if r.get("doi") == doi:
+                            r["status"] = "arxiv_fetch_failed"
+                            r["error"] = str(exc)[:200]
+                    continue
+                if not pc.success:
+                    for r in results:
+                        if r.get("doi") == doi:
+                            r["status"] = "arxiv_no_content"
+                    continue
+                md = pc.metadata or {}
+                p = Paper(
+                    id=doi,
+                    title=md.get("title") or doi,
+                    authors=[Author(name=a) for a in (md.get("authors") or [])],
+                    year=md.get("year"),
+                    doi=doi,
+                    abstract=pc.abstract or md.get("abstract"),
+                    full_text=pc.full_text,
+                    source=PaperSource.OPENALEX,
+                    content_type=pc.content_type,
+                    url=original_url,
+                )
+                arxiv_papers.append(p)
+                for r in results:
+                    if r.get("doi") == doi:
+                        r["status"] = "ok"
+                        r["content_type"] = pc.content_type
+                        r["chars"] = len(pc.full_text or pc.abstract or "")
+            if arxiv_papers:
+                added = await dkb.add_papers(arxiv_papers, include_full_text=True)
+                arxiv_chunks = added
+                kb_meta.paper_count += len(arxiv_papers)
+                kb_meta.chunk_count += added
+                await state.session_store.save_kb_metadata(kb_meta)
+
+    if not written_paths and not arxiv_dois:
         return {"added_chunks": 0, "files": 0, "results": results}
+    if not written_paths:
+        return {
+            "added_chunks": int(arxiv_chunks),
+            "files": len(arxiv_dois),
+            "results": results,
+        }
 
     class _Reg:
         async def publish(self, jid, ev): pass
@@ -2270,8 +2381,8 @@ async def ingest_urls_to_kb(
         recursive=False,
     )
     return {
-        "added_chunks": int(ingest_result.get("added_chunks", 0)),
-        "files": int(ingest_result.get("files", 0)),
+        "added_chunks": int(ingest_result.get("added_chunks", 0)) + int(arxiv_chunks),
+        "files": int(ingest_result.get("files", 0)) + len(arxiv_dois),
         "results": results,
     }
 
@@ -2761,7 +2872,10 @@ async def expand_kb_via_citations(
     Args:
         kb_name: Target KB. Must already exist.
         direction: ``"forward"`` / ``"backward"`` / ``"both"``.
-        max_per_seed: Cap on hits per seed per direction (max 25).
+        max_per_seed: Cap on hits per seed per direction (max 25). Note
+            the parameter name is ``max_per_seed`` — not ``max_papers``
+            — and applies per-seed-per-direction, so total papers added
+            is at most ``max_per_seed * len(seeds) * directions``.
         seed_dois: Restrict to these seeds. ``None`` = every DOI in
             the KB.
         min_year / max_year / min_citations / require_abstract:

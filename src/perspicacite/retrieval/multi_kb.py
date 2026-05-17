@@ -13,15 +13,47 @@ if TYPE_CHECKING:
 logger = get_logger("perspicacite.retrieval.multi_kb")
 
 
+def canonical_embedding_fingerprint(name: str | None) -> str | None:
+    """Normalize an embedding-model fingerprint to its primary model name.
+
+    Historic KBs stamped one of:
+      - "text-embedding-3-small"                 (MCP / LiteLLMEmbeddingProvider)
+      - "text-embedding-3-small|all-MiniLM-L6-v2" (web / FallbackEmbeddingProvider)
+      - "text-embedding-3-small+code:foo"        (TypedEmbeddingProvider)
+
+    All three share the same primary embedding model (whatever sits left
+    of the first ``|`` or ``+``), and only the primary actually produces
+    vectors in the common case. Comparing the raw strings makes the
+    multi-KB compat check refuse otherwise-compatible KBs.
+    """
+    if not name:
+        return None
+    # Strip the fallback suffix ("primary|fallback") first, then the
+    # typed-provider suffix ("primary+code:foo+..."). Both separators
+    # behave additively so order doesn't matter beyond left-to-right.
+    s = str(name)
+    for sep in ("|", "+"):
+        if sep in s:
+            s = s.split(sep, 1)[0]
+    return s.strip() or None
+
+
 def check_embedding_compat(kb_metas: Sequence[Any]) -> str | None:
-    """Return None if all KBs share an embedding model; else a message listing the models."""
-    models = {getattr(m, "embedding_model", None) for m in kb_metas}
-    models.discard(None)
-    if len(models) <= 1:
+    """Return None if all KBs share an embedding model; else a message listing the models.
+
+    Comparison happens on the canonical primary-model fingerprint, so two
+    KBs stamped ``"text-embedding-3-small"`` and
+    ``"text-embedding-3-small|all-MiniLM-L6-v2"`` (same primary, different
+    fallback config) are correctly treated as compatible.
+    """
+    raw_models = [getattr(m, "embedding_model", None) for m in kb_metas]
+    canon = {canonical_embedding_fingerprint(m) for m in raw_models}
+    canon.discard(None)
+    if len(canon) <= 1:
         return None
     return (
         "Cannot query these knowledge bases together: they use different embedding models "
-        f"({', '.join(sorted(str(m) for m in models))}). Re-embedding is not supported."
+        f"({', '.join(sorted(str(m) for m in raw_models if m))}). Re-embedding is not supported."
     )
 
 

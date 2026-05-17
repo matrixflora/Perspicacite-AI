@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -864,23 +864,29 @@ async def add_bibtex_to_kb(name: str, request: Request):
     from perspicacite.models.papers import PaperSource
     from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
     from perspicacite.pipeline.download import retrieve_paper_content
-    from perspicacite.pipeline.bibtex_kb import entries_to_papers
+    from perspicacite.pipeline.bibtex_kb import entries_to_papers_with_diagnostics
     import bibtexparser
 
     # Use bibtexparser to parse the BibTeX content
     try:
         db = bibtexparser.loads(bibtex_content)
         entries = db.entries
-        papers = entries_to_papers(entries)
+        papers, dropped_entries = entries_to_papers_with_diagnostics(entries)
     except Exception as e:
         logger.error(f"BibTeX parsing failed: {e}")
         return {"error": f"Failed to parse BibTeX: {str(e)}"}
 
+    total_entries = len(entries)
     if not papers:
-        return {"error": "No valid paper entries found in BibTeX file"}
+        return {
+            "error": "No valid paper entries found in BibTeX file",
+            "total_entries": total_entries,
+            "failed": dropped_entries,
+        }
 
     # Process papers with deduplication and PDF download
     papers_to_add = []
+    skipped_existing: list[dict[str, Any]] = []
     download_stats = {"attempted": 0, "success": 0, "failed": 0, "local_pdf": 0}
 
     pdf_config = app_state.config.pdf_download if app_state.config else None
@@ -893,6 +899,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
         # Check if paper already exists
         exists = await app_state.vector_store.paper_exists(kb.collection_name, paper_id)
         if exists:
+            skipped_existing.append({"id": paper_id, "title": paper.title[:120]})
             continue
 
         # Ensure source is set to BIBTEX
@@ -920,6 +927,7 @@ async def add_bibtex_to_kb(name: str, request: Request):
                 )
                 if result.success and result.full_text:
                     paper.full_text = result.full_text
+                    paper.content_type = getattr(result, "content_type", None)
                     download_stats["success"] += 1
                     # Enrich paper metadata from discovery
                     meta = result.metadata or {}
@@ -931,9 +939,29 @@ async def add_bibtex_to_kb(name: str, request: Request):
                         paper.authors = [Author(name=a) for a in meta["authors"]]
                     if result.abstract and not paper.abstract:
                         paper.abstract = result.abstract
+                elif result is not None and result.success:
+                    # abstract-only success: tag content_type but no full_text
+                    paper.content_type = getattr(result, "content_type", None)
+                    if result.abstract and not paper.abstract:
+                        paper.abstract = result.abstract
+                else:
+                    download_stats["failed"] += 1
+                    attempts = getattr(result, "attempts", []) if result is not None else []
+                    dropped_entries.append({
+                        "key": paper.doi,
+                        "title": paper.title[:120],
+                        "reason": "; ".join(
+                            f"{a['source']}:{a['status']}" for a in attempts
+                        ) if attempts else "download failed",
+                    })
             except Exception as e:
                 logger.warning(f"Content download failed for {paper.title[:50]}: {e}")
                 download_stats["failed"] += 1
+                dropped_entries.append({
+                    "key": paper.doi,
+                    "title": paper.title[:120],
+                    "reason": str(e),
+                })
 
         papers_to_add.append(paper)
 
@@ -941,6 +969,9 @@ async def add_bibtex_to_kb(name: str, request: Request):
         return {
             "message": "All papers already exist in KB",
             "added_papers": 0,
+            "total_entries": total_entries,
+            "skipped_duplicates": len(skipped_existing),
+            "failed": dropped_entries,
             "kb": name,
         }
 
@@ -965,6 +996,9 @@ async def add_bibtex_to_kb(name: str, request: Request):
     return {
         "added_papers": len(papers_to_add),
         "added_chunks": added,
+        "total_entries": total_entries,
+        "skipped_duplicates": len(skipped_existing),
+        "failed": dropped_entries,
         "pdf_download": download_stats,
         "kb": name,
     }
@@ -1046,7 +1080,16 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
             continue
 
         if not result or not result.success:
-            failed.append({"doi": doi, "reason": "no content"})
+            attempts = getattr(result, "attempts", []) if result is not None else []
+            # Build a compact reason like "publisher_oa_pdf:miss; arxiv_pdf:miss"
+            if attempts:
+                reason = "; ".join(
+                    f"{a['source']}:{a['status']}" + (f"({a.get('error','')})" if a.get("error") else "")
+                    for a in attempts
+                )
+            else:
+                reason = "no content"
+            failed.append({"doi": doi, "reason": reason, "attempts": list(attempts)})
             dl["failed"] += 1
             continue
 
@@ -1060,6 +1103,7 @@ async def add_dois_to_kb(name: str, request: KBAddDOIsRequest):
             abstract=result.abstract or md.get("abstract"),
             journal=md.get("journal"),
             source=PaperSource.OPENALEX,
+            content_type=getattr(result, "content_type", None),
         )
         if result.full_text:
             paper.full_text = result.full_text

@@ -126,6 +126,14 @@ class ProfoundRAGMode(BaseRAGMode):
         self.max_cycles = max(1, min(int(rag_settings.get("max_iterations", 1)), 5))
         self.early_exit_confidence = float(rag_settings.get("early_exit_confidence", 0.9))
         self.max_consecutive_failures = max(1, int(rag_settings.get("max_consecutive_failures", 2)))
+        # F-17 (audit 2026-05-16): hard wall-clock budget so profound mode
+        # can't run away when the LLM is slow (the audit hit a >13min hang
+        # on DeepSeek V4 Flash with the default settings).
+        self.max_total_seconds = float(rag_settings.get("max_total_seconds", 360.0))
+        # Per-cycle LLM call cap — defends against the planning/reflection
+        # loop fanning out indefinitely. Default 15 covers a typical cycle
+        # (plan + 3-5 steps + reflection + finalize) with headroom.
+        self.max_llm_calls = int(rag_settings.get("max_llm_calls", 20))
         self.use_websearch = bool(rag_settings.get("use_websearch", False))
         self.use_relevancy_optimization = bool(rag_settings.get("use_relevancy_optimization", True))
         self.use_refinement = bool(rag_settings.get("enable_reflection", rag_settings.get("use_refinement", True)))
@@ -443,8 +451,24 @@ class ProfoundRAGMode(BaseRAGMode):
         kb_names = getattr(request, "kb_names", None) or [request.kb_name]
         collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
 
+        import time as _time
+        _start_time = _time.monotonic()
+
         # Main research loop
         for cycle in range(self.max_cycles):
+            # F-17: hard wall-clock budget. Break before starting a new
+            # cycle if we've already burned the budget — the answer so
+            # far is still finalized below.
+            elapsed = _time.monotonic() - _start_time
+            if elapsed > self.max_total_seconds:
+                logger.warning(
+                    "profound_time_budget_exceeded",
+                    cycle=cycle,
+                    elapsed_s=round(elapsed, 1),
+                    budget_s=self.max_total_seconds,
+                )
+                completion_reason = "time_budget_exceeded"
+                break
             self.iterations = cycle + 1
             logger.info("profound_cycle_start", cycle=self.iterations)
 
