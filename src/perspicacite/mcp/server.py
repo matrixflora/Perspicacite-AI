@@ -456,6 +456,13 @@ async def search_literature(
                 pd["authors"] = [
                     a.family if hasattr(a, "family") and a.family else str(a) for a in p.authors
                 ]
+            # Per-provider attribution: when the aggregator merged this Paper
+            # from multiple providers, expose every contributing provider name.
+            # The single ``source`` above is the winner; ``metadata.sources``
+            # is the additive list (e.g. ["scilex", "dblp_sparql"]).
+            sources = (p.metadata or {}).get("sources")
+            if isinstance(sources, list) and sources:
+                pd["metadata"] = {"sources": list(sources)}
             results.append(pd)
 
         # Optional relevance filtering (tiers A/B/C)
@@ -1224,6 +1231,7 @@ async def generate_report(
             embedding_provider=state.embedding_provider,
             tool_registry=state.tool_registry,
             config=state.config,
+            session_store=getattr(state, "session_store", None),
         )
         engine.provenance_store = getattr(state, "provenance_store", None)
 
