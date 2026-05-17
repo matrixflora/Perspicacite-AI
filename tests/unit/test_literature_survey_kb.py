@@ -92,3 +92,76 @@ async def test_prepare_kb_context_returns_empty_context_on_retrieval_error():
         )
     assert ctx == ""          # context block empty on retriever error
     assert "doi:10.1/a" in ids  # IDs still collected from ChromaDB
+
+
+# ── _store_references_to_all_kbs ─────────────────────────────────────────────
+
+async def test_store_references_noop_without_session_store():
+    mode = _make_mode()
+    mode.session_store = None
+    result = await mode._store_references_to_all_kbs([], ["kb-a", "kb-b"], "query")
+    assert result == 0
+
+
+async def test_store_references_noop_with_single_kb():
+    mode = _make_mode()
+    mock_store = AsyncMock()
+    mode.session_store = mock_store
+    result = await mode._store_references_to_all_kbs([], ["kb-a"], "query")
+    assert result == 0
+    mock_store.store_paper_reference.assert_not_called()
+
+
+async def test_store_references_skips_primary_kb():
+    mode = _make_mode()
+    mock_store = AsyncMock()
+    mock_store.store_paper_reference = AsyncMock(return_value=True)
+    mode.session_store = mock_store
+
+    paper = MagicMock()
+    paper.doi = "10.1/test"
+    paper.title = "Test Paper"
+    paper.authors = ["Author A"]
+    paper.year = 2021
+    paper.abstract = "Abstract text."
+
+    await mode._store_references_to_all_kbs([paper], ["primary-kb", "extra-kb"], "q")
+
+    call_kb_names = [c.kwargs["kb_name"] for c in mock_store.store_paper_reference.call_args_list]
+    assert "primary-kb" not in call_kb_names
+    assert "extra-kb" in call_kb_names
+
+
+async def test_store_references_skips_papers_without_doi():
+    mode = _make_mode()
+    mock_store = AsyncMock()
+    mock_store.store_paper_reference = AsyncMock(return_value=True)
+    mode.session_store = mock_store
+
+    paper = MagicMock()
+    paper.doi = None
+    paper.title = "No DOI Paper"
+    paper.authors = []
+    paper.year = 2021
+    paper.abstract = "Abstract."
+
+    result = await mode._store_references_to_all_kbs([paper], ["kb-a", "kb-b"], "q")
+    mock_store.store_paper_reference.assert_not_called()
+    assert result == 0
+
+
+async def test_store_references_returns_correct_count():
+    mode = _make_mode()
+    mock_store = AsyncMock()
+    mock_store.store_paper_reference = AsyncMock(return_value=True)
+    mode.session_store = mock_store
+
+    papers = [
+        MagicMock(doi="10.1/a", title="A", authors=[], year=2020, abstract=""),
+        MagicMock(doi="10.1/b", title="B", authors=[], year=2021, abstract=""),
+    ]
+    # primary + 2 extra KBs; 2 papers x 2 extra KBs = 4 new rows
+    result = await mode._store_references_to_all_kbs(
+        papers, ["primary", "extra-1", "extra-2"], "q"
+    )
+    assert result == 4
