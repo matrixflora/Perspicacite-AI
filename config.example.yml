@@ -421,12 +421,12 @@ google_scholar:
   max_results: 20
 
   # --- CAPTCHA fallback via OpenRouter web search ---
-  # When Scholar serves a CAPTCHA, fall back to OpenRouter's openrouter:web_search
-  # server tool (Exa engine + academic domain allowlist). Costs ~$0.005/trigger.
+  # When Scholar serves a CAPTCHA, fall back to an OpenRouter model with
+  # Exa web-search capability (academic domain allowlist). Costs ~$0.005/trigger.
   # Set openrouter_api_key or OPENROUTER_API_KEY env var to activate.
-  openrouter_fallback_enabled: true
+  openrouter_fallback_enabled: false
   openrouter_api_key: ""            # or set OPENROUTER_API_KEY env var
-  openrouter_fallback_model: "deepseek/deepseek-v2-fast"
+  openrouter_fallback_model: "deepseek/deepseek-chat"
   # For native-search models (Anthropic/OpenAI/xAI), use e.g. "anthropic/claude-haiku-4-5"
   openrouter_fallback_domains:
     - "arxiv.org"
