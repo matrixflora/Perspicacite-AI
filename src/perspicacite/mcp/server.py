@@ -490,11 +490,16 @@ async def search_literature(
             and len(errors_by_db) >= len(databases_queried)
             and not results
         )
+        # F-34: always include errors_by_database (even when empty) so callers
+        # can distinguish "this DB returned 0 results" from "this DB silently
+        # failed". An empty value for a queried DB means "ran cleanly".
+        errors_full: dict[str, str | None] = {db: None for db in databases_queried}
+        errors_full.update(errors_by_db)
+
         payload: dict[str, Any] = {
             "query": query, "total_results": len(results), "papers": results,
+            "errors_by_database": errors_full,
         }
-        if errors_by_db:
-            payload["errors_by_database"] = errors_by_db
         if all_dbs_failed:
             payload["success"] = False
             payload["error"] = (

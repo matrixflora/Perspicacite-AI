@@ -8,8 +8,9 @@ import `app_state` from this module; the FastAPI lifespan calls
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from perspicacite.memory.session_store import SessionStore
 from perspicacite.provenance.store import ProvenanceStore
@@ -17,6 +18,52 @@ from perspicacite.jobs.registry import JobRegistry
 
 
 logger = logging.getLogger(__name__)
+
+
+# F-31: Map provider name -> env var that must be present for the provider to
+# function. Used by the startup preflight in AppState.initialize. We don't
+# guess models or API URLs here; that's the provider's job. We only refuse to
+# serve when the default provider's auth credential is missing.
+_PROVIDER_KEY_ENV: dict[str, str] = {
+    "anthropic":      "ANTHROPIC_API_KEY",
+    "openrouter":     "OPENROUTER_API_KEY",
+    "openai":         "OPENAI_API_KEY",
+    "deepseek":       "DEEPSEEK_API_KEY",
+    "minimax":        "MINIMAX_API_KEY",
+}
+
+
+def _preflight_llm_keys(config: Any) -> None:
+    """Refuse to serve when the configured default LLM provider's API key is
+    missing from the process environment.
+
+    Operators can bypass with PERSPICACITE_ALLOW_MISSING_LLM_KEYS=1 (for
+    offline dev / mocked-LLM tests). Bypass logs a loud WARN so the choice
+    is visible in the startup log.
+    """
+    llm_cfg = getattr(config, "llm", None)
+    if llm_cfg is None:
+        return
+    default_provider = (llm_cfg.default_provider or "anthropic").lower()
+    required_env = _PROVIDER_KEY_ENV.get(default_provider)
+    if not required_env:
+        # Unknown provider name — let the provider itself complain later.
+        return
+    if os.environ.get(required_env):
+        return
+    if os.environ.get("PERSPICACITE_ALLOW_MISSING_LLM_KEYS"):
+        logger.warning(
+            "preflight_llm_key_missing_bypassed provider=%s env=%s — calls will fail",
+            default_provider, required_env,
+        )
+        return
+    raise RuntimeError(
+        f"LLM preflight failed: default_provider='{default_provider}' but "
+        f"{required_env} is not set in the environment. Export the key (in "
+        f"~/.zshrc or the launching shell) or set "
+        f"PERSPICACITE_ALLOW_MISSING_LLM_KEYS=1 to bypass for offline / "
+        f"mocked-LLM development."
+    )
 
 
 class AppState:
@@ -51,6 +98,11 @@ class AppState:
         from perspicacite.rag.tools import ToolRegistry, LotusSearchTool
 
         config = load_config()
+
+        # F-31: Preflight check — refuse to serve when the configured default
+        # LLM provider's API key isn't in env. Silent 401s deep in the RAG
+        # pipeline are the second-worst kind of bug (after silent 200s).
+        _preflight_llm_keys(config)
 
         # Initialize LLM
         self.llm_client = AsyncLLMClient(config.llm)
