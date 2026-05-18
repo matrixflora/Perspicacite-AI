@@ -453,6 +453,7 @@ class ProfoundRAGMode(BaseRAGMode):
 
         import time as _time
         _start_time = _time.monotonic()
+        _cancelled_tid: str | None = None
 
         # Main research loop
         for cycle in range(self.max_cycles):
@@ -461,6 +462,7 @@ class ProfoundRAGMode(BaseRAGMode):
             _tid = getattr(request, "task_id", None)
             if _tid and is_cancelled(_tid):
                 logger.info("profound_cancelled", task_id=_tid, cycle=cycle)
+                _cancelled_tid = _tid
                 break
 
             # F-17: hard wall-clock budget. Break before starting a new
@@ -2164,6 +2166,11 @@ Follow the system instructions for this situation."""
             else []
         )
 
+        _resp_metadata: dict = {}
+        if _cancelled_tid:
+            _resp_metadata["cancelled"] = True
+            _resp_metadata["task_id"] = _cancelled_tid
+
         return RAGResponse(
             answer=answer,
             sources=sources,
@@ -2174,6 +2181,7 @@ Follow the system instructions for this situation."""
             ),
             code_excerpts=_code_excerpts,
             figures=_figure_refs,
+            metadata=_resp_metadata,
         )
 
     async def _stream_final_response(

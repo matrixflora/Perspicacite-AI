@@ -416,6 +416,12 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 # Also check for cancellation between batches
                 if _tid and _is_cancelled(_tid):
                     analysis_task.cancel()
+                    try:
+                        await analysis_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass  # swallow any other exception from the cancelled task
                     logger.info("literature_survey_cancelled", task_id=_tid, stage="mid_analysis")
                     yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
                     return

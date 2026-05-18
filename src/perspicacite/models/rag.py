@@ -180,6 +180,7 @@ class RAGResponse(BaseModel):
     tokens_used: int | None = None
     figures: list[FigureRef] = Field(default_factory=list)
     code_excerpts: list[CodeExcerpt] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
 
     def __repr__(self) -> str:
         return (
