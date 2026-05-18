@@ -65,51 +65,14 @@ def _clean_query_for_keyword_search(q: str) -> str:
     return s or q
 
 
-async def _canonicalize_candidates_from_crossref(
-    candidates: list[dict[str, Any]],
-) -> None:
-    # In-place: replace title / authors / year / journal on every
-    # candidate that has a DOI with Crossref's values. Crossref is the
-    # canonical DOI registrar — its records are far cleaner than what
-    # Google Scholar / SciLEx / OpenAlex scrapes produce. Calls run in
-    # parallel; per-DOI failures are silent (we keep the original fields).
-    import asyncio
-
-    try:
-        import httpx
-        from perspicacite.pipeline.download.crossref import enrich_from_crossref
-    except Exception as e:
-        logger.warning("crossref_canonicalize_import_failed", error=str(e))
-        return
-
-    targets = [c for c in candidates if c.get("doi")]
-    if not targets:
-        return
-
-    async with httpx.AsyncClient(timeout=10.0) as http:
-        async def _one(c: dict[str, Any]) -> None:
-            try:
-                # base_metadata={} forces every field to be considered
-                # missing, so Crossref returns its full canonical patch.
-                patch = await enrich_from_crossref(
-                    c["doi"], http_client=http, base_metadata={},
-                )
-            except Exception as e:
-                logger.debug("crossref_one_failed", doi=c.get("doi"), error=str(e))
-                return
-            if not patch:
-                return
-            for k in ("title", "authors", "year", "journal"):
-                if patch.get(k):
-                    c[k] = patch[k]
-            # Crossref doesn't return citation count; keep whatever the
-            # provider already had.
-
-        await asyncio.gather(*[_one(c) for c in targets], return_exceptions=True)
-    logger.info(
-        "crossref_canonicalized",
-        attempted=len(targets), candidates=len(candidates),
-    )
+# Crossref enrichment helpers — extracted to pipeline/enrichment/crossref_enrich.py
+# so agentic, literature_survey, and the MCP web_search tool can reuse them.
+# These names stay around as back-compat aliases so the existing basic.py
+# call sites (_web_fallback_papers) don't need to change.
+from perspicacite.pipeline.enrichment.crossref_enrich import (
+    backfill_dois as _backfill_dois_from_crossref,
+    canonicalize_candidates as _canonicalize_candidates_from_crossref,
+)
 
 
 async def _web_fallback_papers(
@@ -122,6 +85,7 @@ async def _web_fallback_papers(
     context: str | None = None,
     optimize_query: bool | None = None,
     app_state: Any = None,
+    telemetry: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     # Live literature search used when the KB returns nothing. Filters
     # raw provider hits through a cross-encoder (MiniLM) rerank so we
@@ -196,6 +160,7 @@ async def _web_fallback_papers(
         scilex_apis=scilex_apis,
         allowed_provider_names=allowed_provider_names,
         app_state=effective_app_state,
+        telemetry=telemetry,
     )
 
     # SciLEx is a meta-provider fanning to SS/OpenAlex/PubMed/arXiv but
@@ -213,21 +178,29 @@ async def _web_fallback_papers(
 
     candidates: list[dict[str, Any]] = []
     for p in web_papers:
-        if not p.title or not (p.abstract or "").strip():
+        # Skip papers without titles (unsalvageable). We DO admit papers
+        # without an abstract — Google Scholar very rarely surfaces full
+        # abstracts (just 1-2 sentence snippets, often missing). Crossref
+        # enrichment below fills the missing abstract from the publisher's
+        # JATS record; we filter out abstract-less candidates AFTER that
+        # rescue pass, not before.
+        if not p.title:
             continue
-        # Resolve the *originating* database. ``Paper.source`` for SciLEx
+        # Resolve the *originating* database(s). ``Paper.source`` for SciLEx
         # records is ``PaperSource.SCILEX`` (a wrapper, useless to display);
         # ``metadata.sources`` carries the real provider names (e.g.
-        # ``["openalex"]`` or ``["google_scholar", "scilex"]``). Prefer
-        # the first non-scilex entry from metadata, else fall back to the
-        # enum; finally relabel the bare "scilex" label.
-        src_str: str | None = None
+        # ``["openalex"]`` or ``["pubmed", "openalex", "scilex"]``). We now
+        # surface ALL upstream providers that returned this paper so the
+        # UI can render multi-DB attribution as a chip group instead of
+        # showing a single (arbitrary) origin.
+        all_sources: list[str] = []
         meta_sources = (getattr(p, "metadata", None) or {}).get("sources")
         if isinstance(meta_sources, list):
             for s in meta_sources:
-                if s and str(s).lower() != "scilex":
-                    src_str = str(s).lower()
-                    break
+                _sl = str(s).lower() if s else ""
+                if _sl and _sl != "scilex" and _sl not in all_sources:
+                    all_sources.append(_sl)
+        src_str: str | None = all_sources[0] if all_sources else None
         if not src_str:
             src_obj = getattr(p, "source", None)
             src_str = getattr(src_obj, "value", None) or (
@@ -255,6 +228,10 @@ async def _web_fallback_papers(
             # the underlying APIs that were queried so the UI can show
             # them in a hover tooltip on the chip.
             "source_apis": list(scilex_apis) if src_str and src_str.startswith("scilex") else None,
+            # All upstream providers that returned THIS specific paper
+            # (deduped, scilex wrapper omitted). Renders as a chip group
+            # in the Sources panel: e.g. ["pubmed", "openalex"].
+            "sources_all": all_sources or None,
             "citation_count": getattr(p, "citation_count", None),
             "full_text": p.abstract or "",
             "kb_name": None,
@@ -267,8 +244,28 @@ async def _web_fallback_papers(
     # carries a DOI. Provider scrapes (especially Google Scholar) often
     # mangle author lists ("LF Nothias … - Nature, 2020"), drop the
     # journal, or supply abbreviated titles. Crossref is the authoritative
-    # registrar so we trust its values when available.
+    # registrar so we trust its values when available. We also resolve
+    # missing DOIs via title-search and fill missing abstracts here, so
+    # Google Scholar hits get rescued from "title only" to "fully
+    # citable" before reranking sees them.
     await _canonicalize_candidates_from_crossref(candidates)
+
+    # Post-enrichment abstract filter: drop candidates that STILL have no
+    # abstract after Crossref rescue. These are usually conference
+    # proceedings / theses / blog posts that Google Scholar surfaces but
+    # for which no canonical abstract exists anywhere we can reach. They
+    # would just dilute the rerank with title-only blobs.
+    before = len(candidates)
+    candidates = [c for c in candidates if (c.get("abstract") or "").strip()]
+    if before != len(candidates):
+        logger.info(
+            "basic_web_fallback_dropped_no_abstract",
+            dropped=before - len(candidates),
+            kept=len(candidates),
+        )
+    if not candidates:
+        logger.info("basic_web_fallback_empty_after_enrichment", query=query)
+        return []
 
     screen_method = "rerank+bm25+citations"
     rerank_by_id: dict[int, float] = {}
@@ -319,7 +316,14 @@ async def _web_fallback_papers(
         item = dict(c)
         if item.get("abstract"):
             item.setdefault("chunk_text", item["abstract"])
-        item.pop("abstract", None)
+            # Keep ``abstract`` too — the detail panel reads it as a
+            # fallback when chunk_text is empty. Both fields carrying
+            # the same text is cheap and makes the wire payload
+            # self-explanatory.
+        # Note: we no longer pop("abstract") — downstream SourceReference
+        # has an abstract field via the wire payload that the side
+        # panel uses to render the full text for Google Scholar /
+        # web-fallback hits without a DOI.
 
         rerank_s = rerank_by_id.get(id(c), 0.0)
         bm25_s = bm25_by_id.get(id(c), 0.0)
@@ -555,9 +559,12 @@ class BasicRAGMode(BaseRAGMode):
                     url=p.get("url"),
                     source=p.get("source"),
                     source_apis=p.get("source_apis"),
+                    sources_all=p.get("sources_all"),
+                    enrichment_sources=p.get("enrichment_sources"),
                     relevance_score=p.get("paper_score", 0.0),
                     kb_name=p.get("kb_name"),
                     chunk_text=p.get("chunk_text"),
+                    abstract=p.get("abstract") or p.get("chunk_text"),
                 )
             )
 
@@ -631,6 +638,13 @@ class BasicRAGMode(BaseRAGMode):
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
             request.refined_query = refined  # type: ignore[misc]
+            yield StreamEvent.status_kind(
+                f"Rewrote question using conversation context: '{request.query}' → '{refined}'",
+                kind="query_rephrased",
+                original=request.query,
+                rewritten=refined,
+                by="conversation_history",
+            )
         scope = await resolve_paper_scope_for_query(
             retrieval_query,
             collection,
@@ -672,20 +686,111 @@ class BasicRAGMode(BaseRAGMode):
         # agentic / literature_survey modes.
         web_fallback_used = False
         if not paper_results:
+            _db_pretty = ", ".join(
+                d.replace("_", " ").title() for d in (request.databases or [])
+            ) or "Semantic Scholar, OpenAlex, PubMed"
+            # Run the keyword optimizer UPFRONT so the user sees the
+            # rewritten query BEFORE the slow aggregator call starts.
+            # Previously this fired inside ``_web_fallback_papers`` and its
+            # ``query_rephrased`` telemetry was only drained after the full
+            # aggregator + Crossref + rerank cycle (10-15s), which made it
+            # look like rephrasing wasn't happening for basic/advanced.
+            search_query = retrieval_query
+            try:
+                from perspicacite.search.query_optimizer import optimize_query as _qopt
+                _app = getattr(request, "app_state", None)
+                if _app is None:
+                    from perspicacite.web.state import app_state as _global_app
+                    _app = _global_app
+                opt_res = await _qopt(
+                    query=retrieval_query,
+                    context=None,
+                    app_state=_app,
+                    optimize_enabled=True,
+                )
+                if opt_res.applied and opt_res.searched_query:
+                    search_query = opt_res.searched_query
+                    yield StreamEvent.status_kind(
+                        f"Rewrote search query: '{retrieval_query}' → '{search_query}'",
+                        kind="query_rephrased",
+                        original=retrieval_query,
+                        rewritten=search_query,
+                        by="keyword_optimizer",
+                    )
+            except Exception as _qe:
+                logger.debug("basic_upfront_optimizer_failed", error=str(_qe))
             yield StreamEvent.status(
-                "No KB results — falling back to web literature search…"
+                f"No KB results — falling back to web literature search across {_db_pretty}…"
             )
+            _telemetry: list[dict[str, Any]] = []
             paper_results = await _web_fallback_papers(
-                query=retrieval_query,
+                query=search_query,
                 databases=request.databases,
                 max_docs=cap,
                 config=getattr(self, "config", None),
                 app_state=getattr(request, "app_state", None),
+                telemetry=_telemetry,
+                # Tell the inner call to skip its own optimizer run; we
+                # already did it upfront above.
+                optimize_query=False,
             )
+            # Drain telemetry into SSE so the UI sees query rewriting +
+            # per-provider counts in real time.
+            for _ev in _telemetry:
+                _k = _ev.get("kind")
+                if _k == "query_rephrased":
+                    yield StreamEvent.status_kind(
+                        f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
+                        kind="query_rephrased",
+                        original=_ev.get("original", ""),
+                        rewritten=_ev.get("rewritten", ""),
+                        by=_ev.get("by", "keyword_optimizer"),
+                    )
+                elif _k == "provider_progress" and _ev.get("phase") == "start":
+                    _provs = ", ".join(
+                        p.replace("_", " ").title() for p in _ev.get("providers", [])
+                    )
+                    yield StreamEvent.status_kind(
+                        f"Querying databases: {_provs}…",
+                        kind="provider_progress",
+                        phase="start",
+                        providers=_ev.get("providers", []),
+                    )
+                elif _k == "provider_progress" and _ev.get("phase") == "done":
+                    _bp = _ev.get("by_provider", {}) or {}
+                    _msg = (
+                        ", ".join(
+                            f"{src.replace('_',' ').title()}: {n}"
+                            for src, n in sorted(
+                                _bp.items(), key=lambda kv: -kv[1]
+                            )
+                        )
+                        if _bp
+                        else f"Total {_ev.get('total', 0)} hits"
+                    )
+                    yield StreamEvent.status_kind(
+                        f"Database results — {_msg}",
+                        kind="provider_progress",
+                        phase="done",
+                        total=_ev.get("total", 0),
+                        by_provider=_bp,
+                    )
             web_fallback_used = True
             if paper_results:
+                # Per-source breakdown so the user sees that multi-DB search
+                # actually happened, even when the final top-k is dominated by
+                # one provider (the rerank often clusters by source quality).
+                from collections import Counter as _Counter
+                _src_counts = _Counter(
+                    (p.get("source") or "unknown") for p in paper_results
+                )
+                _src_summary = ", ".join(
+                    f"{src.replace('_', ' ').title()}: {n}"
+                    for src, n in _src_counts.most_common()
+                )
                 yield StreamEvent.status(
-                    f"Web search returned {len(paper_results)} relevant paper(s)."
+                    f"Web search returned {len(paper_results)} relevant paper(s) "
+                    f"({_src_summary})."
                 )
             else:
                 yield StreamEvent.status(
@@ -747,9 +852,12 @@ class BasicRAGMode(BaseRAGMode):
                     url=p.get("url"),
                     source=p.get("source"),
                     source_apis=p.get("source_apis"),
+                    sources_all=p.get("sources_all"),
+                    enrichment_sources=p.get("enrichment_sources"),
                     relevance_score=p.get("paper_score", 0.0),
                     kb_name=p.get("kb_name"),
                     chunk_text=p.get("chunk_text"),
+                    abstract=p.get("abstract") or p.get("chunk_text"),
                 )
             )
         for source in sources:
