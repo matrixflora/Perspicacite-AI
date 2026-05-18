@@ -32,7 +32,7 @@
 - **Knowledge base management** — BibTeX import, DOI bulk-add, local document ingest, Zotero-collection import; async ingestion with SSE progress streaming
 - **Citation-graph expansion** — forward + backward snowball over OpenAlex; automatic Semantic Scholar fallback for arXiv-seeded papers (see [docs/concepts/citation-graph.md](docs/concepts/citation-graph.md))
 - **Honest sourcing** — `PaperSource` enum records the true origin of every paper (`OPENALEX`, `PUBMED`, `ARXIV`, `CROSSREF`, `SEMANTIC_SCHOLAR`, `BIBTEX`, `LOCAL`) — no generic `WEB_SEARCH` catch-all (see [docs/reference/paper-source-enum.md](docs/reference/paper-source-enum.md))
-- **MCP server** — 23 tools at `/mcp` for integration with Mimosa-AI, Claude Code, SmolAgents, Codex
+- **MCP server** — 32 tools at `/mcp` for integration with Mimosa-AI, Claude Code, SmolAgents, Codex
 - **REST API** — full JSON API with SSE streaming for async jobs
 - **Provenance tracking** — per-answer retrieval trace stored in SQLite; exportable as RO-Crate 1.1 zip
 - **Auto KB routing** — `kb_name: "auto"` scores all KBs against your query (BM25 or LLM) and fans across the top-N in parallel
@@ -80,7 +80,12 @@ Also set `pdf_download.unpaywall_email` in `config.yml` for open-access PDF disc
 uv run perspicacite -c config.yml serve
 ```
 
-Open **http://localhost:5468** in your browser. The MCP server is at `/mcp` on the same port.
+Open **http://localhost:8000** in your browser. The MCP server is at `/mcp` on the same port.
+
+> Keys can live in either the shell environment (`export ANTHROPIC_API_KEY=...`)
+> or in `.env` at the project root — the CLI loads `.env` on startup. Shell
+> vars take precedence over `.env`. For offline / mocked-LLM development,
+> bypass the preflight with `PERSPICACITE_ALLOW_MISSING_LLM_KEYS=1`.
 
 ### First knowledge base
 
@@ -125,13 +130,13 @@ Six modes covering different cost/depth trade-offs. See [docs/concepts/rag-modes
 
 ## MCP Server
 
-23 tools at `http://localhost:5468/mcp`. Key tools:
+32 tools at `http://localhost:8000/mcp`. Key tools:
 
 `search_literature` · `get_paper_content` · `search_knowledge_base` · `generate_report` · `add_dois_to_kb` · `build_kb_from_search` · `expand_kb_via_citations` · `push_to_zotero` · `build_capsules_for_kb` · `export_kb`
 
 Full tool catalog: [docs/reference/mcp-tools.md](docs/reference/mcp-tools.md).
 
-For use with Mimosa-AI, Claude Code, SmolAgents, or any MCP-compatible agent, point at `http://localhost:5468/mcp` (streamable-HTTP transport).
+For use with Mimosa-AI, Claude Code, SmolAgents, or any MCP-compatible agent, point at `http://localhost:8000/mcp` (streamable-HTTP transport).
 
 ---
 

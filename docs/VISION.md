@@ -185,7 +185,7 @@ All capabilities are exposed through three co-equal interfaces:
 - **REST API** — FastAPI application with SSE streaming for long-running operations
   (async BibTeX import, DOI bulk-add, literature survey). The web UI at `:8000` is
   a single-page app backed by this API.
-- **MCP server** — 23 tools (as of 2026-05-15) at `/mcp`, using the streamable-HTTP
+- **MCP server** — 32 tools (as of 2026-05-15) at `/mcp`, using the streamable-HTTP
   transport. Clients include Mimosa-AI, SmolAgents, Claude Code, and any
   MCP-compatible agent framework.
 
@@ -250,7 +250,7 @@ All capabilities are exposed through three co-equal interfaces:
 
 ### Integrate
 
-- **MCP server** (23 tools) — native integration for Mimosa-AI, Claude Code, Codex,
+- **MCP server** (32 tools) — native integration for Mimosa-AI, Claude Code, Codex,
   SmolAgents, and any future MCP-compatible agent. Runs at `http://localhost:8000/mcp`
   by default using the streamable-HTTP transport. See
   [`docs/reference/mcp-tools.md`](reference/mcp-tools.md) for the full tool catalog.
