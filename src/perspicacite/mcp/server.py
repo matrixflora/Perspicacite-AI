@@ -677,6 +677,7 @@ async def get_paper_content(
                 "content_source": result.content_source,
                 "full_text": result.full_text or "",
                 "full_text_length": len(result.full_text or ""),
+                "attempts": list(result.attempts),
             }
             if include_sections and result.sections:
                 resp["sections"] = result.sections
@@ -692,11 +693,15 @@ async def get_paper_content(
                     "content_type": "abstract",
                     "content_source": result.content_source,
                     "abstract": result.abstract,
+                    "attempts": list(result.attempts),
                     "note": "Full text not available; returning abstract only",
                 }
             )
 
-        return _json_error(f"Could not retrieve content for DOI: {doi}")
+        return _json_error(
+            f"Could not retrieve content for DOI: {doi}",
+            attempts=list(result.attempts),
+        )
 
     except Exception as e:
         logger.error("mcp_get_paper_content_error", doi=doi, error=str(e))
