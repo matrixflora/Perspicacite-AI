@@ -8,28 +8,33 @@ def test_discovery_sources_default_empty():
     assert p.enrichment_sources == []
 
 
-def test_discovery_sources_mirrored_from_legacy_metadata():
-    """Back-compat: metadata['sources'] populates discovery_sources."""
+def test_legacy_metadata_sources_not_mirrored():
+    """Back-compat shim removed: metadata['sources'] does NOT populate
+    discovery_sources. Callers must use the typed field directly."""
     p = Paper(
         id="x", title="t",
         metadata={"sources": ["openalex", "pubmed"]},
     )
-    assert p.discovery_sources == ["openalex", "pubmed"]
+    assert p.discovery_sources == []
 
 
-def test_enrichment_sources_mirrored_from_legacy_metadata():
+def test_legacy_metadata_enrichment_sources_not_mirrored():
+    """Back-compat shim removed: metadata['enrichment_sources'] does NOT
+    populate enrichment_sources. Callers must use the typed field directly."""
     p = Paper(
         id="x", title="t",
         metadata={"enrichment_sources": ["crossref"]},
     )
-    assert p.enrichment_sources == ["crossref"]
+    assert p.enrichment_sources == []
 
 
-def test_explicit_field_wins_over_legacy():
+def test_explicit_typed_field_used_directly():
+    """Typed fields are populated when passed as kwargs, independent of
+    metadata."""
     p = Paper(
         id="x", title="t",
         discovery_sources=["new_value"],
-        metadata={"sources": ["legacy_value"]},
+        metadata={"sources": ["ignored_legacy_value"]},
     )
     assert p.discovery_sources == ["new_value"]
 

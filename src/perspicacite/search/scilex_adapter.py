@@ -442,7 +442,6 @@ class SciLExAdapter:
                             _p.title.strip().lower()[:120], set()
                         )
                     if _archives:
-                        _p.metadata["sources"] = sorted(_archives)
                         _p.discovery_sources = sorted(_archives)
 
                 # Post-filter by article_type

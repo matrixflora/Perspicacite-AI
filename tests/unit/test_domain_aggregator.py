@@ -150,7 +150,7 @@ async def test_sources_attribution_populated():
     agg = DomainAwareAggregator([p1, p2], provider_timeout_s=5.0)
     results = await agg.search("any")
     assert len(results) == 1
-    sources = results[0].metadata.get("sources", [])
+    sources = results[0].discovery_sources
     assert "provA" in sources
     assert "provB" in sources
 
@@ -163,8 +163,8 @@ async def test_sources_attribution_unique_papers():
     results = await agg.search("any")
     assert len(results) == 2
     by_doi = {r.doi: r for r in results}
-    assert by_doi["10.1/a"].metadata.get("sources") == ["provA"]
-    assert by_doi["10.1/b"].metadata.get("sources") == ["provB"]
+    assert by_doi["10.1/a"].discovery_sources == ["provA"]
+    assert by_doi["10.1/b"].discovery_sources == ["provB"]
 
 
 @pytest.mark.asyncio

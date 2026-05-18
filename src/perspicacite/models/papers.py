@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class PaperSource(str, Enum):
@@ -72,7 +72,7 @@ class Paper(BaseModel):
     citation_count: int | None = None
     source: PaperSource = PaperSource.BIBTEX
     keywords: list[str] = Field(default_factory=list)
-    # === Provenance (formerly stored in metadata["sources"]) ===
+    # === Provenance ===
     # Which DBs returned this specific paper (e.g. ["openalex", "pubmed"]).
     discovery_sources: list[str] = Field(
         default_factory=list,
@@ -108,23 +108,6 @@ class Paper(BaseModel):
         if v < 1800 or v > current_year + 1:
             raise ValueError(f"Year must be between 1800 and {current_year + 1}")
         return v
-
-    @model_validator(mode="after")
-    def _mirror_legacy_metadata_sources(self) -> "Paper":
-        """Back-compat: if metadata['sources'] is set but discovery_sources
-        isn't, mirror the value so callers reading either work for one
-        release. Tier 3 finishes by removing all writers of the legacy
-        key; this validator can then be deleted.
-        """
-        if not self.discovery_sources:
-            legacy = (self.metadata or {}).get("sources")
-            if isinstance(legacy, list):
-                self.discovery_sources = list(legacy)
-        if not self.enrichment_sources:
-            legacy_e = (self.metadata or {}).get("enrichment_sources")
-            if isinstance(legacy_e, list):
-                self.enrichment_sources = list(legacy_e)
-        return self
 
     def __repr__(self) -> str:
         return f"Paper(id='{self.id}', title='{self.title[:50]}...')"

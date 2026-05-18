@@ -32,7 +32,7 @@ async def test_enrich_papers_fills_missing_abstract():
         result = await enrich_papers([p])
 
     assert result[0].abstract == "Crossref abstract text"
-    assert "crossref" in result[0].metadata.get("enrichment_sources", [])
+    assert "crossref" in result[0].enrichment_sources
 
 
 @pytest.mark.asyncio
@@ -54,7 +54,7 @@ async def test_enrich_papers_skips_papers_without_doi():
     p = Paper(id="x", title="Untitled, no DOI")
     with patch(f"{_MODULE}.canonicalize_candidates", side_effect=_fake_canonicalize_noop):
         await enrich_papers([p])
-    assert p.metadata.get("enrichment_sources") in (None, [])
+    assert p.enrichment_sources == []
 
 
 @pytest.mark.asyncio

@@ -222,7 +222,7 @@ async def enrich_papers(papers: list, *, concurrency: int | None = None) -> list
     Converts each Paper to a dict candidate (carrying only the fields
     Crossref cares about), runs ``canonicalize_candidates``, then
     writes the patched values back to the Paper. Records enrichment
-    provenance under ``paper.metadata["enrichment_sources"]`` (a list).
+    provenance under ``paper.enrichment_sources`` (a list).
 
     The original Paper objects are returned (same list, mutated). This
     is the public entry point for agentic, literature_survey, the
@@ -273,11 +273,6 @@ async def enrich_papers(papers: list, *, concurrency: int | None = None) -> list
             p.authors = [Author(name=str(n)) for n in c["authors"] if n]
 
         if c.get("enrichment_sources"):
-            existing = list(p.metadata.get("enrichment_sources") or [])
-            for src in c["enrichment_sources"]:
-                if src not in existing:
-                    existing.append(src)
-            p.metadata["enrichment_sources"] = existing
             for src in c["enrichment_sources"]:
                 if src not in p.enrichment_sources:
                     p.enrichment_sources.append(src)
