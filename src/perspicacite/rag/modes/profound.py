@@ -1592,7 +1592,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             try:
                 import hashlib as _hashlib
                 from perspicacite.rag.resolve_papers import resolve_papers_pipeline
-                _app_state = getattr(request, "app_state", None)
+                _app_state = getattr(self, "app_state", None)
                 web_papers = await resolve_papers_pipeline(
                     query=step_info.query,
                     databases=databases,
@@ -2184,6 +2184,7 @@ Follow the system instructions for this situation."""
             else []
         )
 
+        _cancelled_tid: str | None = None
         _resp_metadata: dict = {}
         if _cancelled_tid:
             _resp_metadata["cancelled"] = True
