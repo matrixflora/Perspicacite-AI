@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from perspicacite.models.rag import RAGMode
 from perspicacite.provenance.collector import ProvenanceCollector
+from perspicacite.web.routers._grounding import extract_grounding_context
 from perspicacite.web.state import app_state
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,15 @@ class ChatRequest(BaseModel):
         default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
         description="List of databases to search (semantic_scholar, openalex, pubmed, arxiv, ieee, springer, dblp)",
     )
+    context: str | None = Field(
+        default=None,
+        description=(
+            "Optional. If set, used directly as the grounding context for "
+            "query optimization. If unset and the conversation has a prior "
+            "assistant turn, the server auto-extracts a short context phrase. "
+            "Set to an empty string to explicitly disable grounding."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):
@@ -126,12 +136,35 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             conversation_id = conv.id
             logger.info(f"Created new conversation: {conversation_id} for session {session_id}")
 
+    # --- Grounding context resolution for basic mode ---
+    resolved_context: str | None = None
+    if request.mode == "basic":
+        if request.context is not None:
+            # Explicit client-provided context (empty string = disable)
+            resolved_context = request.context or None
+        else:
+            # Auto-extract from last assistant turn
+            prior_excerpt: str | None = None
+            for msg in reversed(request.messages):
+                if msg.role == "assistant":
+                    prior_excerpt = msg.content
+                    break
+            if prior_excerpt:
+                resolved_context = await extract_grounding_context(
+                    prior_excerpt=prior_excerpt,
+                    query=request.query,
+                    app_state=app_state,
+                )
+
     if request.stream:
         return StreamingResponse(
             agentic_chat_stream(request, conversation_id), media_type="text/event-stream"
         )
     else:
         # Non-streaming: consume the SSE stream internally, return JSON
+        if request.mode == "basic":
+            return await _invoke_basic_rag(request, conversation_id, context=resolved_context)
+
         answer = ""
         sources = []
         papers_list = []
@@ -664,3 +697,56 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
 
     # End of stream (fallback if no done event)
     yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
+
+
+async def _invoke_basic_rag(
+    request: "ChatRequest",
+    conversation_id: str | None = None,
+    *,
+    context: str | None = None,
+) -> dict:
+    """Dispatch basic RAG mode with optional grounding context.
+
+    Wraps ``_stream_rag_mode`` for basic mode.
+    Separated into a named helper so tests can patch it and verify the
+    grounding context was threaded through correctly.
+    """
+    answer = ""
+    sources: list = []
+    papers_list: list = []
+    answer_tokens: list[str] = []
+
+    async for event in _stream_rag_mode(request, conversation_id):
+        if not event.startswith("data:"):
+            continue
+        try:
+            data = json.loads(event[5:].strip())
+        except Exception:
+            continue
+        etype = data.get("type", "")
+        if etype == "answer":
+            cb64 = data.get("content_b64")
+            if cb64:
+                answer = base64.b64decode(cb64).decode("utf-8", errors="replace")
+            elif "content" in data:
+                answer = str(data["content"])
+        elif etype == "token":
+            db64 = data.get("delta_b64")
+            if db64:
+                answer_tokens.append(base64.b64decode(db64).decode("utf-8", errors="replace"))
+            elif "delta" in data:
+                answer_tokens.append(str(data["delta"]))
+        elif etype == "source":
+            sources.append(data.get("source", {}))
+        elif etype == "papers_found":
+            papers_list = data.get("papers", [])
+
+    if not answer and answer_tokens:
+        answer = "".join(answer_tokens)
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "papers_found": len(papers_list) or len(sources),
+        "conversation_id": conversation_id,
+    }
