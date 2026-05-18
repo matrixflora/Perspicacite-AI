@@ -284,7 +284,11 @@ function renderPaperDetailFromSource(panel, src) {
     const year = src.year ? String(src.year) : '';
     const journal = src.journal ? esc(src.journal) : '';
     const provider = src.source ? esc(String(src.source).replace(/_/g, ' ')) : '';
-    const abstract = src.chunk_text || '';
+    // Look in multiple places for the abstract: chunk_text is the legacy
+    // canonical slot; SourceReference also exposes ``abstract`` via the
+    // wire payload when the upstream paper had one (Crossref rescue path
+    // for Google Scholar hits, OpenAlex / PubMed direct).
+    const abstract = src.chunk_text || src.abstract || src.full_text || '';
     // Build the citation line piece-by-piece so we don't leave dangling
     // separators or em-dashes when fields are missing.
     const metaSegments = [];

@@ -7,16 +7,38 @@
     --bg-main: #f8fafc;
     --bg-sidebar: #f1f5f9;
     --bg-card: #ffffff;
+    --bg-elevated: #ffffff;     /* nested card on top of --bg-card */
+    --bg-subtle: #f8fafc;       /* faint highlight inside a card */
     --primary: #1b4479;
     --primary-light: #2d5a9e;
     --secondary: #04919A;
     --accent: #61CE70;
     --text-main: #1e293b;
     --text-muted: #64748b;
+    --text-subtle: #475569;
     --border: #e2e8f0;
+    --border-strong: #cbd5e1;
     --input-border: #cbd5e1;
     --shadow: none;
     --radius: 0.5rem;
+
+    /* Semantic badge palette — paired fg/bg tokens so badges adapt in dark
+       mode without per-badge overrides. Light values are tuned for ~AA
+       contrast against --bg-card. */
+    --badge-info-bg:    #dbeafe;  --badge-info-fg:    #1e40af;  --badge-info-border:    #bfdbfe;
+    --badge-good-bg:    #dcfce7;  --badge-good-fg:    #166534;  --badge-good-border:    #bbf7d0;
+    --badge-warn-bg:    #fef3c7;  --badge-warn-fg:    #92400e;  --badge-warn-border:    #fde68a;
+    --badge-soft-bg:    #f1f5f9;  --badge-soft-fg:    #475569;  --badge-soft-border:    #e2e8f0;
+    --badge-purple-bg:  #ede9fe;  --badge-purple-fg:  #5b21b6;  --badge-purple-border:  #ddd6fe;
+    --badge-pink-bg:    #fce7f3;  --badge-pink-fg:    #9d174d;  --badge-pink-border:    #fbcfe8;
+
+    --paper-found-bg:     #f0fdf4;
+    --paper-found-fg:     #166534;
+    --paper-found-border: #bbf7d0;
+
+    --code-bg:    #f1f5f9;
+    --code-fg:    #0f172a;
+    --code-border: #cbd5e1;
 }
 
 /* Dark theme */
@@ -24,15 +46,36 @@
     --bg-main: #0f172a;
     --bg-sidebar: #1e293b;
     --bg-card: #1e293b;
+    --bg-elevated: #27354c;     /* slightly lighter than --bg-card */
+    --bg-subtle: #243047;
     --primary: #60a5fa;
     --primary-light: #93c5fd;
     --secondary: #2dd4bf;
     --accent: #4ade80;
     --text-main: #f1f5f9;
     --text-muted: #94a3b8;
+    --text-subtle: #cbd5e1;     /* WAS implicit #475569 → unreadable */
     --border: #334155;
+    --border-strong: #475569;
     --input-border: #475569;
     --shadow: none;
+
+    /* Re-tuned badge palette for dark mode: muted backgrounds with
+       saturated foregrounds so chips stay legible against bg-card. */
+    --badge-info-bg:    #1e3a5f;  --badge-info-fg:    #93c5fd;  --badge-info-border:    #2c4f87;
+    --badge-good-bg:    #14352b;  --badge-good-fg:    #86efac;  --badge-good-border:    #1d5239;
+    --badge-warn-bg:    #3d2c11;  --badge-warn-fg:    #fcd34d;  --badge-warn-border:    #5b4218;
+    --badge-soft-bg:    #2c3a52;  --badge-soft-fg:    #cbd5e1;  --badge-soft-border:    #475569;
+    --badge-purple-bg:  #2c1e54;  --badge-purple-fg:  #c4b5fd;  --badge-purple-border:  #3f2d6e;
+    --badge-pink-bg:    #4a1b35;  --badge-pink-fg:    #f9a8d4;  --badge-pink-border:    #6d2c4e;
+
+    --paper-found-bg:     #14352b;
+    --paper-found-fg:     #bbf7d0;
+    --paper-found-border: #1d5239;
+
+    --code-bg:    #0b1322;
+    --code-fg:    #e2e8f0;
+    --code-border: #334155;
 }
 
 /* Theme transition */
@@ -88,4 +131,173 @@
 [data-theme="dark"] .message.thinking-message {
     background: #27354c;
     border-color: #475569;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Dark-mode overrides for the May-2026 GUI audit (see HANDOFF notes).
+   Covers: hardcoded `white` containers, intent/pipeline chips, papers-
+   found block, source-card affordances, survey cards, history hover
+   states, code excerpts, and modal surfaces.
+   ───────────────────────────────────────────────────────────────────── */
+
+/* Thinking steps: the inner cards used to be plain `white`. */
+[data-theme="dark"] .thinking-step {
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    color: var(--text-main);
+}
+[data-theme="dark"] .thinking-step .details {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-subtle);
+}
+[data-theme="dark"] .thinking-step .query-info {
+    color: var(--text-muted);
+}
+[data-theme="dark"] .thinking-step .query-info code {
+    background: var(--code-bg);
+    color: var(--code-fg);
+}
+[data-theme="dark"] .thinking-content {
+    border-top-color: var(--border);
+}
+[data-theme="dark"] .thinking-count {
+    color: var(--text-muted);
+}
+
+/* Stage-coloured thinking steps: re-tune the pastel backgrounds. */
+[data-theme="dark"] .thinking-step.analyzing {
+    background: #0c2840; color: #93c5fd; border-left-color: #38bdf8;
+}
+[data-theme="dark"] .thinking-step.planning {
+    background: #3d2c11; color: #fcd34d; border-left-color: #f59e0b;
+}
+[data-theme="dark"] .thinking-step.tool {
+    background: #14352b; color: #86efac; border-left-color: #4ade80;
+}
+[data-theme="dark"] .thinking-step.result {
+    background: #1f2253; color: #c4b5fd; border-left-color: #818cf8;
+}
+[data-theme="dark"] .thinking-step.complete {
+    background: #14352b; color: #bbf7d0; border-left-color: #4ade80;
+}
+
+/* Input container & inputs (some bypass --bg-card / --bg-main). */
+[data-theme="dark"] .input-container {
+    background: var(--bg-main);
+}
+[data-theme="dark"] .input-container input {
+    background: var(--bg-card);
+    color: var(--text-main);
+    border-color: var(--input-border);
+}
+[data-theme="dark"] .input-actions {
+    border-top-color: var(--border);
+}
+
+/* Modals — Delete KB, Clear History, Zotero, etc. */
+[data-theme="dark"] .modal,
+[data-theme="dark"] .modal-content,
+[data-theme="dark"] .modal-body {
+    background: var(--bg-card);
+    color: var(--text-main);
+    border-color: var(--border);
+}
+[data-theme="dark"] .modal h2,
+[data-theme="dark"] .modal h3 {
+    color: var(--text-main);
+}
+
+/* Intent chips — green/blue/yellow/pink pastels. */
+[data-theme="dark"] .intent-badge.natural_products_only {
+    background: var(--badge-good-bg); color: var(--badge-good-fg);
+}
+[data-theme="dark"] .intent-badge.papers_only {
+    background: var(--badge-info-bg); color: var(--badge-info-fg);
+}
+[data-theme="dark"] .intent-badge.combined_research {
+    background: var(--badge-warn-bg); color: var(--badge-warn-fg);
+}
+[data-theme="dark"] .intent-badge.follow_up {
+    background: var(--badge-pink-bg); color: var(--badge-pink-fg);
+}
+
+/* Pipeline chips on source cards. */
+[data-theme="dark"] .pipeline-structured { background: var(--badge-good-bg);   color: var(--badge-good-fg); }
+[data-theme="dark"] .pipeline-full_text  { background: var(--badge-info-bg);   color: var(--badge-info-fg); }
+[data-theme="dark"] .pipeline-abstract   { background: var(--badge-warn-bg);   color: var(--badge-warn-fg); }
+[data-theme="dark"] .pipeline-none       { background: var(--badge-soft-bg);   color: var(--badge-soft-fg); }
+[data-theme="dark"] .source-kb-tag       { background: var(--badge-purple-bg); color: var(--badge-purple-fg); }
+
+/* Papers-found block: the bright-green section the agent emits while
+   curating retrieved papers. */
+[data-theme="dark"] .papers-found {
+    background: var(--paper-found-bg);
+    border-color: var(--paper-found-border);
+}
+[data-theme="dark"] .papers-found h4 {
+    color: var(--paper-found-fg);
+}
+[data-theme="dark"] .papers-found .paper-item {
+    border-bottom-color: var(--paper-found-border);
+}
+
+/* Inline code in chat answers. */
+[data-theme="dark"] .query-info code,
+[data-theme="dark"] .message-text code,
+[data-theme="dark"] .message-text pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border: 1px solid var(--code-border);
+}
+
+/* Active/inactive chat-history items — light-mode rgba whites are
+   far too subtle in dark mode. */
+[data-theme="dark"] .chat-history-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+[data-theme="dark"] .chat-history-item.active {
+    background: rgba(96, 165, 250, 0.18);
+    border-left: 2px solid var(--primary);
+}
+[data-theme="dark"] .chat-history-item .chat-kb {
+    background: rgba(45, 212, 191, 0.18);
+    color: var(--secondary);
+}
+
+/* Survey panel (white cards on dark bg). */
+[data-theme="dark"] .survey-actions button,
+[data-theme="dark"] .survey-theme,
+[data-theme="dark"] .survey-report {
+    background: var(--bg-card);
+    color: var(--text-main);
+    border-color: var(--border);
+}
+[data-theme="dark"] .recommended-badge {
+    background: var(--badge-warn-bg);
+    color: var(--badge-warn-fg);
+}
+
+/* Code excerpts: hardcoded dark in source — fix the LIGHT side instead
+   so both modes are coherent (kept here for symmetry). */
+[data-theme="dark"] .code-excerpt {
+    background: var(--code-bg);
+    border-color: var(--code-border);
+}
+[data-theme="dark"] .code-excerpt-header {
+    background: var(--bg-elevated);
+}
+[data-theme="dark"] .code-excerpt-meta .line-range {
+    color: var(--text-muted);
+}
+
+/* Progress bar — light-grey-on-light-grey was invisible. */
+[data-theme="dark"] .progress-bar {
+    background: var(--bg-elevated);
+}
+
+/* KB info / create-form / select — already overridden above; reinforce
+   with text colours so labels stay readable. */
+[data-theme="dark"] .kb-info,
+[data-theme="dark"] .kb-create-form {
+    color: var(--text-main);
 }

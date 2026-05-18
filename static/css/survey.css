@@ -32,7 +32,7 @@
     padding: 8px 16px;
     border: 1px solid var(--border);
     border-radius: 6px;
-    background: white;
+    background: var(--bg-card);
     cursor: pointer;
     font-size: 13px;
     transition: all 0.2s;
@@ -63,7 +63,7 @@
 }
 
 .survey-theme {
-    background: white;
+    background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 8px;
     margin-bottom: 12px;
@@ -184,7 +184,7 @@
 }
 
 .survey-report {
-    background: white;
+    background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 20px;

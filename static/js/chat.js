@@ -57,6 +57,39 @@ async function checkStatus() {
     }
 }
 
+// Aborts the in-flight chat request so the user can stop a long-running
+// query. Set in sendQuery(), consumed by stopQuery(), nulled in the
+// completion/error paths. AbortController works with fetch streams: aborting
+// causes the ReadableStream reader to throw an AbortError on the next read.
+let currentChatAbort = null;
+
+function stopQuery() {
+    if (currentChatAbort) {
+        try { currentChatAbort.abort(); } catch (_) {}
+    }
+    // Best-effort backend hint — even without it, the AbortController will
+    // close the response stream and FastAPI's generator will get a cancel.
+    try {
+        if (conversationId) {
+            fetch('/api/chat/cancel', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ conversation_id: conversationId }),
+                keepalive: true,
+            }).catch(() => {});
+        }
+    } catch (_) {}
+    // Restore input state immediately so the user gets feedback.
+    const sendBtn = document.getElementById('send-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const input = document.getElementById('query-input');
+    if (sendBtn) sendBtn.style.display = '';
+    if (stopBtn) stopBtn.style.display = 'none';
+    if (input) input.disabled = false;
+    isProcessing = false;
+    addThinkingStep('Stopped by user.', 'result');
+}
+
 async function sendQuery() {
     if (isProcessing) return;
 
@@ -67,11 +100,18 @@ async function sendQuery() {
 
     syncRagModeFromDropdown();
 
+    // Arm the abort controller so the Stop button can cancel the fetch.
+    currentChatAbort = new AbortController();
+
     isProcessing = true;
     input.value = '';
     input.style.height = 'auto';
     input.disabled = true;
     document.getElementById('send-btn').disabled = true;
+    // Swap Send → Stop while the request is in flight.
+    document.getElementById('send-btn').style.display = 'none';
+    const _stopBtn = document.getElementById('stop-btn');
+    if (_stopBtn) _stopBtn.style.display = '';
     document.body.classList.add('chat-active');
     startStatusBar();
     // Seed an input-token estimate from the user message + conversation
@@ -127,6 +167,7 @@ async function sendQuery() {
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
+            signal: currentChatAbort ? currentChatAbort.signal : undefined,
             body: JSON.stringify(Object.assign({
                 query: query,
                 messages: messages.slice(0, -1),
@@ -176,7 +217,24 @@ async function sendQuery() {
                     console.warn('SSE JSON parse skipped:', e.message);
                     continue;
                 }
-                if (data.type === 'thinking') {
+                // Phase progress: prefer explicit phase_transition events from the
+                // backend; fall back to heuristic classification on other events.
+                try {
+                    if (data.type === 'phase_transition' && data.phase) {
+                        markAgenticPhase(data.phase);
+                    } else {
+                        const phase = _classifyPhase(data.type, data.message || data.details || '');
+                        if (phase) markAgenticPhase(phase);
+                    }
+                } catch (_) {}
+                if (data.type === 'phase_transition') {
+                    // Already handled above; no chat-stream rendering needed.
+                    continue;
+                } else if (data.type === 'intent_result') {
+                    renderIntentResult(data);
+                } else if (data.type === 'plan') {
+                    renderPlanResult(data);
+                } else if (data.type === 'thinking') {
                     addThinkingStep(data.message, 'analyzing', data.details);
                     if (data.message) setStatusLabel(String(data.message).slice(0, 80));
                 } else if (data.type === 'source') {
@@ -194,12 +252,21 @@ async function sendQuery() {
                         if (src.kb_name) {
                             kbTagHtml = '<span class="source-kb-tag">' + src.kb_name + '</span>';
                         }
-                        // Provider tag (e.g. "google_scholar", "openalex").
-                        // For SciLEx-routed papers the source string is
-                        // "scilex (multi-DB)" and source_apis lists the
-                        // underlying APIs that were queried in parallel.
+                        // Provider tag(s). Multi-DB matches (sources_all
+                        // length > 1) render as a chip GROUP so the user
+                        // sees that the same paper was returned by several
+                        // databases. Falls back to the single source string
+                        // (incl. "scilex (multi-DB)" with source_apis
+                        // tooltip) for legacy single-source cases.
                         let providerHtml = '';
-                        if (src.source) {
+                        const allSrcs = Array.isArray(src.sources_all) ? src.sources_all : [];
+                        if (allSrcs.length > 1) {
+                            providerHtml = ' ' + allSrcs.map(function (s) {
+                                const lbl = String(s).replace(/_/g, ' ');
+                                return '<span class="source-provider-tag" title="Returned by ' +
+                                    _escapeHtml(lbl) + '">' + _escapeHtml(lbl) + '</span>';
+                            }).join(' ');
+                        } else if (src.source) {
                             const provLabel = String(src.source).replace(/_/g, ' ');
                             const tipText = (src.source_apis && src.source_apis.length)
                                 ? ('Queried in parallel: ' + src.source_apis.join(', ') +
@@ -210,6 +277,27 @@ async function sendQuery() {
                                    '" target="_blank" rel="noopener noreferrer" title="' + tipText + '">' +
                                    provLabel + ' ↗</a>')
                                 : (' <span class="source-provider-tag" title="' + tipText + '">' + provLabel + '</span>');
+                        }
+                        // Enrichment chips: which secondary sources cleaned up
+                        // this record (Crossref canonical bibliographic patch,
+                        // OpenAlex abstract fill, Unpaywall OA detection).
+                        // Distinct visual treatment from the upstream-source
+                        // chips so the user can tell "where it came from"
+                        // (sources_all) vs "what enriched it" (enrichment_sources).
+                        let enrichHtml = '';
+                        const enrich = Array.isArray(src.enrichment_sources) ? src.enrichment_sources : [];
+                        if (enrich.length) {
+                            const enrichLabel = {
+                                crossref: 'Crossref',
+                                openalex: 'OpenAlex',
+                                unpaywall: 'Unpaywall',
+                            };
+                            enrichHtml = ' ' + enrich.map(function (e) {
+                                const key = String(e).toLowerCase();
+                                const lbl = enrichLabel[key] || key;
+                                return '<span class="source-enrichment-tag" title="Metadata enriched by ' +
+                                    _escapeHtml(lbl) + '">+' + _escapeHtml(lbl) + '</span>';
+                            }).join(' ');
                         }
                         // Compact relevance chip next to the details button.
                         const relPct = (src.relevance_score * 100).toFixed(1) + '%';
@@ -229,7 +317,7 @@ async function sendQuery() {
                         const detailsLink = ' <button class="paper-detail-link" onclick="openPaperDetail(' +
                             detailsArg + ')" title="View abstract and metadata">details</button>';
                         addThinkingStep(
-                            'Source: ' + src.title + ' ' + badgeHtml + kbTagHtml + providerHtml + relHtml + detailsLink,
+                            'Source: ' + src.title + ' ' + badgeHtml + kbTagHtml + providerHtml + enrichHtml + relHtml + detailsLink,
                             'result',
                             ''   // no longer needed — relevance now inline above
                         );
@@ -307,10 +395,18 @@ async function sendQuery() {
                         showPapersCuration(assistantDiv, data.papers);
                     }
                 } else if (data.type === 'status') {
-                    // Status update - could be progress message or literature survey completion
+                    // Status update - could be progress message, literature
+                    // survey completion, or a structured kind (query_rephrased
+                    // / provider_progress / batch_progress) we render richly.
                     if (data.session_id && data.papers_count !== undefined) {
                         // Literature survey complete - load the survey interface
                         setTimeout(() => loadSurveySession(data.session_id), 100);
+                    } else if (data.kind === 'query_rephrased') {
+                        renderQueryRephrased(data);
+                    } else if (data.kind === 'provider_progress') {
+                        renderProviderProgress(data);
+                    } else if (data.kind === 'batch_progress') {
+                        renderBatchProgress(data);
                     } else if (data.message) {
                         // Regular status message - show as thinking step
                         addThinkingStep(data.message, 'analyzing');
@@ -361,14 +457,27 @@ async function sendQuery() {
         const msg = isNetworkErr
             ? `❌ Could not reach the server at ${location.origin}/api/chat. It may be restarting or unreachable. Check the server console and retry. (original: ${error.message})`
             : `❌ Error: ${error.message || String(error)}`;
-        addMessage('assistant', msg);
-        console.error('sendQuery failed:', error);
+        // AbortError = the user clicked Stop. Surfacing it as a server error
+        // would be misleading; stopQuery() already added a "Stopped by user"
+        // line to the thinking strip.
+        if (!(error && (error.name === 'AbortError' || /aborted/i.test(error.message || '')))) {
+            addMessage('assistant', msg);
+            console.error('sendQuery failed:', error);
+        }
     }
 
     isProcessing = false;
     input.disabled = false;
     document.body.classList.remove('chat-active');
     stopStatusBar();
+    stopThinkingTicker();
+    markAgenticPhase('done');
+    // Restore Send/Stop button visibility.
+    const _sendBtnFinal = document.getElementById('send-btn');
+    const _stopBtnFinal = document.getElementById('stop-btn');
+    if (_sendBtnFinal) _sendBtnFinal.style.display = '';
+    if (_stopBtnFinal) _stopBtnFinal.style.display = 'none';
+    currentChatAbort = null;
     handleInputChange();  // Update button state based on content
     input.focus();
 }
@@ -587,6 +696,29 @@ function formatMessage(content) {
     return result.join('');
 }
 
+/* Heuristic phase classifier: maps an SSE event into one of five visible
+   phases shown in the agentic-mode progress strip. The orchestrator does
+   not emit explicit phase markers (yet) — we infer them from the
+   thinking message text and event type so the user gets a live
+   progress hint without a backend change. */
+const AGENTIC_PHASES = [
+    { id: 'classify',  label: 'Classify',  icon: '🧭', match: /intent|classif/i },
+    { id: 'plan',      label: 'Plan',      icon: '📋', match: /plan|strateg|breakdown/i },
+    { id: 'retrieve',  label: 'Retrieve',  icon: '🔎', match: /search|query|retriev|optimi|rewrit|paper|hit|result|aggreg|fetch|download/i },
+    { id: 'synth',     label: 'Synthesize', icon: '✍️', match: /synth|summari|writ|answer|generat|reflect|map[ -]reduce/i },
+    { id: 'done',      label: 'Done',      icon: '✅', match: /(complete|finished|done)/i },
+];
+
+function _classifyPhase(eventType, text) {
+    if (eventType === 'tool_call' || eventType === 'tool_result' || eventType === 'source') {
+        return 'retrieve';
+    }
+    if (eventType === 'token' || eventType === 'answer') return 'synth';
+    const t = String(text || '');
+    for (const p of AGENTIC_PHASES) if (p.match.test(t)) return p.id;
+    return null;
+}
+
 function createThinkingMessage() {
     const container = document.getElementById('chat-container');
     const modeEl = document.getElementById('mode-dropdown');
@@ -596,26 +728,289 @@ function createThinkingMessage() {
         'advanced': '🔍 Advanced Analysis',
         'profound': '🔬 Profound Research',
         'agentic': '🤖 Agent Thinking',
+        'literature_survey': '📚 Literature Survey',
+        'contradiction': '⚖️ Contradiction Analysis',
     };
     const label = modeLabels[mode] || '🧠 Processing';
+    // Modes where multi-step reasoning is the point: auto-expand the
+    // thinking panel so the user can watch progress without clicking.
+    const wantsExpanded = mode === 'agentic' || mode === 'profound' || mode === 'literature_survey';
+    const wantsPhaseStrip = mode === 'agentic' || mode === 'profound';
+
+    const phaseStripHtml = wantsPhaseStrip
+        ? `<div class="thinking-phase-strip" aria-label="Agentic phases">
+             ${AGENTIC_PHASES.map(p =>
+               `<span class="phase-pill" data-phase="${p.id}" title="${p.label}">${p.icon}<span class="phase-label">${p.label}</span></span>`
+             ).join('<span class="phase-sep">→</span>')}
+           </div>`
+        : '';
+
     const div = document.createElement('div');
     div.className = 'message assistant thinking-message';
+    if (wantsExpanded) div.classList.add('mode-expanded');
+    div.dataset.mode = mode;
     div.innerHTML = `
         <div class="thinking-header-bar" onclick="toggleThinkingMessage(this.parentElement)">
-            <span class="thinking-toggle">▶</span>
+            <span class="thinking-toggle">${wantsExpanded ? '▼' : '▶'}</span>
             <span class="thinking-label">${label}</span>
             <span class="thinking-dots" aria-hidden="true"></span>
+            <span class="thinking-elapsed" aria-label="Elapsed time">0s</span>
             <span class="thinking-count"></span>
         </div>
-        <div class="thinking-content collapsed">
+        ${phaseStripHtml}
+        <div class="thinking-content${wantsExpanded ? '' : ' collapsed'}">
             <div class="thinking-steps"></div>
         </div>
     `;
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
     currentThinkingMessage = div;
+    currentThinkingMessage.dataset.startedAt = String(Date.now());
     thinkingSteps = [];
+    // Drive the elapsed counter; stops when stopThinkingTicker() runs.
+    _startThinkingTicker(div);
     return div;
+}
+
+let _thinkingTickerId = null;
+function _startThinkingTicker(div) {
+    if (_thinkingTickerId) clearInterval(_thinkingTickerId);
+    const t0 = parseInt(div.dataset.startedAt, 10);
+    const elapsedEl = div.querySelector('.thinking-elapsed');
+    _thinkingTickerId = setInterval(() => {
+        if (!div.isConnected || !elapsedEl) {
+            clearInterval(_thinkingTickerId); _thinkingTickerId = null; return;
+        }
+        const s = Math.round((Date.now() - t0) / 1000);
+        elapsedEl.textContent = (s < 60 ? `${s}s` : `${Math.floor(s/60)}m${s%60}s`);
+    }, 500);
+}
+function stopThinkingTicker() {
+    if (_thinkingTickerId) { clearInterval(_thinkingTickerId); _thinkingTickerId = null; }
+}
+
+function markAgenticPhase(phaseId) {
+    if (!currentThinkingMessage || !phaseId) return;
+    const strip = currentThinkingMessage.querySelector('.thinking-phase-strip');
+    if (!strip) return;
+    const order = AGENTIC_PHASES.map(p => p.id);
+    const reached = order.indexOf(phaseId);
+    if (reached < 0) return;
+    strip.querySelectorAll('.phase-pill').forEach((pill, i) => {
+        pill.classList.toggle('active', i === reached);
+        pill.classList.toggle('done',   i < reached);
+    });
+}
+
+/* ── Structured agentic events (intent_result, plan) ─────────────────────── */
+
+function _escapeHtml(s) {
+    if (s == null) return '';
+    return String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderIntentResult(ev) {
+    if (!currentThinkingMessage) createThinkingMessage();
+    const stepsContainer = currentThinkingMessage.querySelector('.thinking-steps');
+    if (!stepsContainer) return;
+    const intent = String(ev.intent || 'unknown').replace(/_/g, ' ');
+    const confPct = (typeof ev.confidence === 'number')
+        ? Math.round(ev.confidence * 100) + '%'
+        : '';
+    const tools = Array.isArray(ev.suggested_tools) ? ev.suggested_tools : [];
+    const toolPills = tools.length
+        ? tools.map(t => `<span class="agentic-pill">${_escapeHtml(t)}</span>`).join(' ')
+        : '';
+    const reasoning = ev.reasoning
+        ? `<div class="agentic-reasoning">${_escapeHtml(ev.reasoning)}</div>`
+        : '';
+    const div = document.createElement('div');
+    div.className = 'thinking-step analyzing agentic-structured';
+    div.innerHTML = `
+        <span class="icon">🧭</span>
+        <div class="content">
+            <div><strong>Intent:</strong> ${_escapeHtml(intent)}${
+                confPct ? ` <span class="agentic-conf">${confPct}</span>` : ''
+            }${
+                ev.query_complexity && ev.query_complexity !== 'simple'
+                    ? ` <span class="agentic-pill agentic-pill-muted">${_escapeHtml(ev.query_complexity)}</span>`
+                    : ''
+            }</div>
+            ${toolPills ? `<div class="agentic-pills">${toolPills}</div>` : ''}
+            ${reasoning}
+        </div>
+    `;
+    stepsContainer.appendChild(div);
+    const countSpan = currentThinkingMessage.querySelector('.thinking-count');
+    if (countSpan) { thinkingSteps.push({intent: ev}); countSpan.textContent = `(${thinkingSteps.length} steps)`; }
+    const container = document.getElementById('chat-container');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+function renderPlanResult(ev) {
+    if (!currentThinkingMessage) createThinkingMessage();
+    const stepsContainer = currentThinkingMessage.querySelector('.thinking-steps');
+    if (!stepsContainer) return;
+    const steps = Array.isArray(ev.steps) ? ev.steps : [];
+    const stepList = steps.length
+        ? `<ol class="agentic-plan-list">${steps.map((s, i) => `
+            <li>
+                <span class="agentic-pill">${_escapeHtml(s.tool || s.type || 'step')}</span>
+                <span class="agentic-plan-desc">${_escapeHtml(s.description || '')}</span>
+                ${s.query ? `<div class="agentic-plan-query"><code>${_escapeHtml(s.query)}</code></div>` : ''}
+            </li>
+        `).join('')}</ol>`
+        : '<div class="agentic-reasoning">No steps planned.</div>';
+    const fromHistory = ev.can_answer_from_history
+        ? '<span class="agentic-pill agentic-pill-muted">answer from history</span>'
+        : '';
+    const reasoning = ev.reasoning
+        ? `<div class="agentic-reasoning">${_escapeHtml(ev.reasoning)}</div>`
+        : '';
+    const div = document.createElement('div');
+    div.className = 'thinking-step planning agentic-structured';
+    div.innerHTML = `
+        <span class="icon">📋</span>
+        <div class="content">
+            <div><strong>Plan:</strong> ${steps.length} step${steps.length === 1 ? '' : 's'} ${fromHistory}</div>
+            ${reasoning}
+            ${stepList}
+        </div>
+    `;
+    stepsContainer.appendChild(div);
+    const countSpan = currentThinkingMessage.querySelector('.thinking-count');
+    if (countSpan) { thinkingSteps.push({plan: ev}); countSpan.textContent = `(${thinkingSteps.length} steps)`; }
+    const container = document.getElementById('chat-container');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+// --- About modal --------------------------------------------------------
+function showAboutModal() {
+    const m = document.getElementById('about-modal');
+    if (m) m.classList.add('visible');
+}
+function hideAboutModal() {
+    const m = document.getElementById('about-modal');
+    if (m) m.classList.remove('visible');
+}
+
+// --- Structured live-process renderers ----------------------------------
+// Show a query rewrite (conversation-aware OR keyword optimizer) as its
+// own card: original on top with a strike-through, rewritten below.
+function renderQueryRephrased(ev) {
+    if (!currentThinkingMessage) createThinkingMessage();
+    const stepsContainer = currentThinkingMessage.querySelector('.thinking-steps');
+    if (!stepsContainer) return;
+    const byLabel = ev.by === 'conversation_history'
+        ? 'conversation context'
+        : 'keyword optimizer';
+    const div = document.createElement('div');
+    div.className = 'thinking-step analyzing agentic-structured';
+    div.setAttribute('data-depth', '1');
+    div.innerHTML = `
+        <span class="icon">✏️</span>
+        <div class="content">
+            <div><strong>Query rewritten</strong>
+                <span class="agentic-pill agentic-pill-muted">${_escapeHtml(byLabel)}</span></div>
+            <div class="agentic-rephrase-original">${_escapeHtml(ev.original || '')}</div>
+            <div class="agentic-rephrase-arrow">↓</div>
+            <div class="agentic-rephrase-rewritten">${_escapeHtml(ev.rewritten || '')}</div>
+        </div>`;
+    stepsContainer.appendChild(div);
+    const countSpan = currentThinkingMessage.querySelector('.thinking-count');
+    if (countSpan) { thinkingSteps.push({rephrase: ev}); countSpan.textContent = `(${thinkingSteps.length} steps)`; }
+    const container = document.getElementById('chat-container');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+// Provider progress: start = "Querying X, Y, Z...", done = per-provider counts.
+function renderProviderProgress(ev) {
+    if (!currentThinkingMessage) createThinkingMessage();
+    const stepsContainer = currentThinkingMessage.querySelector('.thinking-steps');
+    if (!stepsContainer) return;
+    const div = document.createElement('div');
+    div.className = 'thinking-step ' + (ev.phase === 'done' ? 'result' : 'tool') + ' agentic-structured';
+    div.setAttribute('data-depth', '1');
+    let body = '';
+    if (ev.phase === 'start') {
+        const provs = Array.isArray(ev.providers) ? ev.providers : [];
+        const pills = provs.map(p => `<span class="agentic-pill">${_escapeHtml(p)}</span>`).join(' ');
+        body = `
+            <span class="icon">🔎</span>
+            <div class="content">
+                <div><strong>Querying databases</strong></div>
+                <div class="agentic-pills">${pills}</div>
+            </div>`;
+    } else {
+        const bp = ev.by_provider || {};
+        const entries = Object.entries(bp).sort((a, b) => b[1] - a[1]);
+        const pills = entries.length
+            ? entries.map(([k, v]) =>
+                `<span class="agentic-pill">${_escapeHtml(k)} <strong>${v}</strong></span>`
+              ).join(' ')
+            : `<span class="agentic-pill-muted">${ev.total || 0} hits</span>`;
+        body = `
+            <span class="icon">📊</span>
+            <div class="content">
+                <div><strong>Database results</strong>
+                    <span class="agentic-pill agentic-pill-muted">${ev.total || 0} total</span></div>
+                <div class="agentic-pills">${pills}</div>
+            </div>`;
+    }
+    div.innerHTML = body;
+    stepsContainer.appendChild(div);
+    const countSpan = currentThinkingMessage.querySelector('.thinking-count');
+    if (countSpan) { thinkingSteps.push({provider: ev}); countSpan.textContent = `(${thinkingSteps.length} steps)`; }
+    const container = document.getElementById('chat-container');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+// Batch progress: live updating "X/Y" with a progress bar. We KEY by stage
+// so each phase (abstract_analysis, theme_assignment, …) gets its own
+// in-place updating row instead of one row per tick.
+const _batchProgressNodes = {};  // stage -> DOM node
+function renderBatchProgress(ev) {
+    if (!currentThinkingMessage) createThinkingMessage();
+    const stepsContainer = currentThinkingMessage.querySelector('.thinking-steps');
+    if (!stepsContainer) return;
+    const stage = String(ev.stage || 'batch');
+    const cur = Number(ev.current || 0), tot = Number(ev.total || 1);
+    const pct = Math.max(0, Math.min(100, Math.round((cur / tot) * 100)));
+    let node = _batchProgressNodes[stage];
+    if (!node || !node.isConnected) {
+        node = document.createElement('div');
+        node.className = 'thinking-step tool agentic-structured';
+        node.setAttribute('data-depth', '1');
+        stepsContainer.appendChild(node);
+        _batchProgressNodes[stage] = node;
+    }
+    // Human-friendly labels per known stage.
+    const stageLabel = {
+        abstract_analysis: 'Abstract analysis',
+        theme_assignment: 'Theme assignment',
+    }[stage] || stage.replace(/_/g, ' ');
+    const unit = (stage === 'abstract_analysis') ? 'batch' : 'paper';
+    const sizeBadge = (ev.batch_size && Number(ev.batch_size) > 0)
+        ? `<span class="agentic-pill agentic-pill-muted">${ev.batch_size} ${unit === 'batch' ? 'papers in batch' : 'in batch'}</span>`
+        : '';
+    node.innerHTML = `
+        <span class="icon">📚</span>
+        <div class="content">
+            <div><strong>${_escapeHtml(stageLabel)}: ${cur}/${tot}</strong>
+                ${sizeBadge}</div>
+            <div class="agentic-progress-bar">
+                <div class="agentic-progress-bar-fill" style="width:${pct}%"></div>
+            </div>
+        </div>`;
+    if (cur >= tot) {
+        // Completed — drop the handle so a fresh node spawns if this stage
+        // restarts later (it doesn't in normal flow, but cleanly closes it).
+        delete _batchProgressNodes[stage];
+    }
+    const container = document.getElementById('chat-container');
+    if (container) container.scrollTop = container.scrollHeight;
 }
 
 function toggleThinkingMessage(messageDiv) {
