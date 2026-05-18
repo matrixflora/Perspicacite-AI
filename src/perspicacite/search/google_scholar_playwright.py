@@ -35,6 +35,25 @@ logger = get_logger("perspicacite.search.google_scholar_playwright")
 _SCHOLAR_BASE = "https://scholar.google.com/scholar"
 _DOI_RE = re.compile(r"https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[^\s\"'>]+)")
 _YEAR_RE = re.compile(r"\b(19[5-9]\d|20[0-2]\d)\b")
+_CITED_BY_RE = re.compile(r"^Cited by\s+(\d+)", re.IGNORECASE)
+
+
+def _extract_citation_count(footer_text: str) -> int | None:
+    """Parse 'Cited by N' from the ``.gs_fl`` footer text.
+
+    Robust to varied whitespace and lead-text; returns None when no
+    match (so Paper.citation_count stays None instead of 0, preserving
+    the "unknown vs known-zero" distinction).
+    """
+    if not footer_text:
+        return None
+    m = _CITED_BY_RE.search(footer_text)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except (TypeError, ValueError):
+        return None
 
 
 def _build_scholar_url(
@@ -149,9 +168,21 @@ async def _render_and_extract_cards(
                     if snip_el:
                         snippet = (await snip_el.inner_text()).strip()
 
+                    # Footer (contains "Cited by N Related articles ...")
+                    footer = ""
+                    footer_el = await card_el.query_selector(".gs_fl")
+                    if footer_el:
+                        footer = (await footer_el.inner_text()).strip()
+
                     if title:
                         cards.append(
-                            {"title": title, "url": href, "meta": meta, "snippet": snippet}
+                            {
+                                "title": title,
+                                "url": href,
+                                "meta": meta,
+                                "snippet": snippet,
+                                "footer": footer,
+                            }
                         )
                 return cards
             finally:
@@ -257,6 +288,7 @@ class GoogleScholarPlaywrightProvider:
 
             title = card.get("title") or "Untitled"
             paper_id = doi or "scholar:" + hashlib.sha256(title.encode()).hexdigest()[:8]
+            citation_count = _extract_citation_count(card.get("footer", ""))
 
             papers.append(
                 Paper(
@@ -266,6 +298,7 @@ class GoogleScholarPlaywrightProvider:
                     year=year,
                     doi=doi,
                     abstract=card.get("snippet") or None,
+                    citation_count=citation_count,
                     source=PaperSource.GOOGLE_SCHOLAR,
                     metadata={
                         "scholar_url": card.get("url", ""),
