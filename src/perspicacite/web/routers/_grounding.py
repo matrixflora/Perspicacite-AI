@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from perspicacite.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 _PROMPT = """The user just sent a new query in a chat. Decide if it continues the prior
@@ -114,7 +115,7 @@ async def extract_grounding_context(
         logger.warning("grounding_extractor_timeout")
         return None
     except Exception as exc:
-        logger.warning("grounding_extractor_llm_error: %s", exc)
+        logger.warning("grounding_extractor_llm_error", error=str(exc))
         return None
 
     cleaned = _strip_code_fence(text)
@@ -122,9 +123,8 @@ async def extract_grounding_context(
         obj = json.loads(cleaned)
     except Exception as exc:
         logger.warning(
-            "grounding_extractor_unparseable: %s | sample=%s",
-            exc,
-            cleaned[:200],
+            "grounding_extractor_unparseable",
+            error=str(exc), sample=cleaned[:200],
         )
         return None
 
