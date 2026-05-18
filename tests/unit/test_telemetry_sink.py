@@ -62,3 +62,34 @@ def test_null_sink_drops_everything():
     s.append({"x": 1})
     assert len(s) == 0
     assert bool(s) is False
+
+
+@pytest.mark.asyncio
+async def test_callback_sink_append_in_async_context():
+    """append() schedules callback via create_task when a loop is running."""
+    received: list[dict] = []
+
+    async def cb(e):
+        received.append(e)
+
+    s = CallbackTelemetrySink(cb)
+    s.append({"z": 99})
+    # The task is scheduled but not yet run; yield control to let it execute.
+    await asyncio.sleep(0)
+    assert received == [{"z": 99}]
+    assert s.events == [{"z": 99}]
+
+
+def test_callback_sink_append_no_loop_silently_drops():
+    """append() in a sync context with no running loop must not raise."""
+    received: list[dict] = []
+
+    async def cb(e):
+        received.append(e)
+
+    s = CallbackTelemetrySink(cb)
+    # No event loop is running here — RuntimeError is caught silently.
+    s.append({"w": 42})
+    # The event was buffered locally even though the callback was not invoked.
+    assert s.events == [{"w": 42}]
+    assert received == []

@@ -1,6 +1,6 @@
 """TelemetrySink: unified protocol for in-RAG-pipeline progress events.
 
-Two implementations:
+Three implementations:
 
 - ``ListTelemetrySink``     : drop-in replacement for the legacy
   ``telemetry: list[dict]`` pattern; the SSE chat router and existing
@@ -10,8 +10,8 @@ Two implementations:
   The MCP layer wraps ``ctx.report_progress`` in this so external
   agents see live progress notifications during long-running tools.
 
-A ``NullTelemetrySink`` no-op is provided for tests / callers that
-don't care about events.
+- ``NullTelemetrySink``     : drops every event. Useful in tests /
+  batch scripts that don't care about progress notifications.
 
 Both `append` (sync, list-style) and `on_event_async` (async, callback-style)
 APIs are exposed on every sink so mode code can use whichever feels
@@ -19,6 +19,7 @@ natural without conditionally checking the sink type.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Awaitable, Callable, Protocol
 
 
@@ -71,7 +72,6 @@ class CallbackTelemetrySink:
         self.events: list[dict[str, Any]] = []
 
     def append(self, event: dict[str, Any]) -> None:
-        import asyncio
         self.events.append(event)
         try:
             loop = asyncio.get_running_loop()
@@ -92,7 +92,8 @@ class CallbackTelemetrySink:
 class NullTelemetrySink:
     """Drops every event. Useful in tests / batch scripts."""
 
-    events: list[dict[str, Any]] = []
+    def __init__(self) -> None:
+        self.events: list[dict[str, Any]] = []
 
     def append(self, event: dict[str, Any]) -> None:
         return None
