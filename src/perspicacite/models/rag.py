@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from perspicacite.models.search import SearchFilters
 
@@ -91,6 +91,11 @@ class SourceReference(BaseModel):
 
 class RAGRequest(BaseModel):
     """Request for RAG query."""
+
+    # extra="allow" lets callers attach transient runtime fields like
+    # ``telemetry_sink`` without subclassing. These extra fields are never
+    # serialised / validated, keeping the schema stable.
+    model_config = ConfigDict(extra="allow")
 
     query: str
     kb_name: str = "default"

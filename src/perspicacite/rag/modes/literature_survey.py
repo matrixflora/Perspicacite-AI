@@ -304,43 +304,46 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
 
         # Phase 1: Search
         yield StreamEvent.status("Literature Survey: Searching across academic databases...")
-        _bs_telemetry: list[dict[str, Any]] = []
+        _bs_telemetry = getattr(request, "telemetry_sink", None) or []
         papers = await self._broad_search(
             request.query, request.databases, telemetry=_bs_telemetry
         )
-        for _ev in _bs_telemetry:
-            _k = _ev.get("kind")
-            if _k == "query_rephrased":
-                yield StreamEvent.status_kind(
-                    f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
-                    kind="query_rephrased",
-                    original=_ev.get("original", ""),
-                    rewritten=_ev.get("rewritten", ""),
-                    by=_ev.get("by", "keyword_optimizer"),
-                )
-            elif _k == "provider_progress" and _ev.get("phase") == "start":
-                _provs = ", ".join(
-                    p.replace("_", " ").title() for p in _ev.get("providers", [])
-                )
-                yield StreamEvent.status_kind(
-                    f"Querying databases: {_provs}…",
-                    kind="provider_progress",
-                    phase="start",
-                    providers=_ev.get("providers", []),
-                )
-            elif _k == "provider_progress" and _ev.get("phase") == "done":
-                _bp = _ev.get("by_provider", {}) or {}
-                _msg = ", ".join(
-                    f"{src.replace('_',' ').title()}: {n}"
-                    for src, n in sorted(_bp.items(), key=lambda kv: -kv[1])
-                ) if _bp else f"Total {_ev.get('total', 0)} hits"
-                yield StreamEvent.status_kind(
-                    f"Database results — {_msg}",
-                    kind="provider_progress",
-                    phase="done",
-                    total=_ev.get("total", 0),
-                    by_provider=_bp,
-                )
+        # When _bs_telemetry is a CallbackTelemetrySink (MCP path), events
+        # already flowed to ctx.report_progress live — skip the drain.
+        if isinstance(_bs_telemetry, list):
+            for _ev in _bs_telemetry:
+                _k = _ev.get("kind")
+                if _k == "query_rephrased":
+                    yield StreamEvent.status_kind(
+                        f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
+                        kind="query_rephrased",
+                        original=_ev.get("original", ""),
+                        rewritten=_ev.get("rewritten", ""),
+                        by=_ev.get("by", "keyword_optimizer"),
+                    )
+                elif _k == "provider_progress" and _ev.get("phase") == "start":
+                    _provs = ", ".join(
+                        p.replace("_", " ").title() for p in _ev.get("providers", [])
+                    )
+                    yield StreamEvent.status_kind(
+                        f"Querying databases: {_provs}…",
+                        kind="provider_progress",
+                        phase="start",
+                        providers=_ev.get("providers", []),
+                    )
+                elif _k == "provider_progress" and _ev.get("phase") == "done":
+                    _bp = _ev.get("by_provider", {}) or {}
+                    _msg = ", ".join(
+                        f"{src.replace('_',' ').title()}: {n}"
+                        for src, n in sorted(_bp.items(), key=lambda kv: -kv[1])
+                    ) if _bp else f"Total {_ev.get('total', 0)} hits"
+                    yield StreamEvent.status_kind(
+                        f"Database results — {_msg}",
+                        kind="provider_progress",
+                        phase="done",
+                        total=_ev.get("total", 0),
+                        by_provider=_bp,
+                    )
 
         # Pre-filter: remove papers already in any provided KB
         papers = self._filter_known_papers(papers, known_paper_ids)
@@ -581,6 +584,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     databases=extra_apis,
                     max_docs=100,
                     app_state=_app_state,
+                    telemetry=telemetry,
                 ))
                 task_labels.append("standalone")
 

@@ -1343,6 +1343,18 @@ async def generate_report(
             model=default_model,
         )
 
+        # Build telemetry sink and attach to the request so each RAG mode
+        # can read it via getattr(request, "telemetry_sink", None).
+        # The SSE chat path never sets this field, so legacy code hits
+        # the `or []` fallback and behaves identically to before.
+        if ctx is not None:
+            from perspicacite.mcp.progress_adapter import MCPProgressAdapter
+            from perspicacite.rag.telemetry import CallbackTelemetrySink
+            _progress_adapter = MCPProgressAdapter(ctx)
+            rag_request.telemetry_sink = CallbackTelemetrySink(  # type: ignore[attr-defined]
+                _progress_adapter.on_event
+            )
+
         async for event in engine.query_stream(rag_request, message_id=message_id):
             if event.event == "content":
                 import json as _json

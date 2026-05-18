@@ -722,7 +722,7 @@ class BasicRAGMode(BaseRAGMode):
             yield StreamEvent.status(
                 f"No KB results — falling back to web literature search across {_db_pretty}…"
             )
-            _telemetry: list[dict[str, Any]] = []
+            _telemetry = getattr(request, "telemetry_sink", None) or []
             paper_results = await _web_fallback_papers(
                 query=search_query,
                 databases=request.databases,
@@ -736,45 +736,48 @@ class BasicRAGMode(BaseRAGMode):
             )
             # Drain telemetry into SSE so the UI sees query rewriting +
             # per-provider counts in real time.
-            for _ev in _telemetry:
-                _k = _ev.get("kind")
-                if _k == "query_rephrased":
-                    yield StreamEvent.status_kind(
-                        f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
-                        kind="query_rephrased",
-                        original=_ev.get("original", ""),
-                        rewritten=_ev.get("rewritten", ""),
-                        by=_ev.get("by", "keyword_optimizer"),
-                    )
-                elif _k == "provider_progress" and _ev.get("phase") == "start":
-                    _provs = ", ".join(
-                        p.replace("_", " ").title() for p in _ev.get("providers", [])
-                    )
-                    yield StreamEvent.status_kind(
-                        f"Querying databases: {_provs}…",
-                        kind="provider_progress",
-                        phase="start",
-                        providers=_ev.get("providers", []),
-                    )
-                elif _k == "provider_progress" and _ev.get("phase") == "done":
-                    _bp = _ev.get("by_provider", {}) or {}
-                    _msg = (
-                        ", ".join(
-                            f"{src.replace('_',' ').title()}: {n}"
-                            for src, n in sorted(
-                                _bp.items(), key=lambda kv: -kv[1]
-                            )
+            # When _telemetry is a CallbackTelemetrySink (MCP path), events
+            # already flowed to ctx.report_progress live — skip the drain.
+            if isinstance(_telemetry, list):
+                for _ev in _telemetry:
+                    _k = _ev.get("kind")
+                    if _k == "query_rephrased":
+                        yield StreamEvent.status_kind(
+                            f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
+                            kind="query_rephrased",
+                            original=_ev.get("original", ""),
+                            rewritten=_ev.get("rewritten", ""),
+                            by=_ev.get("by", "keyword_optimizer"),
                         )
-                        if _bp
-                        else f"Total {_ev.get('total', 0)} hits"
-                    )
-                    yield StreamEvent.status_kind(
-                        f"Database results — {_msg}",
-                        kind="provider_progress",
-                        phase="done",
-                        total=_ev.get("total", 0),
-                        by_provider=_bp,
-                    )
+                    elif _k == "provider_progress" and _ev.get("phase") == "start":
+                        _provs = ", ".join(
+                            p.replace("_", " ").title() for p in _ev.get("providers", [])
+                        )
+                        yield StreamEvent.status_kind(
+                            f"Querying databases: {_provs}…",
+                            kind="provider_progress",
+                            phase="start",
+                            providers=_ev.get("providers", []),
+                        )
+                    elif _k == "provider_progress" and _ev.get("phase") == "done":
+                        _bp = _ev.get("by_provider", {}) or {}
+                        _msg = (
+                            ", ".join(
+                                f"{src.replace('_',' ').title()}: {n}"
+                                for src, n in sorted(
+                                    _bp.items(), key=lambda kv: -kv[1]
+                                )
+                            )
+                            if _bp
+                            else f"Total {_ev.get('total', 0)} hits"
+                        )
+                        yield StreamEvent.status_kind(
+                            f"Database results — {_msg}",
+                            kind="provider_progress",
+                            phase="done",
+                            total=_ev.get("total", 0),
+                            by_provider=_bp,
+                        )
             web_fallback_used = True
             if paper_results:
                 # Per-source breakdown so the user sees that multi-DB search
