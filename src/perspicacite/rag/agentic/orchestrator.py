@@ -822,6 +822,12 @@ class AgenticOrchestrator:
         replan_count = 0
 
         for iteration in range(self.max_iterations):
+            from perspicacite.rag.cancellation import is_cancelled
+            _tid = getattr(request, "task_id", None)
+            if _tid and is_cancelled(_tid):
+                logger.info("agentic_cancelled", task_id=_tid, iteration=iteration)
+                return
+
             logger.info(
                 "agentic_iteration_start",
                 iteration=iteration + 1,

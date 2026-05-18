@@ -456,6 +456,13 @@ class ProfoundRAGMode(BaseRAGMode):
 
         # Main research loop
         for cycle in range(self.max_cycles):
+            # Cancellation check — respect MCP cancel_task requests
+            from perspicacite.rag.cancellation import is_cancelled
+            _tid = getattr(request, "task_id", None)
+            if _tid and is_cancelled(_tid):
+                logger.info("profound_cancelled", task_id=_tid, cycle=cycle)
+                break
+
             # F-17: hard wall-clock budget. Break before starting a new
             # cycle if we've already burned the budget — the answer so
             # far is still finalized below.
@@ -669,6 +676,13 @@ class ProfoundRAGMode(BaseRAGMode):
             logger.debug("profound_upfront_optimizer_failed", error=str(_qe))
 
         for cycle in range(self.max_cycles):
+            from perspicacite.rag.cancellation import is_cancelled
+            _tid = getattr(request, "task_id", None)
+            if _tid and is_cancelled(_tid):
+                logger.info("profound_cancelled", task_id=_tid, cycle=cycle)
+                yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
+                return
+
             self.iterations = cycle + 1
             yield StreamEvent.status(
                 f"Profound RAG: Research cycle {self.iterations}/{self.max_cycles}..."

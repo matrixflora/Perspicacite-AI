@@ -130,6 +130,10 @@ class RAGRequest(BaseModel):
     recency_weight: float | None = Field(default=None, ge=0.0, le=1.0)
     recency_half_life_years: float | None = Field(default=None, gt=0.0)
     kb_names: list[str] | None = None
+    task_id: str | None = Field(
+        default=None,
+        description="Optional task ID for MCP cancellation tracking",
+    )
 
     def __repr__(self) -> str:
         return (

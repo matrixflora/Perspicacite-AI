@@ -390,6 +390,14 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 "batch_size": batch_size,
             })
 
+        # Cancellation check — respect MCP cancel_task requests
+        from perspicacite.rag.cancellation import is_cancelled as _is_cancelled
+        _tid = getattr(request, "task_id", None)
+        if _tid and _is_cancelled(_tid):
+            logger.info("literature_survey_cancelled", task_id=_tid, stage="pre_analysis")
+            yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
+            return
+
         yield StreamEvent.status("Literature Survey: Analyzing abstracts in batches...")
 
         analysis_task = asyncio.create_task(
@@ -405,6 +413,12 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             try:
                 ev = await asyncio.wait_for(_progress_q.get(), timeout=0.5)
             except asyncio.TimeoutError:
+                # Also check for cancellation between batches
+                if _tid and _is_cancelled(_tid):
+                    analysis_task.cancel()
+                    logger.info("literature_survey_cancelled", task_id=_tid, stage="mid_analysis")
+                    yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
+                    return
                 continue
             yield StreamEvent.status_kind(
                 f"Analyzing batch {ev['current']}/{ev['total']} ({ev['batch_size']} papers)…",

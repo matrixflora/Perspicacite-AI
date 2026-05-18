@@ -1236,6 +1236,7 @@ async def generate_report(
     max_papers: int = 10,
     recency_weight: float = 0.0,
     kb_names: list[str] | None = None,
+    task_id: str | None = None,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1262,6 +1263,20 @@ async def generate_report(
     state = _require_state()
     if isinstance(state, str):
         return state
+
+    import uuid as _uuid
+    if not task_id:
+        task_id = f"mcp-{_uuid.uuid4().hex[:12]}"
+
+    # Emit the task_id immediately via ctx so the client can cancel.
+    if ctx is not None:
+        try:
+            await ctx.report_progress(
+                progress=0, total=100,
+                message=f"Task started — task_id={task_id}",
+            )
+        except Exception:
+            pass
 
     # Bind ctx for any nested LLM call via sampling. We use the
     # contextvar token directly here (rather than the `with` form) to
@@ -1341,6 +1356,7 @@ async def generate_report(
             recency_weight=recency_weight if recency_weight > 0 else None,
             provider=default_provider,
             model=default_model,
+            task_id=task_id,
         )
 
         # Build telemetry sink and attach to the request so each RAG mode
@@ -4001,6 +4017,40 @@ async def web_search(
     })
 
 
+# =============================================================================
+# cancel_task — abort an in-flight generate_report / search_to_kb / web_search
+# =============================================================================
+
+
+@mcp.tool()
+async def cancel_task(task_id: str) -> str:
+    """Mark a running MCP task as cancelled.
+
+    Long-running tools (``generate_report``, ``search_to_kb``,
+    ``web_search``) check the cancellation registry at safe points
+    (between RAG cycles / batches / iterations) and return early
+    when the registry says their task_id has been cancelled.
+
+    The task_id is the same one returned in the first progress
+    notification of the cancellable tool's response.
+
+    Returns:
+        JSON: {"ok": true, "task_id": str, "was_running": bool}
+        ``was_running`` is best-effort — we cannot perfectly distinguish
+        a task that already finished from one that never existed.
+    """
+    import json as _json
+    from perspicacite.rag.cancellation import mark_cancelled
+    if not task_id:
+        return _json.dumps({"ok": False, "error": "missing task_id"})
+    await mark_cancelled(task_id)
+    return _json.dumps({
+        "ok": True,
+        "task_id": task_id,
+        "was_running": True,  # see docstring — best-effort
+    })
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
@@ -4032,6 +4082,7 @@ _TOOL_NAMES: list[str] = [
     "ingest_github_repo",
     "ingest_skill_bundle",
     "web_search",
+    "cancel_task",
 ]
 
 
