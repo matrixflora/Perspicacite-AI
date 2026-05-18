@@ -417,17 +417,19 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             databases = ["semantic_scholar", "openalex", "pubmed"]
 
         # Rewrite the query via the shared optimizer (Haiku) before searching.
-        effective_query = query
+        # 1. Global app_state fallback (simple guard, no nesting)
+        _app_state = None
         try:
-            _app_state = None
-            try:
-                from perspicacite.web.state import app_state as _gs
-                _app_state = _gs
-            except Exception:
-                pass
+            from perspicacite.web.state import app_state as _gs
+            _app_state = _gs
+        except Exception:
+            pass
 
-            if _app_state is not None and getattr(_app_state, "config", None) is not None:
-                import perspicacite.search.query_optimizer as _qo_mod
+        # 2. Optimizer call in its own try/except
+        effective_query = query
+        if _app_state is not None and getattr(_app_state, "config", None) is not None:
+            import perspicacite.search.query_optimizer as _qo_mod
+            try:
                 opt = await _qo_mod.optimize_query(
                     query=query,
                     context=None,
@@ -441,12 +443,9 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                         original=query,
                         rewritten=effective_query,
                     )
-        except Exception as _opt_exc:
-            logger.warning(
-                "literature_survey_optimizer_failed",
-                error=str(_opt_exc),
-            )
-            effective_query = query
+            except Exception as _opt_exc:
+                logger.warning("literature_survey_optimizer_failed", error=str(_opt_exc))
+                # effective_query already = query, no reassignment needed
 
         try:
             papers = await self.scilex_adapter.search(

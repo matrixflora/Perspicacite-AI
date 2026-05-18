@@ -67,3 +67,45 @@ async def test_broad_search_substitutes_rewritten_query():
     assert captured["query"] == "original user query"
     # SciLEx adapter received the rewritten query.
     assert fake_scilex.search.call_args.kwargs["query"] == "rewritten literature survey phrase"
+
+
+@pytest.mark.asyncio
+async def test_broad_search_optimizer_failure_falls_back_to_original():
+    """When optimize_query raises, the original query reaches SciLEx."""
+    fake_scilex = MagicMock()
+    fake_scilex.search = AsyncMock(return_value=[])
+
+    async def raise_on_optimize(**kwargs):
+        raise RuntimeError("optimizer exploded")
+
+    with patch(
+        "perspicacite.search.query_optimizer.optimize_query",
+        side_effect=raise_on_optimize,
+    ):
+        from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
+
+        stub_state = MagicMock()
+        stub_state.config.search.query_optimization.enabled = True
+        stub_state.config.search.query_optimization.timeout_s = 5.0
+        stub_state.config.search.query_optimization.max_context_chars = 300
+        stub_state.config.llm.default_provider = "anthropic"
+        stub_state.config.llm.default_model = "claude-haiku-4-5"
+        stub_state.config.llm.models = {}
+        stub_state.config.llm.providers_per_stage = {}
+        stub_state.llm_client = MagicMock()
+
+        with patch(
+            "perspicacite.web.state.app_state",
+            stub_state,
+        ):
+            mode = LiteratureSurveyRAGMode.__new__(LiteratureSurveyRAGMode)
+            mode.scilex_adapter = fake_scilex
+            mode.config = MagicMock()
+
+            await mode._broad_search(
+                query="original user query",
+                databases=["semantic_scholar"],
+            )
+
+    # SciLEx adapter must receive the original (unmodified) query on optimizer failure.
+    assert fake_scilex.search.call_args.kwargs["query"] == "original user query"
