@@ -1,6 +1,6 @@
 # tests/unit/test_literature_survey_query_optimization.py
 """Verifies that LiteratureSurveyRAGMode._broad_search runs the shared optimizer
-before the SciLEx search and substitutes the rewritten query."""
+before the search and substitutes the rewritten query into the pipeline call."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,12 +11,9 @@ from perspicacite.search.query_optimizer import OptimizationResult
 
 @pytest.mark.asyncio
 async def test_broad_search_substitutes_rewritten_query():
-    """SciLEx adapter must receive the optimizer's `searched_query`, not the
+    """The pipeline must receive the optimizer's `searched_query`, not the
     original query passed to _broad_search."""
     captured = {}
-
-    fake_scilex = MagicMock()
-    fake_scilex.search = AsyncMock(return_value=[])
 
     async def capture_optimize(**kwargs):
         captured.update(kwargs)
@@ -28,9 +25,14 @@ async def test_broad_search_substitutes_rewritten_query():
             fallback_reason=None,
         )
 
+    mock_pipeline = AsyncMock(return_value=[])
+
     with patch(
         "perspicacite.search.query_optimizer.optimize_query",
         side_effect=capture_optimize,
+    ), patch(
+        "perspicacite.rag.resolve_papers.resolve_papers_pipeline",
+        mock_pipeline,
     ):
         from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
 
@@ -50,12 +52,7 @@ async def test_broad_search_substitutes_rewritten_query():
             "perspicacite.web.state.app_state",
             stub_state,
         ):
-            # Build a minimal LiteratureSurveyRAGMode instance without a real
-            # config / session_store.
             mode = LiteratureSurveyRAGMode.__new__(LiteratureSurveyRAGMode)
-            mode.scilex_adapter = fake_scilex
-            # Provide a real-enough config object so BaseRAGMode attributes
-            # don't blow up (not actually needed by _broad_search).
             mode.config = MagicMock()
 
             await mode._broad_search(
@@ -65,15 +62,14 @@ async def test_broad_search_substitutes_rewritten_query():
 
     # Optimizer received the original query.
     assert captured["query"] == "original user query"
-    # SciLEx adapter received the rewritten query.
-    assert fake_scilex.search.call_args.kwargs["query"] == "rewritten literature survey phrase"
+    # Pipeline received the rewritten query.
+    assert mock_pipeline.call_args.kwargs["query"] == "rewritten literature survey phrase"
 
 
 @pytest.mark.asyncio
 async def test_broad_search_optimizer_failure_falls_back_to_original():
-    """When optimize_query raises, the original query reaches SciLEx."""
-    fake_scilex = MagicMock()
-    fake_scilex.search = AsyncMock(return_value=[])
+    """When optimize_query raises, the original query reaches the pipeline."""
+    mock_pipeline = AsyncMock(return_value=[])
 
     async def raise_on_optimize(**kwargs):
         raise RuntimeError("optimizer exploded")
@@ -81,6 +77,9 @@ async def test_broad_search_optimizer_failure_falls_back_to_original():
     with patch(
         "perspicacite.search.query_optimizer.optimize_query",
         side_effect=raise_on_optimize,
+    ), patch(
+        "perspicacite.rag.resolve_papers.resolve_papers_pipeline",
+        mock_pipeline,
     ):
         from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
 
@@ -99,7 +98,6 @@ async def test_broad_search_optimizer_failure_falls_back_to_original():
             stub_state,
         ):
             mode = LiteratureSurveyRAGMode.__new__(LiteratureSurveyRAGMode)
-            mode.scilex_adapter = fake_scilex
             mode.config = MagicMock()
 
             await mode._broad_search(
@@ -107,5 +105,5 @@ async def test_broad_search_optimizer_failure_falls_back_to_original():
                 databases=["semantic_scholar"],
             )
 
-    # SciLEx adapter must receive the original (unmodified) query on optimizer failure.
-    assert fake_scilex.search.call_args.kwargs["query"] == "original user query"
+    # Pipeline must receive the original (unmodified) query on optimizer failure.
+    assert mock_pipeline.call_args.kwargs["query"] == "original user query"

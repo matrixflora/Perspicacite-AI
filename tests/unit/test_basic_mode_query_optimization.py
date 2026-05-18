@@ -34,7 +34,7 @@ async def test_basic_mode_substitutes_rewritten_query():
         "perspicacite.search.query_optimizer.optimize_query",
         side_effect=capture_optimize,
     ):
-        from perspicacite.rag.modes import basic as basic_mode
+        from perspicacite.rag.web_search import run_web_aggregator_search
         # Build a minimal stub app_state with config attributes the
         # function reads.
         stub_state = MagicMock()
@@ -47,7 +47,7 @@ async def test_basic_mode_substitutes_rewritten_query():
         stub_state.config.llm.providers_per_stage = {}
         stub_state.llm_client = MagicMock()
 
-        await basic_mode._run_web_aggregator_search(
+        await run_web_aggregator_search(
             keyword_query="user typed this",
             context="recent finding about X",
             optimize_enabled=None,

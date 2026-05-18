@@ -564,131 +564,23 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 logger.warning("literature_survey_optimizer_failed", error=str(_opt_exc))
                 # effective_query already = query, no reassignment needed
 
-        # === Provider routing: SciLEx + standalone aggregator providers ===
-        # The user can pick BOTH SciLEx-backed APIs (semantic_scholar,
-        # openalex, pubmed, arxiv) AND standalone providers (google_scholar,
-        # europepmc, core, ...). SciLExAdapter handles only the former;
-        # standalone ones go through the domain aggregator's individual
-        # provider instances. Previously this method called SciLEx with
-        # the full user list, which silently dropped non-SciLEx APIs
-        # (e.g. google_scholar) — leaving the user thinking their pick
-        # had been honoured.
-        SCILEX_BACKED = {"semantic_scholar", "openalex", "pubmed", "arxiv"}
-        scilex_apis = [d for d in databases if d in SCILEX_BACKED]
-        extra_apis = [d for d in databases if d not in SCILEX_BACKED]
-
+        # Route through the unified pipeline (aggregator → Crossref enrich).
+        # rerank=False: survey keeps its own LLM-based relevance analyser
+        # (_analyze_abstracts_batch) which scores papers 1-5 after broad
+        # collection — MiniLM reranking here would prematurely bias the
+        # corpus before the theme clustering pass sees it.
         try:
-            if telemetry is not None:
-                telemetry.append({
-                    "kind": "provider_progress",
-                    "phase": "start",
-                    "providers": list(databases),
-                })
-
-            # Fire SciLEx + standalone providers concurrently.
-            tasks: list[Any] = []
-            task_labels: list[str] = []
-            if scilex_apis:
-                tasks.append(self.scilex_adapter.search(
-                    query=effective_query,
-                    max_results=100,
-                    apis=scilex_apis,
-                ))
-                task_labels.append("scilex")
-
-            # Standalone providers via the shared aggregator. We use
-            # run_web_aggregator_search with explicit `databases` so it
-            # only spins up the user-picked non-SciLEx providers.
-            if extra_apis:
-                from perspicacite.rag.web_search import run_web_aggregator_search
-                tasks.append(run_web_aggregator_search(
-                    keyword_query=effective_query,
-                    context=None,
-                    optimize_enabled=False,  # already optimized above
-                    databases=extra_apis,
-                    max_docs=100,
-                    app_state=_app_state,
-                    telemetry=telemetry,
-                ))
-                task_labels.append("standalone")
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            papers: list[Any] = []
-            for lbl, r in zip(task_labels, results, strict=True):
-                if isinstance(r, Exception):
-                    logger.warning(
-                        "broad_search_provider_failed",
-                        provider_group=lbl, error=str(r),
-                    )
-                    continue
-                papers.extend(r)
-
-            # Cross-provider dedupe by DOI (preserve sources_all order).
-            seen_doi: dict[str, Any] = {}
-            seen_title: dict[str, Any] = {}
-            merged: list[Any] = []
-            for p in papers:
-                _doi = (getattr(p, "doi", "") or "").lower().strip()
-                if _doi:
-                    if _doi in seen_doi:
-                        kept = seen_doi[_doi]
-                        # Merge sources lists.
-                        _kept_srcs = (kept.metadata or {}).get("sources") or []
-                        for _s in (p.metadata or {}).get("sources") or []:
-                            if _s not in _kept_srcs:
-                                _kept_srcs.append(_s)
-                            if _s not in kept.discovery_sources:
-                                kept.discovery_sources.append(_s)
-                        kept.metadata["sources"] = _kept_srcs
-                        continue
-                    seen_doi[_doi] = p
-                else:
-                    _t = (getattr(p, "title", "") or "").lower().strip()[:120]
-                    if _t and _t in seen_title:
-                        continue
-                    if _t:
-                        seen_title[_t] = p
-                merged.append(p)
-            papers = merged[:100]
-
-            # Crossref-enrich the merged paper set before telemetry +
-            # candidate conversion. This ensures abstracts (often missing
-            # from Google Scholar) are filled in time for the abstract
-            # analysis pass to use them.
-            try:
-                from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
-                _crossref_concurrency = getattr(
-                    getattr(self, "_current_request", None),
-                    "crossref_concurrency",
-                    None,
-                )
-                papers = await enrich_papers(papers, concurrency=_crossref_concurrency)
-            except Exception as _ee:
-                logger.warning(
-                    "literature_survey_enrich_failed", error=str(_ee),
-                )
-
-            if telemetry is not None:
-                # Count per source from each paper's metadata.sources list.
-                # Each paper is counted under EVERY archive that returned
-                # it (multi-DB hits → multiple ticks), so the per-provider
-                # totals can sum to MORE than the unique-paper total.
-                from collections import Counter as _Counter
-                _per: _Counter = _Counter()
-                for _p in papers:
-                    _ms = (getattr(_p, "metadata", None) or {}).get("sources") or []
-                    if isinstance(_ms, list):
-                        for _s in _ms:
-                            _sl = str(_s).lower()
-                            if _sl and _sl != "scilex":
-                                _per[_sl] += 1
-                telemetry.append({
-                    "kind": "provider_progress",
-                    "phase": "done",
-                    "total": len(papers),
-                    "by_provider": dict(_per),
-                })
+            from perspicacite.rag.resolve_papers import resolve_papers_pipeline
+            papers = await resolve_papers_pipeline(
+                query=effective_query,
+                databases=databases,
+                max_docs=100,
+                app_state=_app_state,
+                telemetry=telemetry,
+                enrich=True,
+                rerank=False,  # survey keeps its own analyser
+                optimize_query=False,  # already optimised above
+            )
             return papers
         except Exception as e:
             logger.error("broad_search_failed", error=str(e))

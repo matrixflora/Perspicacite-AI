@@ -34,8 +34,6 @@ from perspicacite.rag.utils import (
     get_doc_citation,
     get_system_prompt,
 )
-from perspicacite.rag.web_search import run_web_aggregator_search as _run_web_aggregator_search
-
 logger = get_logger("perspicacite.rag.modes.basic")
 
 
@@ -65,16 +63,6 @@ def _clean_query_for_keyword_search(q: str) -> str:
     return s or q
 
 
-# Crossref enrichment helpers — extracted to pipeline/enrichment/crossref_enrich.py
-# so agentic, literature_survey, and the MCP web_search tool can reuse them.
-# These names stay around as back-compat aliases so the existing basic.py
-# call sites (_web_fallback_papers) don't need to change.
-from perspicacite.pipeline.enrichment.crossref_enrich import (
-    backfill_dois as _backfill_dois_from_crossref,
-    canonicalize_candidates as _canonicalize_candidates_from_crossref,
-)
-
-
 async def _web_fallback_papers(
     *,
     query: str,
@@ -87,112 +75,40 @@ async def _web_fallback_papers(
     app_state: Any = None,
     telemetry: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    # Live literature search used when the KB returns nothing. Filters
-    # raw provider hits through a cross-encoder (MiniLM) rerank so we
-    # rank by semantic relevance rather than keyword overlap; this
-    # catches papers whose abstract doesn't share many surface tokens
-    # with the question but is on-topic, and demotes lexical false
-    # positives like phenomenology / interferon papers for an FBMN
-    # mass-spec question. BM25 is kept as a fallback if the model
-    # can't be loaded (offline / first-run download failures).
-    try:
-        from perspicacite.search.screening import (
-            screen_papers,
-            screen_papers_rerank,
-        )
-    except Exception as e:
-        logger.warning("basic_web_fallback_import_failed", error=str(e))
-        return []
-
-    apis = databases or ["semantic_scholar", "openalex", "pubmed"]
-    keyword_query = _clean_query_for_keyword_search(query)
-    if keyword_query != query:
-        logger.info(
-            "basic_web_fallback_query_cleaned",
-            original=query, cleaned=keyword_query,
-        )
-
-    # Map UI database choices to actual aggregator providers. SciLEx
-    # internally fans out to Semantic Scholar / OpenAlex / PubMed / arXiv,
-    # so any of those UI ticks means "include the scilex provider with
-    # that API in its api-list". Every other UI tick maps 1:1 to a
-    # standalone provider in the aggregator.
-    SCILEX_BACKED = {"semantic_scholar", "openalex", "pubmed", "arxiv"}
-    PROVIDER_NAMES = {
-        "europepmc": "europepmc",
-        "core": "core",
-        "inspire": "inspire",
-        "pubchem": "pubchem",
-        "google_scholar": "google_scholar",
-        "dblp_sparql": "dblp_sparql",
-    }
-
-    _selected = {(d or "").lower() for d in (databases or [])}
-    scilex_apis = [d for d in _selected if d in SCILEX_BACKED]
-    extra_providers = {PROVIDER_NAMES[d] for d in _selected if d in PROVIDER_NAMES}
-    # If user picked nothing or only non-mapped names, fall back to a
-    # sensible default rather than running zero providers.
-    if not scilex_apis and not extra_providers:
-        scilex_apis = ["semantic_scholar", "openalex", "pubmed"]
-
-    allowed_provider_names = set(extra_providers)
-    if scilex_apis:
-        allowed_provider_names.add("scilex")
+    # Live literature search used when the KB returns nothing. Routes
+    # through the unified resolve_papers_pipeline (aggregator → Crossref
+    # enrich → MiniLM rerank) and converts Paper objects to the dict
+    # shape expected by downstream RAG code.
+    from perspicacite.rag.resolve_papers import resolve_papers_pipeline
 
     # Resolve effective app_state: prefer explicit arg, fall back to config
     # wrapper so legacy call sites (config-only) still work.
     effective_app_state = app_state
     if effective_app_state is None and config is not None:
-        # Minimal shim so _run_web_aggregator_search can read config.
         class _AppStateShim:
             def __init__(self, cfg: Any) -> None:
                 self.config = cfg
                 self.llm_client = None
         effective_app_state = _AppStateShim(config)
 
-    web_papers = await _run_web_aggregator_search(
-        keyword_query=keyword_query,
-        context=context,
-        optimize_enabled=optimize_query,
+    papers = await resolve_papers_pipeline(
+        query=query,
         databases=databases,
         max_docs=max_docs,
-        apis=apis,
-        scilex_apis=scilex_apis,
-        allowed_provider_names=allowed_provider_names,
         app_state=effective_app_state,
         telemetry=telemetry,
+        enrich=True,
+        rerank=True,
+        min_relevance=min_relevance,
+        optimize_query=optimize_query,
+        context=context,
     )
 
-    # SciLEx is a meta-provider fanning to SS/OpenAlex/PubMed/arXiv but
-    # tags every returned paper with PaperSource.SCILEX — the underlying
-    # API is lost. When only one backend was queried, label by that
-    # backend (e.g. "pubmed") since SciLEx is purely a transport.
-    # Otherwise call it "scilex (multi-DB)" and pass the full api list
-    # through ``source_apis`` for the FE tooltip.
-    if len(scilex_apis) == 1:
-        scilex_relabel = scilex_apis[0]
-    elif len(scilex_apis) > 1:
-        scilex_relabel = "scilex (multi-DB)"
-    else:
-        scilex_relabel = "scilex"
-
     candidates: list[dict[str, Any]] = []
-    for p in web_papers:
-        # Skip papers without titles (unsalvageable). We DO admit papers
-        # without an abstract — Google Scholar very rarely surfaces full
-        # abstracts (just 1-2 sentence snippets, often missing). Crossref
-        # enrichment below fills the missing abstract from the publisher's
-        # JATS record; we filter out abstract-less candidates AFTER that
-        # rescue pass, not before.
+    for p in papers:
         if not p.title:
             continue
-        # Resolve the *originating* database(s). ``Paper.source`` for SciLEx
-        # records is ``PaperSource.SCILEX`` (a wrapper, useless to display);
-        # ``metadata.sources`` carries the real provider names (e.g.
-        # ``["openalex"]`` or ``["pubmed", "openalex", "scilex"]``). We now
-        # surface ALL upstream providers that returned this paper so the
-        # UI can render multi-DB attribution as a chip group instead of
-        # showing a single (arbitrary) origin.
+        # Resolve the originating database(s) from metadata.sources.
         all_sources: list[str] = []
         meta_sources = (getattr(p, "metadata", None) or {}).get("sources")
         if isinstance(meta_sources, list):
@@ -206,157 +122,39 @@ async def _web_fallback_papers(
             src_str = getattr(src_obj, "value", None) or (
                 str(src_obj).replace("PaperSource.", "").lower() if src_obj else None
             )
-        if src_str == "scilex":
-            src_str = scilex_relabel
-        # Best-effort URL for the "open in source" link.
         best_url = (
             getattr(p, "url", None)
             or getattr(p, "pdf_url", None)
             or (f"https://doi.org/{p.doi}" if p.doi else None)
         )
+        abstract = p.abstract or ""
         candidates.append({
             "paper_id": p.id or p.doi or p.title,
             "title": p.title,
-            "abstract": p.abstract or "",
+            "abstract": abstract,
+            "chunk_text": abstract,
+            "full_text": abstract,
             "authors": [a.name for a in (p.authors or [])],
             "year": p.year,
             "journal": getattr(p, "journal", None),
             "doi": p.doi,
             "url": best_url,
             "source": src_str,
-            # When ``source`` is the SciLEx wrapper label, this carries
-            # the underlying APIs that were queried so the UI can show
-            # them in a hover tooltip on the chip.
-            "source_apis": list(scilex_apis) if src_str and src_str.startswith("scilex") else None,
-            # All upstream providers that returned THIS specific paper
-            # (deduped, scilex wrapper omitted). Renders as a chip group
-            # in the Sources panel: e.g. ["pubmed", "openalex"].
-            "sources_all": all_sources or None,
+            "source_apis": None,
+            "sources_all": p.discovery_sources or all_sources or None,
+            "enrichment_sources": p.enrichment_sources or None,
             "citation_count": getattr(p, "citation_count", None),
-            "full_text": p.abstract or "",
             "kb_name": None,
+            "paper_score": 0.5,
         })
-    if not candidates:
-        logger.info("basic_web_fallback_empty_candidates", query=query, apis=apis)
-        return []
-
-    # Canonicalize citation metadata via Crossref for any candidate that
-    # carries a DOI. Provider scrapes (especially Google Scholar) often
-    # mangle author lists ("LF Nothias … - Nature, 2020"), drop the
-    # journal, or supply abbreviated titles. Crossref is the authoritative
-    # registrar so we trust its values when available. We also resolve
-    # missing DOIs via title-search and fill missing abstracts here, so
-    # Google Scholar hits get rescued from "title only" to "fully
-    # citable" before reranking sees them.
-    await _canonicalize_candidates_from_crossref(candidates)
-
-    # Post-enrichment abstract filter: drop candidates that STILL have no
-    # abstract after Crossref rescue. These are usually conference
-    # proceedings / theses / blog posts that Google Scholar surfaces but
-    # for which no canonical abstract exists anywhere we can reach. They
-    # would just dilute the rerank with title-only blobs.
-    before = len(candidates)
-    candidates = [c for c in candidates if (c.get("abstract") or "").strip()]
-    if before != len(candidates):
-        logger.info(
-            "basic_web_fallback_dropped_no_abstract",
-            dropped=before - len(candidates),
-            kept=len(candidates),
-        )
-    if not candidates:
-        logger.info("basic_web_fallback_empty_after_enrichment", query=query)
-        return []
-
-    screen_method = "rerank+bm25+citations"
-    rerank_by_id: dict[int, float] = {}
-    try:
-        # MiniLM cross-encoder: primary semantic relevance signal.
-        rerank_results = await screen_papers_rerank(
-            candidates, query=keyword_query, threshold=0.0,
-        )
-        for r in rerank_results:
-            rerank_by_id[id(r.item)] = float(r.score)
-    except Exception as e:
-        logger.warning(
-            "basic_web_fallback_rerank_failed_fallback_bm25", error=str(e),
-        )
-        screen_method = "bm25+citations"
-
-    bm25_by_id: dict[int, float] = {}
-    try:
-        # Always compute BM25 too — it's cheap and contributes the lowest-
-        # weight lexical signal in the final blend.
-        bm25_results = screen_papers(
-            candidates, reference=keyword_query, threshold=0.0,
-        )
-        for r in bm25_results:
-            bm25_by_id[id(r.item)] = float(r.score)
-    except Exception as e:
-        logger.warning("basic_web_fallback_bm25_failed", error=str(e))
-
-    if not rerank_by_id and not bm25_by_id:
-        out = candidates[:max_docs]
-        for r in out:
-            r["paper_score"] = 1.0
-        return out
-
-    import math as _math
-
-    # 3-signal blend: MiniLM (primary) × citation count (secondary) ×
-    # BM25 (tertiary). Weights sum to 1.0 — if the cross-encoder failed
-    # to load, its share is redistributed to BM25 so the ranking still
-    # uses the strongest signal available.
-    if rerank_by_id:
-        W_RERANK, W_CITES, W_BM25 = 0.6, 0.25, 0.15
-    else:
-        W_RERANK, W_CITES, W_BM25 = 0.0, 0.3, 0.7
-
-    raw: list[tuple[float, float, dict[str, Any]]] = []
-    for c in candidates:
-        item = dict(c)
-        if item.get("abstract"):
-            item.setdefault("chunk_text", item["abstract"])
-            # Keep ``abstract`` too — the detail panel reads it as a
-            # fallback when chunk_text is empty. Both fields carrying
-            # the same text is cheap and makes the wire payload
-            # self-explanatory.
-        # Note: we no longer pop("abstract") — downstream SourceReference
-        # has an abstract field via the wire payload that the side
-        # panel uses to render the full text for Google Scholar /
-        # web-fallback hits without a DOI.
-
-        rerank_s = rerank_by_id.get(id(c), 0.0)
-        bm25_s = bm25_by_id.get(id(c), 0.0)
-        cites = item.get("citation_count") or 0
-        cite_score = min(_math.log1p(max(0, int(cites))) / 8.0, 1.0)
-
-        blended = round(
-            W_RERANK * rerank_s + W_CITES * cite_score + W_BM25 * bm25_s,
-            4,
-        )
-        # Drop hits with effectively no signal in any channel.
-        if blended < min_relevance and rerank_s < min_relevance:
-            continue
-        item["paper_score"] = blended
-        item["_rerank_score"] = round(rerank_s, 4)
-        item["_bm25_score"] = round(bm25_s, 4)
-        item["_citation_score"] = round(cite_score, 4)
-        raw.append((blended, rerank_s, item))
-
-    raw.sort(key=lambda t: t[0], reverse=True)
-    kept = [t[2] for t in raw[:max_docs]]
 
     logger.info(
         "basic_web_fallback",
         query=query,
-        scilex_apis=scilex_apis,
-        extra_providers=sorted(extra_providers),
-        candidates=len(candidates), kept=len(kept),
+        candidates=len(candidates),
         threshold=min_relevance,
-        screen_method=screen_method,
-        sources_kept=[k.get("source") for k in kept],
     )
-    return kept
+    return candidates
 
 
 async def _apply_copyright_filter(

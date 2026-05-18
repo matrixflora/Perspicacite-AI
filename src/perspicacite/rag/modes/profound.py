@@ -1590,29 +1590,48 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         # STAGE 3: Web search (if enabled and KB results insufficient)
         # v1 profonde: append web docs, then _analyze_documents on KB + web combined.
         # ========================================================================
-        if self.use_websearch and "web_search" in tools.list_tools():
+        if self.use_websearch:
             logger.debug("profound_stage_3_web_search")
             try:
-                web_tool = tools.get("web_search")
-                # Pass telemetry list so the aggregator emits
-                # query_rephrased + provider_progress events back to the
-                # SSE generator — gives profound the same live DB
-                # progress display as agentic / basic / advanced.
-                web_raw = await web_tool.execute(
+                import hashlib as _hashlib
+                from perspicacite.rag.resolve_papers import resolve_papers_pipeline
+                _app_state = None
+                try:
+                    from perspicacite.web.state import app_state as _gs
+                    _app_state = _gs
+                except Exception:
+                    pass
+                web_papers = await resolve_papers_pipeline(
                     query=step_info.query,
-                    max_results=5,
-                    telemetry=telemetry,
-                    # Honor the user's database picks so google_scholar /
-                    # europepmc etc. actually run instead of falling back
-                    # to the SciLEx-only default trio.
                     databases=databases,
+                    max_docs=5,
+                    app_state=_app_state,
+                    telemetry=telemetry,
+                    enrich=True,
+                    rerank=True,
                 )
-                web_results = self._parse_web_tool_results(web_raw)
 
-                if web_results:
-                    web_docs = self._web_results_to_document_dicts(
-                        web_results, step_info.query
-                    )
+                if web_papers:
+                    web_docs: list[dict[str, Any]] = []
+                    for p in web_papers:
+                        _doi = p.doi or ""
+                        _pid = f"doi:{_doi}" if _doi else (
+                            "web:" + _hashlib.sha256((p.title or "").encode()).hexdigest()[:12]
+                        )
+                        web_docs.append({
+                            "paper_id": _pid,
+                            "source": "web_search",
+                            "full_text": p.abstract or "",
+                            "abstract": p.abstract or "",
+                            "title": p.title or "",
+                            "authors": [a.name for a in (p.authors or [])],
+                            "year": p.year,
+                            "doi": _doi,
+                            "url": p.url or "",
+                            "source_provider": (p.discovery_sources[0] if p.discovery_sources else ""),
+                            "paper_score": 0.5,
+                            "query": step_info.query,
+                        })
                     combined_docs = list(latest_kb_docs) + web_docs
                     step.documents = combined_docs
                     analysis = await self._analyze_documents_json(

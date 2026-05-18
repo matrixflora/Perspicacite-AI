@@ -3960,7 +3960,7 @@ async def web_search(
                       "telemetry_summary": {"by_provider": {...}}}
     """
     import json as _json
-    from perspicacite.rag.web_search import run_web_aggregator_search
+    from perspicacite.rag.resolve_papers import resolve_papers_pipeline
     from perspicacite.rag.telemetry import (
         ListTelemetrySink,
         CallbackTelemetrySink,
@@ -3977,14 +3977,15 @@ async def web_search(
         sink = ListTelemetrySink()
 
     try:
-        papers = await run_web_aggregator_search(
-            keyword_query=query,
-            context=None,
-            optimize_enabled=bool(optimize_query),
+        papers = await resolve_papers_pipeline(
+            query=query,
             databases=databases,
             max_docs=max(1, min(50, int(max_results))),
             app_state=None,  # picks up global via web_search.py fallback
             telemetry=sink,
+            enrich=enrich,
+            rerank=True,
+            optimize_query=bool(optimize_query),
         )
     except Exception as exc:
         return _json.dumps({
@@ -3992,13 +3993,6 @@ async def web_search(
             "warnings": [],
             "error": f"web_search_failed: {exc}",
         })
-
-    if enrich and papers:
-        try:
-            from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
-            papers = await enrich_papers(papers)
-        except Exception as _ee:
-            logger.warning("mcp_web_search_enrich_failed", error=str(_ee))
 
     # Build response payload — scan buffered events for per-provider hit counts
     by_provider: dict[str, int] = {}
