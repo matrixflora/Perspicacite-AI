@@ -55,8 +55,16 @@
   --radius-lg: var(--radius-lg);
 }
 
+/* Dark palette — shared between `prefers-color-scheme: dark` and an
+   explicit `.theme-dark` opt-in via ThemeToggle. */
+.theme-dark,
+html:not(.theme-light) {
+  /* `:root` baseline only kicks in when neither override is set; we
+     gate via a wrapper rather than @media to allow manual control. */
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  html:not(.theme-light):not(.theme-dark) {
     --bg: #061826;
     --bg-soft: #0a2238;
     --surface: #0e2c47;
@@ -66,6 +74,31 @@
     --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.4);
     --shadow-elev: 0 16px 48px rgba(0, 0, 0, 0.5);
   }
+}
+
+/* Manual dark override — always wins over system preference. */
+html.theme-dark {
+  --bg: #061826;
+  --bg-soft: #0a2238;
+  --surface: #0e2c47;
+  --border: #1d3d5e;
+  --text-body: #ebf0f5;
+  --text-muted: #8296a5;
+  --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.4);
+  --shadow-elev: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+/* Manual light override — for users who want to force light even
+   when their system is in dark mode. (Values mirror the :root defaults.) */
+html.theme-light {
+  --bg: #ffffff;
+  --bg-soft: #f8fafc;
+  --surface: #ffffff;
+  --border: #dfe4ec;
+  --text-body: #00284b;
+  --text-muted: #4a5b75;
+  --shadow-card: 0 8px 30px rgba(0, 40, 75, 0.08);
+  --shadow-elev: 0 16px 48px rgba(0, 40, 75, 0.12);
 }
 
 * {
@@ -93,12 +126,12 @@ html, body {
 }
 
 .cnrs-halo--hero {
-  width: 720px;
-  height: 720px;
-  top: -260px;
-  right: -180px;
-  filter: blur(1px);
-  opacity: 0.95;
+  width: 640px;
+  height: 640px;
+  top: -240px;
+  right: -160px;
+  filter: blur(2px);
+  opacity: 0.45;
 }
 
 @media (prefers-reduced-motion: no-preference) {

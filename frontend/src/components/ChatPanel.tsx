@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ModeSwitcher } from "./ModeSwitcher";
+import { DatabasePicker } from "./DatabasePicker";
 import { SourcePill } from "./SourcePill";
 import { streamChat, cancelChat, type ChatSource } from "@/lib/chat";
 import type { RAGMode } from "@/lib/modes";
 import { MODES, accentClasses } from "@/lib/modes";
+import { DEFAULT_DATABASES, type DatabaseId } from "@/lib/databases";
 
 type Turn = {
   id: string;
@@ -26,6 +28,8 @@ export function ChatPanel() {
   const [draft, setDraft] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [databases, setDatabases] = useState<DatabaseId[]>(DEFAULT_DATABASES);
+  const [showDbPicker, setShowDbPicker] = useState(false);
   const conversationIdRef = useRef<string | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -64,6 +68,7 @@ export function ChatPanel() {
         query: q,
         mode,
         conversationId: conversationIdRef.current,
+        databases,
         signal: ctrl.signal,
       })) {
         if (ev.kind === "token") {
@@ -134,6 +139,28 @@ export function ChatPanel() {
       className="relative mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 px-4 py-6 md:px-6"
     >
       <ModeSwitcher value={mode} onChange={setMode} disabled={streaming} />
+
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowDbPicker((s) => !s)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--cnrs-blue)]"
+          aria-expanded={showDbPicker}
+        >
+          <span aria-hidden>{showDbPicker ? "▾" : "▸"}</span>
+          Search databases · {databases.length}/12
+        </button>
+        {showDbPicker && (
+          <div className="mt-2">
+            <DatabasePicker
+              value={databases}
+              onChange={setDatabases}
+              disabled={streaming}
+              compact
+            />
+          </div>
+        )}
+      </div>
 
       <div
         ref={scrollerRef}

@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# parent .gitignore (Python-flavoured) ignores `lib/` for distutils
+# build artifacts; whitelist our frontend client-lib directory.
+!src/lib/
+!src/lib/**
