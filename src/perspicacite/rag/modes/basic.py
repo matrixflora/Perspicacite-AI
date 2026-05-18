@@ -497,9 +497,6 @@ class BasicRAGMode(BaseRAGMode):
             try:
                 from perspicacite.search.query_optimizer import optimize_query as _qopt
                 _app = getattr(request, "app_state", None)
-                if _app is None:
-                    from perspicacite.web.state import app_state as _global_app
-                    _app = _global_app
                 opt_res = await _qopt(
                     query=retrieval_query,
                     context=None,

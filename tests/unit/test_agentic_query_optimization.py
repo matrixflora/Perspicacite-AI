@@ -46,20 +46,18 @@ async def test_scilex_search_substitutes_rewritten_query():
         stub_state.config.llm.providers_per_stage = {}
         stub_state.llm_client = MagicMock()
 
-        with patch(
-            "perspicacite.web.state.app_state",
-            stub_state,
-        ):
-            # Build a minimal AgenticOrchestrator without real services.
-            orch = AgenticOrchestrator.__new__(AgenticOrchestrator)
-            orch.scilex_adapter = fake_scilex
-            orch._found_papers_lock = asyncio.Lock()
-            # Provide stubs for attributes accessed in the method body.
-            orch._found_papers = []
-            orch._accumulate_lit_evidence = MagicMock()
-            orch._format_paper_list = MagicMock(return_value="[]")
+        # Build a minimal AgenticOrchestrator without real services.
+        orch = AgenticOrchestrator.__new__(AgenticOrchestrator)
+        orch.scilex_adapter = fake_scilex
+        orch._found_papers_lock = asyncio.Lock()
+        # Provide stubs for attributes accessed in the method body.
+        orch._found_papers = []
+        orch._accumulate_lit_evidence = MagicMock()
+        orch._format_paper_list = MagicMock(return_value="[]")
+        # Inject app_state directly (no longer read from global).
+        orch.app_state = stub_state
 
-            await orch._scilex_search("original query")
+        await orch._scilex_search("original query")
 
     # Optimizer received the original query.
     assert captured["query"] == "original query"
@@ -92,18 +90,15 @@ async def test_scilex_search_optimizer_failure_falls_back_to_original():
         stub_state.config.llm.providers_per_stage = {}
         stub_state.llm_client = MagicMock()
 
-        with patch(
-            "perspicacite.web.state.app_state",
-            stub_state,
-        ):
-            orch = AgenticOrchestrator.__new__(AgenticOrchestrator)
-            orch.scilex_adapter = fake_scilex
-            orch._found_papers_lock = asyncio.Lock()
-            orch._found_papers = []
-            orch._accumulate_lit_evidence = MagicMock()
-            orch._format_paper_list = MagicMock(return_value="[]")
+        orch = AgenticOrchestrator.__new__(AgenticOrchestrator)
+        orch.scilex_adapter = fake_scilex
+        orch._found_papers_lock = asyncio.Lock()
+        orch._found_papers = []
+        orch._accumulate_lit_evidence = MagicMock()
+        orch._format_paper_list = MagicMock(return_value="[]")
+        orch.app_state = stub_state
 
-            await orch._scilex_search("original query")
+        await orch._scilex_search("original query")
 
     # SciLEx adapter must receive the original (unmodified) query on optimizer failure.
     assert fake_scilex.search.call_args.kwargs["query"] == "original query"

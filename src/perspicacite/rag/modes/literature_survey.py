@@ -192,7 +192,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
 
         # Phase 1: Broad search
         logger.info("phase_1_search")
-        papers = await self._broad_search(request.query, request.databases)
+        papers = await self._broad_search(request.query, request.databases, app_state=getattr(request, "app_state", None))
 
         # Pre-filter: remove papers already in any provided KB
         papers = self._filter_known_papers(papers, known_paper_ids)
@@ -310,7 +310,8 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         yield StreamEvent.status("Literature Survey: Searching across academic databases...")
         _bs_telemetry = getattr(request, "telemetry_sink", None) or []
         papers = await self._broad_search(
-            request.query, request.databases, telemetry=_bs_telemetry
+            request.query, request.databases, telemetry=_bs_telemetry,
+            app_state=getattr(request, "app_state", None),
         )
         # When _bs_telemetry is a CallbackTelemetrySink (MCP path), events
         # already flowed to ctx.report_progress live — skip the drain.
@@ -515,6 +516,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         query: str,
         databases: list[str] | None = None,
         telemetry: list[dict[str, Any]] | None = None,
+        app_state: Any = None,
     ) -> list[Any]:
         """
         Broad search across multiple APIs.
@@ -527,15 +529,9 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             databases = ["semantic_scholar", "openalex", "pubmed"]
 
         # Rewrite the query via the shared optimizer (Haiku) before searching.
-        # 1. Global app_state fallback (simple guard, no nesting)
-        _app_state = None
-        try:
-            from perspicacite.web.state import app_state as _gs
-            _app_state = _gs
-        except Exception:
-            pass
+        _app_state = app_state
 
-        # 2. Optimizer call in its own try/except
+        # Optimizer call in its own try/except
         effective_query = query
         if _app_state is not None and getattr(_app_state, "config", None) is not None:
             import perspicacite.search.query_optimizer as _qo_mod

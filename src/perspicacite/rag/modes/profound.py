@@ -664,9 +664,6 @@ class ProfoundRAGMode(BaseRAGMode):
         try:
             from perspicacite.search.query_optimizer import optimize_query as _qopt
             _app = getattr(request, "app_state", None)
-            if _app is None:
-                from perspicacite.web.state import app_state as _global_app
-                _app = _global_app
             opt_res = await _qopt(
                 query=request.query,
                 context=None,
@@ -1595,12 +1592,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             try:
                 import hashlib as _hashlib
                 from perspicacite.rag.resolve_papers import resolve_papers_pipeline
-                _app_state = None
-                try:
-                    from perspicacite.web.state import app_state as _gs
-                    _app_state = _gs
-                except Exception:
-                    pass
+                _app_state = getattr(request, "app_state", None)
                 web_papers = await resolve_papers_pipeline(
                     query=step_info.query,
                     databases=databases,

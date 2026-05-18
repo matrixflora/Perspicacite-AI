@@ -1,7 +1,7 @@
 """RAG models."""
 
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -108,7 +108,9 @@ class RAGRequest(BaseModel):
     # extra="allow" lets callers attach transient runtime fields like
     # ``telemetry_sink`` without subclassing. These extra fields are never
     # serialised / validated, keeping the schema stable.
-    model_config = ConfigDict(extra="allow")
+    # arbitrary_types_allowed=True because app_state holds an AppState /
+    # MinimalAppState instance that is not itself a Pydantic model.
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
     query: str
     kb_name: str = "default"
@@ -146,6 +148,11 @@ class RAGRequest(BaseModel):
     task_id: str | None = Field(
         default=None,
         description="Optional task ID for MCP cancellation tracking",
+    )
+    app_state: Any = Field(
+        default=None,
+        description="AppState / MinimalAppState; threaded by RAGEngine",
+        exclude=True,
     )
 
     # === Per-call overrides for budget / parallelism ===

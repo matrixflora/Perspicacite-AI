@@ -434,9 +434,11 @@ class AgenticOrchestrator:
         recency_half_life_years: float | None = None,
         kb_metas: list | None = None,
         config: Any = None,
+        app_state: Any = None,
     ):
         self.llm = llm_client
         self.config = config
+        self.app_state = app_state
         self.tools = tool_registry
         self.embeddings = embedding_provider
         self.vector_store = vector_store
@@ -2850,12 +2852,7 @@ Generate your answer:"""
         logger.info("agentic_scilex_search", query=query)
 
         # -- query optimization --
-        _app_state = None
-        try:
-            from perspicacite.web.state import app_state as _gs
-            _app_state = _gs
-        except Exception:
-            pass
+        _app_state = getattr(self, "app_state", None)
         effective_query = query
         if _app_state is not None and getattr(_app_state, "config", None) is not None:
             import perspicacite.search.query_optimizer as _qo_mod

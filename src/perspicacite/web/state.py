@@ -144,6 +144,7 @@ class AppState:
             max_iterations=5,
             use_two_pass=getattr(config.knowledge_base, "use_two_pass", True),
             map_reduce_max_papers=getattr(config.rag_modes.agentic, "map_reduce_max_papers", 8),
+            app_state=self,
         )
         logger.info("Agentic orchestrator initialized")
 
@@ -164,6 +165,7 @@ class AppState:
             tool_registry=tool_registry,
             config=config,
             session_store=self.session_store,
+            app_state=self,
         )
         logger.info("RAG engine initialized (supports all modes)")
 

@@ -47,18 +47,14 @@ async def test_broad_search_substitutes_rewritten_query():
         stub_state.config.llm.providers_per_stage = {}
         stub_state.llm_client = MagicMock()
 
-        # Patch the global app_state import inside the module.
-        with patch(
-            "perspicacite.web.state.app_state",
-            stub_state,
-        ):
-            mode = LiteratureSurveyRAGMode.__new__(LiteratureSurveyRAGMode)
-            mode.config = MagicMock()
+        mode = LiteratureSurveyRAGMode.__new__(LiteratureSurveyRAGMode)
+        mode.config = MagicMock()
 
-            await mode._broad_search(
-                query="original user query",
-                databases=["semantic_scholar"],
-            )
+        await mode._broad_search(
+            query="original user query",
+            databases=["semantic_scholar"],
+            app_state=stub_state,
+        )
 
     # Optimizer received the original query.
     assert captured["query"] == "original user query"
@@ -93,17 +89,14 @@ async def test_broad_search_optimizer_failure_falls_back_to_original():
         stub_state.config.llm.providers_per_stage = {}
         stub_state.llm_client = MagicMock()
 
-        with patch(
-            "perspicacite.web.state.app_state",
-            stub_state,
-        ):
-            mode = LiteratureSurveyRAGMode.__new__(LiteratureSurveyRAGMode)
-            mode.config = MagicMock()
+        mode = LiteratureSurveyRAGMode.__new__(LiteratureSurveyRAGMode)
+        mode.config = MagicMock()
 
-            await mode._broad_search(
-                query="original user query",
-                databases=["semantic_scholar"],
-            )
+        await mode._broad_search(
+            query="original user query",
+            databases=["semantic_scholar"],
+            app_state=stub_state,
+        )
 
     # Pipeline must receive the original (unmodified) query on optimizer failure.
     assert mock_pipeline.call_args.kwargs["query"] == "original user query"
