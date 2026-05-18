@@ -856,6 +856,7 @@ class AgenticOrchestrator:
                         step_id=step.id,
                         duration_s=round(step_duration, 2),
                         result_chars=len(result_str),
+                        result_preview=result_str[:100] if result_str else "",
                     )
                     step_results[step.id] = result
                     completed_steps.append(step)
@@ -1377,7 +1378,7 @@ class AgenticOrchestrator:
 
                             logger.info("agentic_kb_search_hybrid_complete", result_count=len(results))
                         except Exception as e:
-                            logger.warning("agentic_kb_search_hybrid_failed", error=str(e))
+                            logger.warning("agentic_kb_search_hybrid_failed", error=str(e), exc_info=True)
 
                     # Filter results by minimum relevance score (0.5 = medium relevance)
                     min_relevance_threshold = 0.5
@@ -1638,7 +1639,7 @@ class AgenticOrchestrator:
                     logger.info("agentic_kb_search_no_hits")
                     return "No relevant documents found in knowledge base."
                 except Exception as e:
-                    logger.error("agentic_kb_search_failed", error=str(e))
+                    logger.error("agentic_kb_search_failed", error=str(e), exc_info=True)
                     return "Knowledge base search failed."
             logger.info("agentic_kb_search_skipped_no_kb")
             return "No knowledge base selected."
