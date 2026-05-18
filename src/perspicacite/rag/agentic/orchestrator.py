@@ -380,6 +380,12 @@ Guidelines:
                 temperature=0.0,
                 max_tokens=300,
             )
+            if not response:
+                logger.warning(
+                    "agentic_quality_assessment_error",
+                    error="empty_response_from_llm",
+                )
+                return False, ["Assessment error: empty LLM response"], 0.0
 
             # Parse JSON response
             json_match = re.search(r"\{.*\}", response, re.DOTALL)
@@ -545,6 +551,7 @@ class AgenticOrchestrator:
         kb_name: str | None = None,
         stream: bool = True,
         max_papers_to_download: int | None = None,
+        databases: list[str] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Main chat entry point with true agentic behavior.
@@ -555,6 +562,9 @@ class AgenticOrchestrator:
             kb_name: Optional knowledge base to search first
             stream: Whether to stream responses
             max_papers_to_download: Override default max papers to download (for user preference)
+            databases: Optional list of user-selected databases (e.g. ``["semantic_scholar", "europepmc"]``)
+                used to scope SciLEx and standalone-provider fan-out. When None, defaults to
+                ``["semantic_scholar", "openalex", "pubmed"]`` (legacy behaviour).
 
         Yields:
             Dict with type: "thinking", "tool_call", "tool_result", "answer", "papers_found"
@@ -565,12 +575,17 @@ class AgenticOrchestrator:
             session_id=session_id,
             kb=kb_name or "none",
             max_papers_to_download=max_papers_to_download or self.max_papers_to_download,
+            databases=databases or "default",
         )
 
         session = self.get_or_create_session(session_id)
         logger.info("agentic_session_resolved", session_id=session.session_id)
         session.add_message("user", query)
         session.kb_name = kb_name
+        # Stash the user's database selection on the session so tool-execution
+        # helpers (``_scilex_search``) can honour it without changing every
+        # internal call signature. ``None`` means "use defaults".
+        session.databases = databases  # type: ignore[attr-defined]
         session.evidence = EvidenceStore()
 
         # Store user preference for download cap in session
@@ -607,6 +622,7 @@ class AgenticOrchestrator:
                 }
 
         # Step 1: Classify intent
+        yield {"type": "phase_transition", "phase": "classify"}
         yield {"type": "thinking", "message": "Analyzing your query..."}
 
         intent_result = await self.intent_classifier.classify(
@@ -629,12 +645,21 @@ class AgenticOrchestrator:
             _c.add_trace("intent", detail={"value": intent_result.intent.name})
 
         yield {
+            "type": "intent_result",
+            "intent": intent_result.intent.name,
+            "confidence": round(float(intent_result.confidence), 3),
+            "reasoning": intent_result.reasoning,
+            "suggested_tools": list(intent_result.suggested_tools or []),
+            "query_complexity": getattr(intent_result, "query_complexity", "simple"),
+        }
+        yield {
             "type": "thinking",
             "message": f"Intent: {intent_result.intent.name.replace('_', ' ').title()}",
             "details": intent_result.reasoning,
         }
 
         # Step 2: Create dynamic plan
+        yield {"type": "phase_transition", "phase": "plan"}
         yield {"type": "thinking", "message": "Creating research plan..."}
 
         # Available tools: registered tools (excluding deactivated ones) + built-in
@@ -714,12 +739,31 @@ class AgenticOrchestrator:
         if _c is not None:
             _c.add_trace("plan", detail={"steps": len(plan.steps)})
 
+        yield {
+            "type": "plan",
+            "reasoning": plan.reasoning,
+            "can_answer_from_history": bool(getattr(plan, "can_answer_from_history", False)),
+            "estimated_steps": len(plan.steps),
+            "steps": [
+                {
+                    "id": s.id,
+                    "type": s.type.value,
+                    "tool": s.tool or s.type.value,
+                    "description": s.description,
+                    "query": (s.tool_input or {}).get("query", ""),
+                    "depends_on": list(s.depends_on or []),
+                }
+                for s in plan.steps
+            ],
+        }
+
         self._register_evidence_facets(session, plan)
 
         if plan.can_answer_from_history:
             # Planner decided we have enough — check if pre-fetched paper has full text
             if url_paper and url_paper.get("full_text"):
                 logger.info("agentic_plan_answer_from_history_with_url_paper")
+                yield {"type": "phase_transition", "phase": "synth"}
                 yield {"type": "thinking", "message": "Generating answer from retrieved paper..."}
                 papers = [url_paper]
                 is_summary = not any(
@@ -763,6 +807,7 @@ class AgenticOrchestrator:
                 # assistantDiv.innerHTML, so a papers_found emitted before
                 # the answer would be wiped.
                 yield {"type": "papers_found", "papers": _clean_papers_for_event(papers)}
+                yield {"type": "phase_transition", "phase": "done"}
                 return
             else:
                 yield {
@@ -771,6 +816,7 @@ class AgenticOrchestrator:
                 }
 
         # Step 3: Execute plan iteratively
+        yield {"type": "phase_transition", "phase": "retrieve"}
         step_results: dict[str, Any] = {}
         completed_steps: list[Step] = []
         replan_count = 0
@@ -1021,6 +1067,7 @@ class AgenticOrchestrator:
             }
 
         # Generate final answer
+        yield {"type": "phase_transition", "phase": "synth"}
         yield {"type": "thinking", "message": "Synthesizing answer..."}
         answer, citation_map = await self._generate_answer(
             query=query, plan=plan, step_results=step_results, session=session, papers=papers
@@ -1059,6 +1106,8 @@ class AgenticOrchestrator:
         ]
         if relevant_papers:
             yield {"type": "papers_found", "papers": _clean_papers_for_event(relevant_papers)}
+
+        yield {"type": "phase_transition", "phase": "done"}
 
     async def _maybe_upgrade_single_kb_to_composite_parallel(
         self, plan: Plan, query: str, kb_name: str
@@ -2692,6 +2741,50 @@ Generate your answer:"""
                     filtered = retry_filtered
                     is_complete = retry_complete
 
+            # === Graceful threshold relaxation ===
+            # If the strict scorer rejected almost everything (common for
+            # "What is X" definitional queries — the prompt is calibrated
+            # for narrow questions and over-penalises "applies X" papers),
+            # rescue the top-scoring non-KB papers by including any that
+            # scored ``min_score - 1`` (typically 2). This avoids the
+            # degenerate "agentic returned 1 paper" outcome the user hit
+            # while keeping the strict floor when there are plenty of
+            # truly-relevant papers.
+            #
+            # Triggers when:
+            #   - fewer than 2 non-KB papers passed AND
+            #   - the candidate pool was at least 3 (otherwise no rescue
+            #     can help) AND
+            #   - we have papers at relaxed_floor (e.g. score=2) to promote
+            non_kb_kept = [
+                p for p in filtered if p.get("source") != "kb_search"
+            ]
+            if len(non_kb_kept) < 2 and n_papers >= 3 and min_score > 1:
+                relaxed_floor = min_score - 1
+                rescued: list[dict[str, Any]] = []
+                for p in papers:
+                    if p in filtered:
+                        continue  # already kept
+                    if p.get("source") == "kb_search":
+                        continue
+                    sc = int(p.get("relevance_score") or 0)
+                    if sc == relaxed_floor:
+                        rescued.append(p)
+                # Cap rescues so we don't drown the strict picks in noise.
+                rescued.sort(
+                    key=lambda x: int(x.get("relevance_score") or 0),
+                    reverse=True,
+                )
+                rescued = rescued[:5]
+                if rescued:
+                    logger.info(
+                        "agentic_relevance_threshold_relaxed",
+                        kept_strict=len(filtered),
+                        rescued=len(rescued),
+                        relaxed_floor=relaxed_floor,
+                    )
+                    filtered = filtered + rescued
+
             return filtered
 
         except Exception as e:
@@ -2777,12 +2870,32 @@ Generate your answer:"""
             except Exception as _opt_exc:
                 logger.warning("agentic_scilex_optimizer_failed", error=str(_opt_exc))
 
+        # Honour the user's database selection threaded through ``chat()``;
+        # falls back to the legacy default when no session-level override is
+        # set. Unknown providers (e.g. ``google_scholar``) are filtered out by
+        # ``SciLExAdapter.search`` so we can pass the raw list through.
+        _selected_dbs = (
+            getattr(session, "databases", None)
+            if session is not None
+            else None
+        )
+        _apis = _selected_dbs or ["semantic_scholar", "openalex", "pubmed"]
         try:
             papers = await self.scilex_adapter.search(
                 query=effective_query,
                 max_results=max_results,
-                apis=["semantic_scholar", "openalex", "pubmed"],
+                apis=_apis,
             )
+
+            # Crossref-enrich: fills missing abstracts (Google Scholar /
+            # SciLEx don't always include them), canonicalises author lists
+            # and journal names. Same enrichment basic/advanced web-fallback
+            # uses; ensures agentic synthesis works on clean records.
+            try:
+                from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
+                papers = await enrich_papers(papers)
+            except Exception as _ee:
+                logger.warning("agentic_enrich_failed", error=str(_ee))
 
             if papers:
                 paper_dicts = []
