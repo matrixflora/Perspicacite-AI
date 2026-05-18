@@ -118,6 +118,7 @@ export default function KBDetailPage({
         subtitle={summary?.description ?? undefined}
         actions={
           <>
+            <BuildCapsulesButton name={name} />
             <a
               href={kb.exportUrl(name)}
               className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-grey-light)]"
@@ -559,7 +560,127 @@ function AddPapersCard({
             <StatusPill status={bibStatus} />
           </div>
         </div>
+
+        {/* Local files drop zone */}
+        <LocalFilesDropZone name={name} onChanged={onChanged} />
       </div>
+    </div>
+  );
+}
+
+function LocalFilesDropZone({
+  name,
+  onChanged,
+}: {
+  name: string;
+  onChanged: () => void;
+}) {
+  const [dragging, setDragging] = useState(false);
+  const [status, setStatus] = useState<SubStatus>({ kind: "idle" });
+
+  const upload = useCallback(
+    async (files: File[]) => {
+      if (!files.length) return;
+      setStatus({ kind: "working" });
+      try {
+        const result = await kb.uploadLocalFiles(name, files);
+        setStatus({
+          kind: "ok",
+          message: result.added_papers
+            ? `Added ${result.added_papers} paper(s)`
+            : result.job_id
+              ? `Job queued: ${result.job_id}`
+              : "Uploaded",
+        });
+        onChanged();
+      } catch (err) {
+        setStatus({
+          kind: "err",
+          message: err instanceof Error ? err.message : "Upload failed",
+        });
+      }
+    },
+    [name, onChanged],
+  );
+
+  return (
+    <div className="md:col-span-2 mt-2 flex flex-col gap-2">
+      <label className="text-sm font-medium text-[var(--cnrs-blue)]">
+        Local files <span className="text-[var(--text-muted)]">(PDF / docx)</span>
+      </label>
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          const files = Array.from(e.dataTransfer.files);
+          void upload(files);
+        }}
+        className={[
+          "flex flex-col items-center justify-center gap-1 rounded-[var(--radius-md)] border-2 border-dashed px-6 py-6 text-center transition",
+          dragging
+            ? "border-[var(--cnrs-blue)] bg-[var(--cnrs-yellow)]/20"
+            : "border-[var(--border)] bg-[var(--bg-soft)]",
+        ].join(" ")}
+      >
+        <p className="text-sm text-[var(--text-body)]">
+          Drop files here, or{" "}
+          <label className="cursor-pointer font-medium text-[var(--cnrs-blue)] underline-offset-2 hover:underline">
+            click to choose
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                void upload(files);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        </p>
+        <p className="text-[10px] text-[var(--text-muted)]">
+          PDFs are parsed and added to this knowledge base.
+        </p>
+      </div>
+      <StatusPill status={status} />
+    </div>
+  );
+}
+
+function BuildCapsulesButton({ name }: { name: string }) {
+  const [status, setStatus] = useState<SubStatus>({ kind: "idle" });
+  const run = useCallback(async () => {
+    setStatus({ kind: "working" });
+    try {
+      const r = await kb.buildCapsules(name);
+      setStatus({
+        kind: "ok",
+        message: r.job_id ? `Job ${r.job_id.slice(0, 8)}…` : "Started",
+      });
+    } catch (err) {
+      setStatus({
+        kind: "err",
+        message: err instanceof Error ? err.message : "Failed",
+      });
+    }
+  }, [name]);
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={run}
+        disabled={status.kind === "working"}
+        title="Build per-paper capsules (figures, structured text, provenance)"
+        className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--text-body)] transition hover:border-[var(--cnrs-blue)] hover:bg-[var(--cnrs-grey-light)] disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        Build capsules
+      </button>
+      {status.kind !== "idle" && <StatusPill status={status} />}
     </div>
   );
 }

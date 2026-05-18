@@ -114,6 +114,19 @@ export const kb = {
       `/api/kb/${encodeURIComponent(name)}/build-capsules`,
       {},
     ),
+  uploadLocalFiles: async (
+    name: string,
+    files: File[],
+  ): Promise<{ added_papers?: number; job_id?: string; errors?: string[] }> => {
+    const fd = new FormData();
+    for (const f of files) fd.append("files", f);
+    const res = await fetch(
+      `${BASE}/api/kb/${encodeURIComponent(name)}/local-files`,
+      { method: "POST", body: fd, cache: "no-store" },
+    );
+    if (!res.ok) throw new Error(`POST local-files → HTTP ${res.status}`);
+    return res.json();
+  },
   exportUrl: (name: string) => `${BASE}/api/kb/${encodeURIComponent(name)}/export`,
 };
 
