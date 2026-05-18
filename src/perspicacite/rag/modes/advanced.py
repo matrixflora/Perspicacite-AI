@@ -602,10 +602,10 @@ Sources:
             search_query = retrieval_query
             try:
                 from perspicacite.search.query_optimizer import optimize_query as _qopt
+                # request.app_state is auto-attached by RAGEngine (web AppState
+                # or MCPState — both duck-type as the protocol). If callers
+                # bypass the engine, optimizer skips itself gracefully.
                 _app = getattr(request, "app_state", None)
-                if _app is None:
-                    from perspicacite.web.state import app_state as _global_app
-                    _app = _global_app
                 opt_res = await _qopt(
                     query=retrieval_query,
                     context=None,
@@ -626,7 +626,11 @@ Sources:
             yield StreamEvent.status(
                 f"No KB results — falling back to web literature search across {_db_pretty}…"
             )
-            _telemetry: list[dict[str, Any]] = []
+            # Telemetry pattern: if the MCP layer set request.telemetry_sink
+            # (Task 2.4), pass it through directly — events flow to
+            # ctx.report_progress live and the local drain is a no-op.
+            # Otherwise use a fresh list for the SSE drain below.
+            _telemetry: Any = getattr(request, "telemetry_sink", None) or []
             paper_results = await _web_fallback_papers(
                 query=search_query,
                 databases=request.databases,
@@ -636,39 +640,40 @@ Sources:
                 telemetry=_telemetry,
                 optimize_query=False,
             )
-            for _ev in _telemetry:
-                _k = _ev.get("kind")
-                if _k == "query_rephrased":
-                    yield StreamEvent.status_kind(
-                        f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
-                        kind="query_rephrased",
-                        original=_ev.get("original", ""),
-                        rewritten=_ev.get("rewritten", ""),
-                        by=_ev.get("by", "keyword_optimizer"),
-                    )
-                elif _k == "provider_progress" and _ev.get("phase") == "start":
-                    _provs = ", ".join(
-                        p.replace("_", " ").title() for p in _ev.get("providers", [])
-                    )
-                    yield StreamEvent.status_kind(
-                        f"Querying databases: {_provs}…",
-                        kind="provider_progress",
-                        phase="start",
-                        providers=_ev.get("providers", []),
-                    )
-                elif _k == "provider_progress" and _ev.get("phase") == "done":
-                    _bp = _ev.get("by_provider", {}) or {}
-                    _msg = ", ".join(
-                        f"{src.replace('_',' ').title()}: {n}"
-                        for src, n in sorted(_bp.items(), key=lambda kv: -kv[1])
-                    ) if _bp else f"Total {_ev.get('total', 0)} hits"
-                    yield StreamEvent.status_kind(
-                        f"Database results — {_msg}",
-                        kind="provider_progress",
-                        phase="done",
-                        total=_ev.get("total", 0),
-                        by_provider=_bp,
-                    )
+            if isinstance(_telemetry, list):
+                for _ev in _telemetry:
+                    _k = _ev.get("kind")
+                    if _k == "query_rephrased":
+                        yield StreamEvent.status_kind(
+                            f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
+                            kind="query_rephrased",
+                            original=_ev.get("original", ""),
+                            rewritten=_ev.get("rewritten", ""),
+                            by=_ev.get("by", "keyword_optimizer"),
+                        )
+                    elif _k == "provider_progress" and _ev.get("phase") == "start":
+                        _provs = ", ".join(
+                            p.replace("_", " ").title() for p in _ev.get("providers", [])
+                        )
+                        yield StreamEvent.status_kind(
+                            f"Querying databases: {_provs}…",
+                            kind="provider_progress",
+                            phase="start",
+                            providers=_ev.get("providers", []),
+                        )
+                    elif _k == "provider_progress" and _ev.get("phase") == "done":
+                        _bp = _ev.get("by_provider", {}) or {}
+                        _msg = ", ".join(
+                            f"{src.replace('_',' ').title()}: {n}"
+                            for src, n in sorted(_bp.items(), key=lambda kv: -kv[1])
+                        ) if _bp else f"Total {_ev.get('total', 0)} hits"
+                        yield StreamEvent.status_kind(
+                            f"Database results — {_msg}",
+                            kind="provider_progress",
+                            phase="done",
+                            total=_ev.get("total", 0),
+                            by_provider=_bp,
+                        )
             web_fallback_used_advanced = True
             if paper_results:
                 yield StreamEvent.status(

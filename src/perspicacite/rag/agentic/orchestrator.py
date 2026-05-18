@@ -296,6 +296,12 @@ class AgentSession:
     max_papers_to_download: int | None = None  # Override orchestrator default
     evidence: EvidenceStore | None = None
 
+    # MCP cancellation tracking: when set, the orchestrator's iteration loop
+    # checks ``cancellation.is_cancelled(task_id)`` at the top of each
+    # iteration and returns early. Threaded from ``RAGRequest.task_id`` via
+    # AgenticRAGMode → orchestrator.chat(task_id=...).
+    task_id: str | None = None
+
     def add_message(self, role: str, content: str, metadata: dict | None = None):
         """Add a message to the session."""
         self.messages.append(Message(role=role, content=content, metadata=metadata or {}))
@@ -554,6 +560,7 @@ class AgenticOrchestrator:
         stream: bool = True,
         max_papers_to_download: int | None = None,
         databases: list[str] | None = None,
+        task_id: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Main chat entry point with true agentic behavior.
@@ -588,6 +595,10 @@ class AgenticOrchestrator:
         # helpers (``_scilex_search``) can honour it without changing every
         # internal call signature. ``None`` means "use defaults".
         session.databases = databases  # type: ignore[attr-defined]
+        # MCP cancellation: the iteration loop reads session.task_id and
+        # bails out when cancellation.is_cancelled(task_id) flips True.
+        # Threaded here from RAGRequest.task_id via AgenticRAGMode.
+        session.task_id = task_id
         session.evidence = EvidenceStore()
 
         # Store user preference for download cap in session

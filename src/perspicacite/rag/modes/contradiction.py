@@ -398,7 +398,9 @@ class ContradictionRAGMode(BaseRAGMode):
                 )
                 try:
                     from perspicacite.rag.modes.basic import _web_fallback_papers
-                    web_telemetry: list[dict[str, Any]] = []
+                    # Telemetry pattern: MCP-attached sink (live notifications)
+                    # OR plain list (legacy SSE drain). See Task 2.4.
+                    web_telemetry: Any = getattr(request, "telemetry_sink", None) or []
                     web_papers = await _web_fallback_papers(
                         query=request.query,
                         databases=request.databases,
@@ -407,40 +409,43 @@ class ContradictionRAGMode(BaseRAGMode):
                         app_state=getattr(request, "app_state", None),
                         telemetry=web_telemetry,
                     )
-                    # Drain telemetry into SSE for the live-search panel.
-                    for _ev in web_telemetry:
-                        _k = _ev.get("kind")
-                        if _k == "query_rephrased":
-                            yield StreamEvent.status_kind(
-                                f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
-                                kind="query_rephrased",
-                                original=_ev.get("original", ""),
-                                rewritten=_ev.get("rewritten", ""),
-                                by=_ev.get("by", "keyword_optimizer"),
-                            )
-                        elif _k == "provider_progress" and _ev.get("phase") == "start":
-                            _provs = ", ".join(
-                                p.replace("_", " ").title() for p in _ev.get("providers", [])
-                            )
-                            yield StreamEvent.status_kind(
-                                f"Querying databases: {_provs}…",
-                                kind="provider_progress",
-                                phase="start",
-                                providers=_ev.get("providers", []),
-                            )
-                        elif _k == "provider_progress" and _ev.get("phase") == "done":
-                            _bp = _ev.get("by_provider", {}) or {}
-                            _msg = ", ".join(
-                                f"{src.replace('_',' ').title()}: {nn}"
-                                for src, nn in sorted(_bp.items(), key=lambda kv: -kv[1])
-                            ) if _bp else f"Total {_ev.get('total', 0)} hits"
-                            yield StreamEvent.status_kind(
-                                f"Database results — {_msg}",
-                                kind="provider_progress",
-                                phase="done",
-                                total=_ev.get("total", 0),
-                                by_provider=_bp,
-                            )
+                    # Drain telemetry into SSE only when we're holding a list
+                    # (legacy path); the CallbackTelemetrySink path already
+                    # forwarded events live to ctx.report_progress.
+                    if isinstance(web_telemetry, list):
+                        for _ev in web_telemetry:
+                            _k = _ev.get("kind")
+                            if _k == "query_rephrased":
+                                yield StreamEvent.status_kind(
+                                    f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
+                                    kind="query_rephrased",
+                                    original=_ev.get("original", ""),
+                                    rewritten=_ev.get("rewritten", ""),
+                                    by=_ev.get("by", "keyword_optimizer"),
+                                )
+                            elif _k == "provider_progress" and _ev.get("phase") == "start":
+                                _provs = ", ".join(
+                                    p.replace("_", " ").title() for p in _ev.get("providers", [])
+                                )
+                                yield StreamEvent.status_kind(
+                                    f"Querying databases: {_provs}…",
+                                    kind="provider_progress",
+                                    phase="start",
+                                    providers=_ev.get("providers", []),
+                                )
+                            elif _k == "provider_progress" and _ev.get("phase") == "done":
+                                _bp = _ev.get("by_provider", {}) or {}
+                                _msg = ", ".join(
+                                    f"{src.replace('_',' ').title()}: {nn}"
+                                    for src, nn in sorted(_bp.items(), key=lambda kv: -kv[1])
+                                ) if _bp else f"Total {_ev.get('total', 0)} hits"
+                                yield StreamEvent.status_kind(
+                                    f"Database results — {_msg}",
+                                    kind="provider_progress",
+                                    phase="done",
+                                    total=_ev.get("total", 0),
+                                    by_provider=_bp,
+                                )
                 except Exception as _wf_exc:
                     logger.warning("contradiction_web_fallback_failed", error=str(_wf_exc))
                     web_papers = []

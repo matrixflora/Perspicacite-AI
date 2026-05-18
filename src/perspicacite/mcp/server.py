@@ -1329,6 +1329,12 @@ async def generate_report(
             tool_registry=state.tool_registry,
             config=state.config,
             session_store=getattr(state, "session_store", None),
+            # MCPState duck-types as the AppState protocol (carries .config
+            # and .llm_client); RAGEngine.auto-attach will set
+            # request.app_state = state for every mode dispatched here.
+            # Closes the Tier 3.5 loop so query optimization runs on
+            # MCP-originated requests instead of silently no-op'ing.
+            app_state=state,
         )
         engine.provenance_store = getattr(state, "provenance_store", None)
 
@@ -1383,6 +1389,7 @@ async def generate_report(
                 _progress_adapter.on_event
             )
 
+        cancelled_reason: str | None = None
         async for event in engine.query_stream(rag_request, message_id=message_id):
             if event.event == "content":
                 import json as _json
@@ -1404,6 +1411,40 @@ async def generate_report(
                         "kb_name": src.get("kb_name"),
                     }
                 )
+            elif event.event == "error":
+                # Modes signal cancellation by yielding an error event with
+                # ``reason="cancelled"``. Surface this as a structured response
+                # field so MCP clients can distinguish a cancelled partial
+                # result from a normally-completed report. Other error events
+                # (e.g. embedding-mismatch) flow through unchanged.
+                import json as _json
+
+                _err = _json.loads(event.data) if isinstance(event.data, str) else {}
+                if _err.get("reason") == "cancelled":
+                    cancelled_reason = "cancelled"
+                    break
+
+        if cancelled_reason == "cancelled":
+            logger.info(
+                "mcp_generate_report_cancelled",
+                query=query,
+                task_id=task_id,
+                partial_chars=len(report_text),
+            )
+            return _json_ok(
+                {
+                    "query": query,
+                    "kb_name": effective_kb_name,
+                    "kb_names": effective_kb_names,
+                    "mode": mode,
+                    "report": report_text,  # partial, may be empty
+                    "sources": sources,
+                    "papers_used": len(sources),
+                    "message_id": message_id,
+                    "cancelled": True,
+                    "task_id": task_id,
+                }
+            )
 
         logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
 
@@ -3976,12 +4017,16 @@ async def web_search(
     else:
         sink = ListTelemetrySink()
 
+    # Use the MCP server's own state (carries .config + .llm_client) so
+    # the query optimizer runs on MCP-originated web_search calls. Without
+    # this, optimize_query=True is silently a no-op.
+    _state = _require_state()
     try:
         papers = await resolve_papers_pipeline(
             query=query,
             databases=databases,
             max_docs=max(1, min(50, int(max_results))),
-            app_state=None,  # picks up global via web_search.py fallback
+            app_state=_state,
             telemetry=sink,
             enrich=enrich,
             rerank=True,
