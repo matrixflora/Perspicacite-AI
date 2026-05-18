@@ -43,7 +43,9 @@ from perspicacite.llm.client import AsyncLLMClient
 from perspicacite.llm.embeddings import create_embedding_provider
 
 ROOT = Path(__file__).resolve().parents[2]
-RESULTS_DIR = Path(__file__).parent / "results"
+_audit_repo = Path.home() / "git" / "research-tools-audit"
+_default_results = _audit_repo / "results" / "perspicacite-current" if _audit_repo.is_dir() else ROOT / "tests" / "audit" / "results"
+RESULTS_DIR = Path(os.environ["AUDIT_RESULTS_DIR"]).expanduser() if os.environ.get("AUDIT_RESULTS_DIR") else _default_results
 RESULTS_DIR.mkdir(exist_ok=True, parents=True)
 
 

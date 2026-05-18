@@ -32,7 +32,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-RESULTS_DIR = ROOT / "tests" / "audit" / "results"
+_audit_repo = Path.home() / "git" / "research-tools-audit"
+_default_results = _audit_repo / "results" / "perspicacite-current" if _audit_repo.is_dir() else ROOT / "tests" / "audit" / "results"
+RESULTS_DIR = Path(os.environ["AUDIT_RESULTS_DIR"]).expanduser() if os.environ.get("AUDIT_RESULTS_DIR") else _default_results
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 OFFLINE = os.getenv("OFFLINE", "").lower() in {"1", "true", "yes"}
