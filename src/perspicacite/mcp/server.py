@@ -355,6 +355,8 @@ async def search_literature(
     min_relevance: float = 0.0,
     relevance_method: str = "bm25",
     exclude_kb: str | None = None,
+    context: str | None = None,
+    optimize_query: bool | None = None,
 ) -> str:
     """
     Search academic databases for scientific papers matching a query.
@@ -388,6 +390,20 @@ async def search_literature(
         exclude_kb: Optional KB name. Papers whose DOI already exists in
             this knowledge base are removed from the results before
             returning, so callers only see literature not yet ingested.
+        context: Optional. A short grounding excerpt from earlier in the
+            conversation that disambiguates the query (e.g., a specific
+            finding, entity, or scope the user has been focused on). Keep
+            it short — one sentence or a short bullet is ideal. Skip
+            entirely when the user has shifted topic. Max ~300 chars;
+            truncated otherwise.
+        optimize_query: Whether to run the LLM-assisted query rewrite
+            before searching. ``True`` forces on, ``False`` forces off,
+            ``None`` falls back to
+            ``config.search.query_optimization.enabled`` (default True).
+            The rewrite uses one cheap Haiku call to produce a clean
+            scientific phrasing; on any failure (timeout, LLM error,
+            unparseable output) we silently fall back to the verbatim
+            query and surface ``fallback_reason`` in the response.
 
     Returns:
         JSON with list of papers including title, authors, year, doi, abstract.
@@ -407,12 +423,20 @@ async def search_literature(
                 "or configure at least one search provider in config.yml.",
                 scilex_available=False,
             )
+        import perspicacite.search.query_optimizer as _qo_mod
+        opt = await _qo_mod.optimize_query(
+            query=query,
+            context=context,
+            app_state=state,
+            optimize_enabled=optimize_query,
+        )
+
         # When filtering by relevance, overfetch ~3x so the post-filter
         # has enough candidates to actually return ``max_results``
         # quality hits. Capped at SciLEx's per-DB ceiling.
         fetch_n = min(max_results * 3, 100) if min_relevance > 0 else max_results
         papers = await aggregator.search(
-            query=query,
+            query=opt.searched_query,
             max_results=fetch_n,
             year_min=year_min,
             year_max=year_max,
@@ -506,7 +530,9 @@ async def search_literature(
 
         logger.info(
             "mcp_search_literature",
-            query=query, results=len(results),
+            query=query,
+            searched_query=opt.searched_query,
+            results=len(results),
             min_relevance=min_relevance,
             method=relevance_method if min_relevance > 0 else "none",
         )
@@ -528,6 +554,14 @@ async def search_literature(
         payload: dict[str, Any] = {
             "query": query, "total_results": len(results), "papers": results,
             "errors_by_database": errors_full,
+            "original_query": query,
+            "searched_query": opt.searched_query,
+            "query_optimization": {
+                "enabled": opt.enabled,
+                "applied": opt.applied,
+                "context_used": opt.context_used,
+                "fallback_reason": opt.fallback_reason,
+            },
         }
         if all_dbs_failed:
             payload["success"] = False

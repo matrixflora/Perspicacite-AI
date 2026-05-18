@@ -6,6 +6,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from perspicacite.search.query_optimizer import OptimizationResult
+
+
+def _passthrough_opt(query: str, **_kwargs) -> OptimizationResult:
+    """No-op optimizer stub: returns the query unchanged."""
+    return OptimizationResult(
+        searched_query=query, enabled=False, applied=False,
+        context_used=False, fallback_reason=None,
+    )
+
+
+_OPT_PATCH = patch(
+    "perspicacite.search.query_optimizer.optimize_query",
+    new=AsyncMock(side_effect=lambda **kw: _passthrough_opt(**kw)),
+)
+
 
 @pytest.mark.asyncio
 async def test_search_literature_exclude_kb_filters_existing_papers():
@@ -42,7 +58,8 @@ async def test_search_literature_exclude_kb_filters_existing_papers():
          patch(
              "perspicacite.search.domain_aggregator.build_aggregator",
              return_value=mock_aggregator,
-         ):
+         ), \
+         _OPT_PATCH:
         result_json = await search_literature(
             query="test query",
             max_results=10,
@@ -78,7 +95,8 @@ async def test_search_literature_no_exclude_kb_returns_all():
          patch(
              "perspicacite.search.domain_aggregator.build_aggregator",
              return_value=mock_aggregator,
-         ):
+         ), \
+         _OPT_PATCH:
         result_json = await search_literature(
             query="test query",
             max_results=10,
@@ -132,7 +150,8 @@ async def test_search_literature_surfaces_metadata_sources():
          patch(
              "perspicacite.search.domain_aggregator.build_aggregator",
              return_value=mock_aggregator,
-         ):
+         ), \
+         _OPT_PATCH:
         result_json = await search_literature(query="x", max_results=10)
 
     result = json.loads(result_json)
