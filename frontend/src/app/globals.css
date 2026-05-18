@@ -1,0 +1,137 @@
+/* IBM Plex Sans + IBM Plex Mono — official CNRS charte fonts (OFL).
+   Must precede other rules per CSS @import ordering. */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+:root {
+  /* CNRS charte graphique tokens — primary palette */
+  --cnrs-blue: #00284b;          /* Bleu CNRS — Pantone 2965 C / 2975 C */
+  --cnrs-yellow: #ffeb6e;        /* Jaune CNRS — Pantone 106 C */
+
+  /* Complementary palette */
+  --cnrs-violet: #6941eb;
+  --cnrs-grey: #8296a5;
+  --cnrs-grey-light: #ebf0f5;
+
+  /* Secondary aplats — axis accents */
+  --cnrs-green: #b0ee89;
+  --cnrs-orange: #ffbc75;
+  --cnrs-blue-pale: #9ae2ff;
+
+  /* Neutrals */
+  --bg: #ffffff;
+  --bg-soft: #f8fafc;
+  --surface: #ffffff;
+  --border: #dfe4ec;
+  --text-body: #00284b;
+  --text-muted: #4a5b75;
+
+  /* Geometry */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-card: 0 8px 30px rgba(0, 40, 75, 0.08);
+  --shadow-elev: 0 16px 48px rgba(0, 40, 75, 0.12);
+}
+
+@theme inline {
+  --color-cnrs-blue: var(--cnrs-blue);
+  --color-cnrs-yellow: var(--cnrs-yellow);
+  --color-cnrs-violet: var(--cnrs-violet);
+  --color-cnrs-grey: var(--cnrs-grey);
+  --color-cnrs-grey-light: var(--cnrs-grey-light);
+  --color-cnrs-green: var(--cnrs-green);
+  --color-cnrs-orange: var(--cnrs-orange);
+  --color-cnrs-blue-pale: var(--cnrs-blue-pale);
+  --color-background: var(--bg);
+  --color-foreground: var(--text-body);
+  --color-muted: var(--text-muted);
+  --color-border: var(--border);
+  --color-surface: var(--surface);
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #061826;
+    --bg-soft: #0a2238;
+    --surface: #0e2c47;
+    --border: #1d3d5e;
+    --text-body: #ebf0f5;
+    --text-muted: #8296a5;
+    --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.4);
+    --shadow-elev: 0 16px 48px rgba(0, 0, 0, 0.5);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text-body);
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* The CNRS halo signature device — used on hero / landing surfaces.
+   Always cut to edge, CNRS Yellow, on white or Bleu CNRS background. */
+.cnrs-halo {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--cnrs-yellow);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.cnrs-halo--hero {
+  width: 720px;
+  height: 720px;
+  top: -260px;
+  right: -180px;
+  filter: blur(1px);
+  opacity: 0.95;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cnrs-halo {
+    transition: transform 800ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/* Subtle CNRS trame-style background — diagonal lines on the CNRS blue. */
+.cnrs-trame-bleu {
+  background-color: var(--cnrs-blue);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 235, 110, 0.05) 0px,
+    rgba(255, 235, 110, 0.05) 1px,
+    transparent 1px,
+    transparent 14px
+  );
+}
+
+/* Streaming "thinking" dot. */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+/* Focus rings — accessibility first. */
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--cnrs-yellow);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
