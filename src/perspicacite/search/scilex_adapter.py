@@ -6,7 +6,9 @@ Uses SciLEx's collection, then manually aggregates and converts to Papers.
 
 import asyncio
 import json
+import logging as _stdlib_logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -53,6 +55,32 @@ def _ss_key_is_valid(api_key: str) -> bool:
     except Exception as exc:
         logger.debug("ss_key_validation_error_assume_valid", error=str(exc))
         return True
+
+
+class _QuotaLogCapture(_stdlib_logging.Handler):
+    """Captures SciLEx's stdlib-logger PubMed quota warnings.
+
+    SciLEx logs ``"PubMed API: Only N requests remaining in current period!"``
+    via the root logger; we attach this handler for the duration of a
+    SciLEx call, scan emitted messages for the quota pattern, and
+    surface the remaining-count as a structured warning to the caller.
+    """
+
+    _QUOTA_RE = re.compile(r"Only (\d+) requests remaining")
+
+    def __init__(self) -> None:
+        super().__init__(level=_stdlib_logging.WARNING)
+        self.last_remaining: int | None = None
+        self.provider = "pubmed"
+
+    def emit(self, record: _stdlib_logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+            m = self._QUOTA_RE.search(msg)
+            if m:
+                self.last_remaining = int(m.group(1))
+        except Exception:
+            pass
 
 
 @dataclass
@@ -258,6 +286,9 @@ class SciLExAdapter:
 
             api_config = self._build_api_config(apis)
 
+            _quota = _QuotaLogCapture()
+            _root_logger = _stdlib_logging.getLogger()
+            _root_logger.addHandler(_quota)
             try:
                 # Phase 1: Collect
                 logger.info("scilex_collection_start", query=query, apis=apis)
@@ -423,6 +454,20 @@ class SciLExAdapter:
             except Exception as e:
                 logger.error("scilex_collection_error", error=str(e))
                 raise
+
+            finally:
+                _root_logger.removeHandler(_quota)
+                # Surface the quota warning so search_with_warnings can include it.
+                if _quota.last_remaining is not None and _quota.last_remaining < 10:
+                    self._last_quota_warning = {
+                        "kind": "rate_limit_low",
+                        "provider": "pubmed",
+                        "remaining": _quota.last_remaining,
+                        "advice": (
+                            "Add NCBI_API_KEY to lift quota from 3 r/s to 10 r/s. "
+                            "Without a key, SciLEx is throttled aggressively."
+                        ),
+                    }
 
     def _filter_by_article_type(self, papers: list[Paper], article_type: str) -> list[Paper]:
         """Post-filter papers by article type.
