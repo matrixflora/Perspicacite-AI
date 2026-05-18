@@ -295,6 +295,10 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         session = SurveySession(session_id=session_id, query=request.query)
         self.sessions[session_id] = session
 
+        # Store active request so nested helpers can read per-call overrides
+        # (e.g. batch_size, crossref_concurrency) without signature changes.
+        self._current_request = request
+
         # Prepare KB context
         kb_context_block, known_paper_ids = await self._prepare_kb_context(
             request, vector_store, embedding_provider
@@ -652,7 +656,12 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             # analysis pass to use them.
             try:
                 from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
-                papers = await enrich_papers(papers)
+                _crossref_concurrency = getattr(
+                    getattr(self, "_current_request", None),
+                    "crossref_concurrency",
+                    None,
+                )
+                papers = await enrich_papers(papers, concurrency=_crossref_concurrency)
             except Exception as _ee:
                 logger.warning(
                     "literature_survey_enrich_failed", error=str(_ee),
@@ -930,10 +939,15 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         # provider sees ~3 parallel completions, which is well within
         # OpenRouter / DeepSeek rate caps for a normal account.
         all_analyses: list[dict[str, Any]] = []
-        total_batches = (len(papers_with_abstracts) + self.batch_size - 1) // self.batch_size
+        # Per-call batch_size override; fall back to config-file default.
+        _req = getattr(self, "_current_request", None)
+        batch_size = (
+            getattr(_req, "batch_size", None) or self.batch_size
+        )
+        total_batches = (len(papers_with_abstracts) + batch_size - 1) // batch_size
         batches = [
-            papers_with_abstracts[i:i + self.batch_size]
-            for i in range(0, len(papers_with_abstracts), self.batch_size)
+            papers_with_abstracts[i:i + batch_size]
+            for i in range(0, len(papers_with_abstracts), batch_size)
         ]
         # Concurrency cap. 3 is conservative; raise carefully if rate
         # limits permit. Each call sends ~10-25 abstract previews.

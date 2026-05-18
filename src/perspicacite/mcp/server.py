@@ -1237,6 +1237,9 @@ async def generate_report(
     recency_weight: float = 0.0,
     kb_names: list[str] | None = None,
     task_id: str | None = None,
+    max_total_seconds: float | None = None,
+    batch_size: int | None = None,
+    crossref_concurrency: int | None = None,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1256,6 +1259,12 @@ async def generate_report(
         max_papers: Maximum papers to reference in the report
         recency_weight: Optional recency bias (0.0 = disabled, 1.0 = full recency). When > 0,
             retrieved chunks are re-scored toward more recent papers using exponential decay.
+        max_total_seconds: Override the per-mode wall-clock budget (30–1800 s). Applies to
+            the "profound" mode's cycle loop. None uses the config-file default.
+        batch_size: Override the abstract-analysis batch size for "literature_survey" mode
+            (1–100 papers per batch). None uses the config-file default (20).
+        crossref_concurrency: Override Crossref enrichment concurrency (1–10). None uses
+            the default (2 without mailto env var, 6 with).
 
     Returns:
         JSON with the report text, cited sources, and metadata.
@@ -1357,6 +1366,9 @@ async def generate_report(
             provider=default_provider,
             model=default_model,
             task_id=task_id,
+            max_total_seconds=max_total_seconds,
+            batch_size=batch_size,
+            crossref_concurrency=crossref_concurrency,
         )
 
         # Build telemetry sink and attach to the request so each RAG mode

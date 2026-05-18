@@ -8,14 +8,14 @@ from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
 _MODULE = "perspicacite.pipeline.enrichment.crossref_enrich"
 
 
-async def _fake_canonicalize_fills_abstract(candidates):
+async def _fake_canonicalize_fills_abstract(candidates, *, concurrency=None):
     for c in candidates:
         if c.get("doi") and not c.get("abstract"):
             c["abstract"] = "Crossref abstract text"
             c.setdefault("enrichment_sources", []).append("crossref")
 
 
-async def _fake_canonicalize_noop(candidates):
+async def _fake_canonicalize_noop(candidates, *, concurrency=None):
     pass
 
 

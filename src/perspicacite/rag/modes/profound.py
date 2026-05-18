@@ -455,6 +455,13 @@ class ProfoundRAGMode(BaseRAGMode):
         _start_time = _time.monotonic()
         _cancelled_tid: str | None = None
 
+        # Per-call budget override: request.max_total_seconds takes
+        # precedence over the config-file default stored on self.
+        max_total_seconds = (
+            getattr(request, "max_total_seconds", None)
+            or self.max_total_seconds
+        )
+
         # Main research loop
         for cycle in range(self.max_cycles):
             # Cancellation check — respect MCP cancel_task requests
@@ -469,12 +476,12 @@ class ProfoundRAGMode(BaseRAGMode):
             # cycle if we've already burned the budget — the answer so
             # far is still finalized below.
             elapsed = _time.monotonic() - _start_time
-            if elapsed > self.max_total_seconds:
+            if elapsed > max_total_seconds:
                 logger.warning(
                     "profound_time_budget_exceeded",
                     cycle=cycle,
                     elapsed_s=round(elapsed, 1),
-                    budget_s=self.max_total_seconds,
+                    budget_s=max_total_seconds,
                 )
                 completion_reason = "time_budget_exceeded"
                 break

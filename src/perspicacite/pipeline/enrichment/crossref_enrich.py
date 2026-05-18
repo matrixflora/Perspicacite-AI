@@ -113,6 +113,8 @@ async def backfill_dois(
 
 async def canonicalize_candidates(
     candidates: list[dict[str, Any]],
+    *,
+    concurrency: int | None = None,
 ) -> None:
     """Enrich each candidate dict via Crossref in place.
 
@@ -125,6 +127,12 @@ async def canonicalize_candidates(
 
     Sets ``c["enrichment_sources"] = ["crossref"]`` on every patched
     candidate so the UI can render a "+Crossref" chip.
+
+    Args:
+        concurrency: Optional override for the Semaphore concurrency limit.
+            When None, defaults to 2 (no mailto) or 6 (with mailto).
+            Bounded to [1, 10] by the ``RAGRequest.crossref_concurrency``
+            field validator when coming from a per-call override.
     """
     from perspicacite.pipeline.download.crossref import enrich_from_crossref
 
@@ -135,7 +143,8 @@ async def canonicalize_candidates(
         or None
     )
 
-    sem = asyncio.Semaphore(2 if not mailto else 6)
+    _default_concurrency = 2 if not mailto else 6
+    sem = asyncio.Semaphore(concurrency if concurrency is not None else _default_concurrency)
     _spacing_lock = asyncio.Lock()
     _last_call_t = {"t": 0.0}
     _min_spacing = 0.25 if not mailto else 0.0
@@ -207,7 +216,7 @@ async def canonicalize_candidates(
     )
 
 
-async def enrich_papers(papers: list) -> list:
+async def enrich_papers(papers: list, *, concurrency: int | None = None) -> list:
     """Crossref-enrich a list of Paper objects in place.
 
     Converts each Paper to a dict candidate (carrying only the fields
@@ -219,6 +228,10 @@ async def enrich_papers(papers: list) -> list:
     is the public entry point for agentic, literature_survey, the
     standalone MCP ``web_search`` tool, and the unified
     ``resolve_papers_pipeline`` introduced in Tier 3.
+
+    Args:
+        concurrency: Optional override forwarded to ``canonicalize_candidates``.
+            Typically sourced from ``RAGRequest.crossref_concurrency``.
     """
     if not papers:
         return papers
@@ -242,7 +255,7 @@ async def enrich_papers(papers: list) -> list:
             "abstract": p.abstract or "",
         })
 
-    await canonicalize_candidates(candidates)
+    await canonicalize_candidates(candidates, concurrency=concurrency)
 
     for c in candidates:
         p = c["_paper_ref"]

@@ -135,6 +135,23 @@ class RAGRequest(BaseModel):
         description="Optional task ID for MCP cancellation tracking",
     )
 
+    # === Per-call overrides for budget / parallelism ===
+    # Each is None by default, in which case the mode uses its
+    # config-file default. Bounded to safe ranges.
+    max_total_seconds: float | None = Field(
+        default=None, ge=30.0, le=1800.0,
+        description="Overrides per-mode max_total_seconds (30-1800s)",
+    )
+    batch_size: int | None = Field(
+        default=None, ge=1, le=100,
+        description="Overrides literature_survey batch_size (1-100)",
+    )
+    crossref_concurrency: int | None = Field(
+        default=None, ge=1, le=10,
+        description="Overrides Crossref enrichment concurrency (1-10)",
+    )
+    # max_iterations already exists; existing validator stays.
+
     def __repr__(self) -> str:
         return (
             f"RAGRequest(query='{self.query[:50]}...', "
