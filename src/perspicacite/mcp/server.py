@@ -3892,6 +3892,115 @@ async def ingest_skill_bundle(
     }
 
 
+@mcp.tool()
+async def web_search(
+    query: str,
+    databases: list[str] | None = None,
+    max_results: int = 10,
+    enrich: bool = True,
+    optimize_query: bool = True,
+    ctx: Context | None = None,
+) -> str:
+    """Live academic web search across user-selected databases.
+
+    Wraps the shared aggregator pipeline (semantic_scholar, openalex,
+    pubmed, arxiv via SciLEx + standalone google_scholar, europepmc,
+    core, etc.) with Crossref enrichment + MiniLM rerank. Returns a
+    JSON-encoded payload with ``papers``, ``warnings``, and
+    ``telemetry_summary`` (per-provider hit counts).
+
+    Distinct from ``search_literature`` (SciLEx-only) and
+    ``generate_report`` (heavy mode-bound RAG). Use this when you
+    just want a focused literature lookup with cleaned-up metadata.
+
+    Args:
+        query: free-text scientific query
+        databases: list of provider names (default: semantic_scholar,
+            openalex, pubmed). Pass google_scholar / europepmc / core
+            for the standalone aggregator providers.
+        max_results: cap on returned papers (1-50)
+        enrich: when True (default) runs Crossref enrichment on the
+            returned papers — fills missing abstracts and canonicalises
+            author lists. Set False for raw provider data.
+        optimize_query: when True, runs the LLM-assisted keyword rewrite
+            before searching.
+        ctx: MCP context for live progress notifications (injected
+            automatically by fastmcp; do not pass manually).
+
+    Returns:
+        JSON string: {"papers": [...], "warnings": [...],
+                      "telemetry_summary": {"by_provider": {...}}}
+    """
+    import json as _json
+    from perspicacite.rag.web_search import run_web_aggregator_search
+    from perspicacite.rag.telemetry import (
+        ListTelemetrySink,
+        CallbackTelemetrySink,
+    )
+
+    # Choose a sink that buffers events for the telemetry_summary.
+    # When ctx is present, also forward events as live MCP progress
+    # notifications via MCPProgressAdapter.
+    if ctx is not None:
+        from perspicacite.mcp.progress_adapter import MCPProgressAdapter
+        _adapter = MCPProgressAdapter(ctx)
+        sink: Any = CallbackTelemetrySink(_adapter.on_event)
+    else:
+        sink = ListTelemetrySink()
+
+    try:
+        papers = await run_web_aggregator_search(
+            keyword_query=query,
+            context=None,
+            optimize_enabled=bool(optimize_query),
+            databases=databases,
+            max_docs=max(1, min(50, int(max_results))),
+            app_state=None,  # picks up global via web_search.py fallback
+            telemetry=sink,
+        )
+    except Exception as exc:
+        return _json.dumps({
+            "papers": [],
+            "warnings": [],
+            "error": f"web_search_failed: {exc}",
+        })
+
+    if enrich and papers:
+        try:
+            from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
+            papers = await enrich_papers(papers)
+        except Exception as _ee:
+            logger.warning("mcp_web_search_enrich_failed", error=str(_ee))
+
+    # Build response payload — scan buffered events for per-provider hit counts
+    by_provider: dict[str, int] = {}
+    for ev in (getattr(sink, "events", []) or []):
+        if ev.get("kind") == "provider_progress" and ev.get("phase") == "done":
+            by_provider.update(ev.get("by_provider", {}) or {})
+
+    serialised: list[dict] = []
+    for p in papers:
+        serialised.append({
+            "title": p.title,
+            "authors": [a.name for a in (p.authors or [])],
+            "year": p.year,
+            "journal": p.journal,
+            "doi": p.doi,
+            "url": p.url,
+            "abstract": p.abstract,
+            "discovery_sources": (p.metadata or {}).get("sources") or [],
+            "enrichment_sources": (p.metadata or {}).get("enrichment_sources") or [],
+        })
+
+    return _json.dumps({
+        "papers": serialised,
+        "warnings": [],  # provider-level warnings flow via search_with_warnings;
+                        # for direct web_search the aggregator surfaces them
+                        # in logs, not in the payload (yet).
+        "telemetry_summary": {"by_provider": by_provider},
+    })
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
@@ -3922,6 +4031,7 @@ _TOOL_NAMES: list[str] = [
     "zotero_ingest_collection_to_kb",
     "ingest_github_repo",
     "ingest_skill_bundle",
+    "web_search",
 ]
 
 
