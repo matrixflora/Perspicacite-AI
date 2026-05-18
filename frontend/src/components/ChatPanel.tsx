@@ -4,7 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { DatabasePicker } from "./DatabasePicker";
 import { SourcePill } from "./SourcePill";
-import { streamChat, cancelChat, type ChatSource } from "@/lib/chat";
+import { StatusBar, type ChatPhase } from "./StatusBar";
+import { ThinkingSteps } from "./ThinkingSteps";
+import {
+  streamChat,
+  cancelChat,
+  estimateTokens,
+  type ChatSource,
+  type ThinkingStep,
+} from "@/lib/chat";
 import type { RAGMode } from "@/lib/modes";
 import { MODES, accentClasses } from "@/lib/modes";
 import { DEFAULT_DATABASES, type DatabaseId } from "@/lib/databases";
@@ -16,10 +24,14 @@ type Turn = {
   mode?: RAGMode;
   text: string;
   sources?: ChatSource[];
+  steps?: ThinkingStep[];
   streaming?: boolean;
   startedAt?: number;
   elapsedMs?: number;
   papersFound?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  phase?: ChatPhase;
   error?: string;
 };
 
@@ -33,6 +45,21 @@ const EXAMPLE_PROMPTS = [
   "Summarise the state-of-the-art on multi-modal scientific search.",
   "Which mass-spectrometry foundation models exist in 2026?",
 ];
+
+// Heuristic: pick a status phase from the latest thinking step.
+function phaseFromStep(step?: ThinkingStep): ChatPhase | undefined {
+  if (!step) return undefined;
+  if (step.kind === "provider_progress") return "retrieving";
+  if (step.kind === "batch_progress") return "retrieving";
+  if (step.kind === "query_rephrased") return "sending";
+  if (step.kind === "status") {
+    const m = step.label.toLowerCase();
+    if (m.includes("generat") || m.includes("synth")) return "synthesizing";
+    if (m.includes("retriev") || m.includes("search") || m.includes("query"))
+      return "retrieving";
+  }
+  return undefined;
+}
 
 export function ChatPanel({
   initialConversationId,
@@ -107,11 +134,26 @@ export function ChatPanel({
     return () => clearInterval(interval);
   }, [streaming]);
 
+  // Esc to cancel during streaming.
+  useEffect(() => {
+    if (!streaming) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        cancel();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streaming]);
+
   const submit = useCallback(
     async (queryArg?: string) => {
       const q = (queryArg ?? draft).trim();
       if (!q || streaming) return;
 
+      const tokensIn = estimateTokens(q);
       const userTurn: Turn = { id: nid(), role: "user", text: q, mode };
       const asstTurn: Turn = {
         id: nid(),
@@ -121,6 +163,10 @@ export function ChatPanel({
         streaming: true,
         startedAt: Date.now(),
         elapsedMs: 0,
+        tokensIn,
+        tokensOut: 0,
+        phase: "sending",
+        steps: [],
       };
       setTurns((t) => [...t, userTurn, asstTurn]);
       setDraft("");
@@ -139,9 +185,16 @@ export function ChatPanel({
         })) {
           if (ev.kind === "token") {
             setTurns((ts) =>
-              ts.map((t) =>
-                t.id === asstTurn.id ? { ...t, text: t.text + ev.text } : t,
-              ),
+              ts.map((t) => {
+                if (t.id !== asstTurn.id) return t;
+                const text = t.text + ev.text;
+                return {
+                  ...t,
+                  text,
+                  tokensOut: estimateTokens(text),
+                  phase: "synthesizing",
+                };
+              }),
             );
           } else if (ev.kind === "meta") {
             setTurns((ts) =>
@@ -155,11 +208,22 @@ export function ChatPanel({
                   : t,
               ),
             );
+          } else if (ev.kind === "thinking") {
+            setTurns((ts) =>
+              ts.map((t) =>
+                t.id === asstTurn.id
+                  ? {
+                      ...t,
+                      steps: [...(t.steps ?? []), ev.step],
+                      phase: phaseFromStep(ev.step) ?? t.phase,
+                    }
+                  : t,
+              ),
+            );
           } else if (ev.kind === "done") {
             if (ev.conversation_id) {
               const newId = ev.conversation_id;
               conversationIdRef.current = newId;
-              // Reflect the new conversation ID in the URL so refresh works.
               if (!initialConversationId) {
                 router.replace(`/chat/${encodeURIComponent(newId)}`);
               }
@@ -170,7 +234,11 @@ export function ChatPanel({
                   ? {
                       ...t,
                       streaming: false,
+                      phase: "done",
                       text: ev.answer && !t.text ? ev.answer : t.text,
+                      tokensOut: estimateTokens(
+                        ev.answer && !t.text ? ev.answer : t.text,
+                      ),
                     }
                   : t,
               ),
@@ -179,7 +247,12 @@ export function ChatPanel({
             setTurns((ts) =>
               ts.map((t) =>
                 t.id === asstTurn.id
-                  ? { ...t, streaming: false, error: ev.message }
+                  ? {
+                      ...t,
+                      streaming: false,
+                      phase: "error",
+                      error: ev.message,
+                    }
                   : t,
               ),
             );
@@ -187,9 +260,18 @@ export function ChatPanel({
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "stream interrupted";
+        const wasAborted =
+          err instanceof DOMException && err.name === "AbortError";
         setTurns((ts) =>
           ts.map((t) =>
-            t.id === asstTurn.id ? { ...t, streaming: false, error: msg } : t,
+            t.id === asstTurn.id
+              ? {
+                  ...t,
+                  streaming: false,
+                  phase: wasAborted ? "cancelled" : "error",
+                  error: wasAborted ? undefined : msg,
+                }
+              : t,
           ),
         );
       } finally {
@@ -212,6 +294,9 @@ export function ChatPanel({
 
   const hasMessages = turns.length > 0;
   const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");
+  const livePhase: ChatPhase = streaming
+    ? lastAssistant?.phase ?? "sending"
+    : lastAssistant?.phase ?? "idle";
 
   return (
     <section className="relative mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 md:px-6">
@@ -222,12 +307,7 @@ export function ChatPanel({
             Loading conversation…
           </p>
         ) : !hasMessages ? (
-          <HeroEmptyState
-            mode={mode}
-            onPick={(prompt) => {
-              setDraft(prompt);
-            }}
-          />
+          <HeroEmptyState mode={mode} onPick={(prompt) => setDraft(prompt)} />
         ) : (
           <ol className="flex flex-col gap-6">
             {turns.map((t) =>
@@ -241,9 +321,19 @@ export function ChatPanel({
         )}
       </div>
 
-      {/* Streaming status bar */}
+      {/* Live status pill above the composer */}
       {streaming && lastAssistant && (
-        <StatusBar turn={lastAssistant} />
+        <div className="sticky bottom-[150px] z-10 mx-auto mb-2 self-center">
+          <StatusBar
+            phase={livePhase}
+            elapsedMs={lastAssistant.elapsedMs}
+            tokensIn={lastAssistant.tokensIn}
+            tokensOut={lastAssistant.tokensOut}
+            papersFound={lastAssistant.papersFound}
+            mode={lastAssistant.mode}
+            onCancel={cancel}
+          />
+        </div>
       )}
 
       {/* Compose */}
@@ -286,14 +376,27 @@ export function ChatPanel({
               <span aria-hidden>{showDbPicker ? "▾" : "🌐"}</span>
               <span>{databases.length}/12 DBs</span>
             </button>
+
+            {/* Token estimate while typing (a small novel affordance — readers
+                can gauge how long their prompt is before sending). */}
+            {draft.trim().length > 0 && !streaming && (
+              <span
+                className="font-mono text-[10px] text-[var(--text-muted)]"
+                title={`Estimated input tokens (~ chars / 4): ${estimateTokens(draft)}`}
+              >
+                ≈{estimateTokens(draft).toLocaleString()} tok
+              </span>
+            )}
+
             <div className="ml-auto">
               {streaming ? (
                 <button
                   type="button"
                   onClick={cancel}
                   className="rounded-[var(--radius-md)] border border-[var(--cnrs-blue)] px-3 py-1.5 text-xs font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-blue)] hover:text-white"
+                  title="Stop generation (Esc)"
                 >
-                  Cancel
+                  ◼ Stop
                 </button>
               ) : (
                 <button
@@ -430,7 +533,7 @@ function AssistantMessage({
 
   return (
     <li className="flex flex-col gap-3">
-      {/* Mode tag */}
+      {/* Mode tag + final stats */}
       <div className="flex items-center gap-2">
         <span
           className={[
@@ -441,7 +544,25 @@ function AssistantMessage({
         >
           {m?.label ?? "assistant"}
         </span>
+        {/* Compact summary line for completed turns */}
+        {!turn.streaming && (turn.elapsedMs || turn.tokensOut) && (
+          <span className="font-mono text-[10px] text-[var(--text-muted)]">
+            {turn.elapsedMs ? `${(turn.elapsedMs / 1000).toFixed(1)}s` : ""}
+            {turn.tokensIn || turn.tokensOut
+              ? ` · ${(turn.tokensIn ?? 0).toLocaleString()}↑ ${(turn.tokensOut ?? 0).toLocaleString()}↓`
+              : ""}
+            {turn.phase === "cancelled" ? " · cancelled" : ""}
+          </span>
+        )}
       </div>
+
+      {/* Thinking trail */}
+      {turn.steps && turn.steps.length > 0 && (
+        <ThinkingSteps
+          steps={turn.steps}
+          defaultOpen={turn.streaming && streaming}
+        />
+      )}
 
       {/* Sources first (Perplexity pattern) */}
       {turn.sources && turn.sources.length > 0 && (
@@ -466,50 +587,14 @@ function AssistantMessage({
         ) : turn.text ? (
           <p className="whitespace-pre-wrap">{turn.text}</p>
         ) : turn.streaming && streaming ? (
-          <span className="inline-flex items-center gap-1 text-sm text-[var(--text-muted)]">
-            <span className="pulse-dot">●</span>
-            <span className="pulse-dot" style={{ animationDelay: "0.15s" }}>
-              ●
-            </span>
-            <span className="pulse-dot" style={{ animationDelay: "0.3s" }}>
-              ●
-            </span>
-            <span className="ml-1">Retrieving…</span>
+          <span className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)]">
+            <span className="cnrs-sun" aria-hidden />
+            <span>Working…</span>
           </span>
         ) : (
           <p className="text-sm text-[var(--text-muted)]">(no answer)</p>
         )}
       </div>
     </li>
-  );
-}
-
-function StatusBar({ turn }: { turn: Turn }) {
-  const elapsed = ((turn.elapsedMs ?? 0) / 1000).toFixed(1);
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="sticky bottom-[120px] z-10 mx-auto mb-2 flex items-center gap-3 self-center rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text-muted)] shadow-[var(--shadow-card)]"
-    >
-      <span className="flex items-center gap-1.5">
-        <span className="pulse-dot text-[var(--cnrs-blue)]">●</span>
-        <span>Working…</span>
-      </span>
-      <span aria-hidden>·</span>
-      <span className="font-mono tabular-nums">{elapsed}s</span>
-      {typeof turn.papersFound === "number" && turn.papersFound > 0 && (
-        <>
-          <span aria-hidden>·</span>
-          <span>{turn.papersFound} papers</span>
-        </>
-      )}
-      {turn.mode && (
-        <>
-          <span aria-hidden>·</span>
-          <span className="font-medium text-[var(--cnrs-blue)]">{turn.mode}</span>
-        </>
-      )}
-    </div>
   );
 }

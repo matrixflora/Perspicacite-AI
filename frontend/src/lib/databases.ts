@@ -18,23 +18,143 @@ export type DatabaseId =
 export type DatabaseDescriptor = {
   id: DatabaseId;
   label: string;
+  short: string;       // 2–3 char monogram for tight pills
   blurb?: string;
+  homepage?: string;
+  // Tailwind class tokens for the brand chip.
+  tone: "blue" | "yellow" | "violet" | "green" | "orange" | "grey" | "blue-pale";
 };
 
 export const DATABASES: DatabaseDescriptor[] = [
-  { id: "semantic_scholar", label: "Semantic Scholar", blurb: "broad CS + biomed" },
-  { id: "openalex", label: "OpenAlex", blurb: "open scholarly graph" },
-  { id: "pubmed", label: "PubMed", blurb: "biomedical literature" },
-  { id: "arxiv", label: "arXiv", blurb: "preprints, physics + CS" },
-  { id: "europepmc", label: "Europe PMC", blurb: "life sciences" },
-  { id: "core", label: "CORE", blurb: "open-access aggregator" },
-  { id: "inspire", label: "INSPIRE-HEP", blurb: "high-energy physics" },
-  { id: "pubchem", label: "PubChem", blurb: "chemistry" },
-  { id: "dblp_sparql", label: "DBLP-SPARQL", blurb: "computer science bib" },
-  { id: "google_scholar", label: "Google Scholar", blurb: "broad coverage (scraped)" },
-  { id: "ieee", label: "IEEE", blurb: "engineering" },
-  { id: "springer", label: "Springer", blurb: "Springer Nature" },
+  {
+    id: "semantic_scholar",
+    label: "Semantic Scholar",
+    short: "SS",
+    blurb: "broad CS + biomed",
+    homepage: "https://www.semanticscholar.org",
+    tone: "blue",
+  },
+  {
+    id: "openalex",
+    label: "OpenAlex",
+    short: "OA",
+    blurb: "open scholarly graph",
+    homepage: "https://openalex.org",
+    tone: "violet",
+  },
+  {
+    id: "pubmed",
+    label: "PubMed",
+    short: "PM",
+    blurb: "biomedical literature",
+    homepage: "https://pubmed.ncbi.nlm.nih.gov",
+    tone: "green",
+  },
+  {
+    id: "arxiv",
+    label: "arXiv",
+    short: "aX",
+    blurb: "preprints, physics + CS",
+    homepage: "https://arxiv.org",
+    tone: "orange",
+  },
+  {
+    id: "europepmc",
+    label: "Europe PMC",
+    short: "EM",
+    blurb: "life sciences",
+    homepage: "https://europepmc.org",
+    tone: "green",
+  },
+  {
+    id: "core",
+    label: "CORE",
+    short: "C",
+    blurb: "open-access aggregator",
+    homepage: "https://core.ac.uk",
+    tone: "blue-pale",
+  },
+  {
+    id: "inspire",
+    label: "INSPIRE-HEP",
+    short: "iH",
+    blurb: "high-energy physics",
+    homepage: "https://inspirehep.net",
+    tone: "violet",
+  },
+  {
+    id: "pubchem",
+    label: "PubChem",
+    short: "PC",
+    blurb: "chemistry",
+    homepage: "https://pubchem.ncbi.nlm.nih.gov",
+    tone: "blue-pale",
+  },
+  {
+    id: "dblp_sparql",
+    label: "DBLP-SPARQL",
+    short: "dB",
+    blurb: "computer science bib",
+    homepage: "https://dblp.org",
+    tone: "grey",
+  },
+  {
+    id: "google_scholar",
+    label: "Google Scholar",
+    short: "GS",
+    blurb: "broad coverage (scraped)",
+    homepage: "https://scholar.google.com",
+    tone: "yellow",
+  },
+  {
+    id: "ieee",
+    label: "IEEE",
+    short: "iE",
+    blurb: "engineering",
+    homepage: "https://ieeexplore.ieee.org",
+    tone: "blue",
+  },
+  {
+    id: "springer",
+    label: "Springer",
+    short: "Sp",
+    blurb: "Springer Nature",
+    homepage: "https://link.springer.com",
+    tone: "orange",
+  },
 ];
+
+const BY_ID = new Map<string, DatabaseDescriptor>(
+  DATABASES.map((d) => [d.id, d]),
+);
+
+// Tolerant lookup — accepts the canonical id, the label, or common aliases.
+export function describeProvider(name?: string): DatabaseDescriptor | undefined {
+  if (!name) return undefined;
+  const key = name.toLowerCase().replace(/[\s-]/g, "_");
+  return BY_ID.get(key) ?? BY_ID.get(name as DatabaseId);
+}
+
+export function providerToneClasses(
+  tone: DatabaseDescriptor["tone"],
+): { bg: string; text: string; border: string } {
+  switch (tone) {
+    case "blue":
+      return { bg: "bg-[var(--cnrs-blue)]", text: "text-white", border: "border-[var(--cnrs-blue)]" };
+    case "yellow":
+      return { bg: "bg-[var(--cnrs-yellow)]", text: "text-[var(--cnrs-blue)]", border: "border-[var(--cnrs-yellow)]" };
+    case "violet":
+      return { bg: "bg-[var(--cnrs-violet)]", text: "text-white", border: "border-[var(--cnrs-violet)]" };
+    case "green":
+      return { bg: "bg-[var(--cnrs-green)]", text: "text-[var(--cnrs-blue)]", border: "border-[var(--cnrs-green)]" };
+    case "orange":
+      return { bg: "bg-[var(--cnrs-orange)]", text: "text-[var(--cnrs-blue)]", border: "border-[var(--cnrs-orange)]" };
+    case "blue-pale":
+      return { bg: "bg-[var(--cnrs-blue-pale)]", text: "text-[var(--cnrs-blue)]", border: "border-[var(--cnrs-blue-pale)]" };
+    case "grey":
+      return { bg: "bg-[var(--cnrs-grey-light)]", text: "text-[var(--cnrs-blue)]", border: "border-[var(--cnrs-grey)]" };
+  }
+}
 
 // Defaults match the original GUI selection.
 export const DEFAULT_DATABASES: DatabaseId[] = ["pubmed", "google_scholar"];

@@ -91,6 +91,24 @@ export function Sidebar() {
           <span aria-hidden>+</span>
           <span>New chat</span>
         </button>
+
+        {/* Keyboard hint for the command palette. Pressing ⌘K opens the
+            global quick-switcher mounted in src/app/layout.tsx. */}
+        <button
+          type="button"
+          onClick={() =>
+            window.dispatchEvent(
+              new KeyboardEvent("keydown", { key: "k", metaKey: true }),
+            )
+          }
+          className="mt-2 flex w-full items-center justify-between rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg-soft)] px-3 py-1.5 text-[11px] text-[var(--text-muted)] hover:border-[var(--cnrs-blue)] hover:text-[var(--cnrs-blue)]"
+          title="Open command palette"
+        >
+          <span>Quick switcher…</span>
+          <kbd className="rounded border border-[var(--border)] px-1 font-mono text-[10px]">
+            ⌘K
+          </kbd>
+        </button>
       </div>
 
       {/* Search */}

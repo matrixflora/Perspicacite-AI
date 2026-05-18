@@ -1,11 +1,17 @@
 // Streaming chat client for POST /api/chat (stream=true).
 //
-// The Perspicacité backend emits an SSE-style line stream:
-//   event: token   data: {"token":"..."}
-//   event: meta    data: {"papers_found": 3, "sources":[...]}
-//   event: done    data: {"answer":"...","conversation_id":"..."}
-// (The exact event names vary by mode; we treat any line with `data:` as
-// the JSON payload and stitch tokens together.)
+// The Perspicacité backend emits an SSE-style line stream. Most frames
+// look like:
+//   data: {"token":"..."}
+//   data: {"papers_found": 3, "sources":[...]}
+//   data: {"kind":"provider_progress","phase":"start","providers":["semantic_scholar",...]}
+//   data: {"kind":"batch_progress","stage":"abstract_analysis","current":4,"total":10}
+//   data: {"kind":"query_rephrased","original":"...","rephrased":"..."}
+//   data: {"message":"Generating answer…"}
+//   data: {"answer":"...","conversation_id":"..."}
+//
+// We parse defensively — anything with a `data:` line that's not JSON
+// gets treated as a raw text token.
 
 import type { RAGMode } from "./modes";
 import type { DatabaseId } from "./databases";
@@ -17,12 +23,45 @@ export type ChatSource = {
   year?: number;
   doi?: string;
   url?: string;
+  abstract?: string;
   relevance_score?: number;
+  citation_count?: number;
+  provider?: string;
+  providers?: string[];
+  discovery_sources?: string[];
+  enrichment_sources?: string[];
+  oa_url?: string | null;
+  pdf_url?: string | null;
+};
+
+export type ThinkingStepKind =
+  | "status"
+  | "query_rephrased"
+  | "provider_progress"
+  | "batch_progress";
+
+export type ThinkingStep = {
+  id: string;
+  kind: ThinkingStepKind;
+  label: string;
+  // Optional structured payload; renderer decides what to show.
+  detail?: {
+    original?: string;
+    rephrased?: string;
+    providers?: string[];
+    byProvider?: Record<string, number>;
+    phase?: "start" | "done";
+    stage?: string;
+    current?: number;
+    total?: number;
+  };
+  ts: number;
 };
 
 export type ChatStreamEvent =
   | { kind: "token"; text: string }
   | { kind: "meta"; papers_found?: number; sources?: ChatSource[] }
+  | { kind: "thinking"; step: ThinkingStep }
   | { kind: "done"; conversation_id?: string; answer?: string }
   | { kind: "error"; message: string };
 
@@ -30,6 +69,11 @@ export type ChatStreamEvent =
 // next.config.ts. Override via NEXT_PUBLIC_PERSPICACITE_URL for direct
 // cross-origin calls (requires backend CORS).
 const BACKEND = process.env.NEXT_PUBLIC_PERSPICACITE_URL ?? "";
+
+let _nidCounter = 0;
+function nid(): string {
+  return `step-${Date.now().toString(36)}-${(_nidCounter++).toString(36)}`;
+}
 
 export async function* streamChat(opts: {
   query: string;
@@ -76,47 +120,148 @@ export async function* streamChat(opts: {
     buffer = frames.pop() ?? "";
 
     for (const frame of frames) {
-      const ev = parseFrame(frame);
-      if (ev) yield ev;
+      for (const ev of parseFrame(frame)) yield ev;
     }
   }
 
-  // Any trailing partial frame after stream end.
   if (buffer.trim()) {
-    const ev = parseFrame(buffer);
-    if (ev) yield ev;
+    for (const ev of parseFrame(buffer)) yield ev;
   }
 }
 
-function parseFrame(frame: string): ChatStreamEvent | null {
-  // Tolerant parser: pull the `data:` payload regardless of `event:` name.
+function parseFrame(frame: string): ChatStreamEvent[] {
   const dataLine = frame
     .split("\n")
     .find((l) => l.trim().toLowerCase().startsWith("data:"));
-  if (!dataLine) return null;
+  if (!dataLine) return [];
   const json = dataLine.replace(/^data:\s*/i, "").trim();
-  if (!json || json === "[DONE]") return { kind: "done" };
+  if (!json || json === "[DONE]") return [{ kind: "done" }];
 
+  let obj: Record<string, unknown>;
   try {
-    const obj = JSON.parse(json);
-    if (typeof obj.token === "string") return { kind: "token", text: obj.token };
-    if (typeof obj.chunk === "string") return { kind: "token", text: obj.chunk };
-    if (typeof obj.delta === "string") return { kind: "token", text: obj.delta };
-    if (typeof obj.answer === "string" && obj.sources)
-      return {
+    obj = JSON.parse(json);
+  } catch {
+    return [{ kind: "token", text: json }];
+  }
+
+  // Token deltas.
+  if (typeof obj.token === "string") return [{ kind: "token", text: obj.token }];
+  if (typeof obj.chunk === "string") return [{ kind: "token", text: obj.chunk }];
+  if (typeof obj.delta === "string") return [{ kind: "token", text: obj.delta }];
+
+  // Structured thinking-step events.
+  if (obj.kind === "query_rephrased") {
+    return [
+      {
+        kind: "thinking",
+        step: {
+          id: nid(),
+          kind: "query_rephrased",
+          label: "Query rephrased",
+          detail: {
+            original: typeof obj.original === "string" ? obj.original : undefined,
+            rephrased: typeof obj.rephrased === "string" ? obj.rephrased : undefined,
+          },
+          ts: Date.now(),
+        },
+      },
+    ];
+  }
+  if (obj.kind === "provider_progress") {
+    const phase = obj.phase === "done" ? "done" : "start";
+    const providers = Array.isArray(obj.providers)
+      ? (obj.providers as string[])
+      : undefined;
+    const byProvider =
+      obj.by_provider && typeof obj.by_provider === "object"
+        ? (obj.by_provider as Record<string, number>)
+        : undefined;
+    return [
+      {
+        kind: "thinking",
+        step: {
+          id: nid(),
+          kind: "provider_progress",
+          label:
+            phase === "start"
+              ? "Querying databases"
+              : "Database results",
+          detail: { phase, providers, byProvider },
+          ts: Date.now(),
+        },
+      },
+    ];
+  }
+  if (obj.kind === "batch_progress") {
+    const stage = typeof obj.stage === "string" ? obj.stage : "batch";
+    const current = typeof obj.current === "number" ? obj.current : 0;
+    const total = typeof obj.total === "number" ? obj.total : 0;
+    const stageLabel: Record<string, string> = {
+      abstract_analysis: "Abstract analysis",
+      theme_assignment: "Theme assignment",
+      pdf_download: "Downloading PDFs",
+      chunking: "Chunking",
+      embedding: "Embedding",
+    };
+    return [
+      {
+        kind: "thinking",
+        step: {
+          id: nid(),
+          kind: "batch_progress",
+          label: stageLabel[stage] ?? stage.replace(/_/g, " "),
+          detail: { stage, current, total },
+          ts: Date.now(),
+        },
+      },
+    ];
+  }
+  if (typeof obj.message === "string") {
+    return [
+      {
+        kind: "thinking",
+        step: {
+          id: nid(),
+          kind: "status",
+          label: obj.message,
+          ts: Date.now(),
+        },
+      },
+    ];
+  }
+
+  // Final answer w/ sources.
+  if (typeof obj.answer === "string" && obj.sources)
+    return [
+      {
         kind: "done",
         answer: obj.answer,
-        conversation_id: obj.conversation_id,
-      };
-    if (obj.sources || typeof obj.papers_found === "number")
-      return { kind: "meta", papers_found: obj.papers_found, sources: obj.sources };
-    if (obj.event === "done" || obj.done === true)
-      return { kind: "done", conversation_id: obj.conversation_id };
-    return null;
-  } catch {
-    // Plain-text payloads (some modes stream raw text in `data:` lines).
-    return { kind: "token", text: json };
+        conversation_id:
+          typeof obj.conversation_id === "string" ? obj.conversation_id : undefined,
+      },
+    ];
+
+  // Meta (sources / papers_found).
+  if (obj.sources || typeof obj.papers_found === "number") {
+    return [
+      {
+        kind: "meta",
+        papers_found: typeof obj.papers_found === "number" ? obj.papers_found : undefined,
+        sources: Array.isArray(obj.sources) ? (obj.sources as ChatSource[]) : undefined,
+      },
+    ];
   }
+
+  if (obj.event === "done" || obj.done === true)
+    return [
+      {
+        kind: "done",
+        conversation_id:
+          typeof obj.conversation_id === "string" ? obj.conversation_id : undefined,
+      },
+    ];
+
+  return [];
 }
 
 export async function cancelChat(conversationId: string): Promise<void> {
@@ -129,4 +274,13 @@ export async function cancelChat(conversationId: string): Promise<void> {
   } catch {
     // Best-effort.
   }
+}
+
+// ─── Token-estimation helpers ────────────────────────────────────────────
+// Rough 4-chars-per-token approximation matches the heuristic in the
+// original GUI's chat.js so the displayed counts stay comparable.
+
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  return Math.max(1, Math.round(text.length / 4));
 }
