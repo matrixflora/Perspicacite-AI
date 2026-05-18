@@ -510,11 +510,14 @@ class LLMConfig(BaseModel):
     #     screening:          "claude-haiku-4-5"   # screen_papers LLM
     #     rephrase:           "claude-haiku-4-5"   # rephrase_query
     #     contextual:         "claude-haiku-4-5"   # contextual retrieval per-chunk
+    #     search_optimize:    "claude-haiku-4-5"   # query optimizer
+    #     grounding:          "claude-haiku-4-5"   # GUI grounding extractor
     models: dict[str, str] = Field(
         default_factory=dict,
         description=(
             "Per-stage model overrides. Keys: synthesis_basic, "
-            "synthesis_heavy, routing, screening, rephrase, contextual. "
+            "synthesis_heavy, routing, screening, rephrase, contextual, "
+            "search_optimize, grounding. "
             "Value is the model name; uses default_provider unless the "
             "name contains a provider prefix like 'anthropic/claude-...'. "
             "Empty dict = every stage uses the global default pair."
