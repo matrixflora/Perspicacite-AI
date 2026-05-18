@@ -19,7 +19,7 @@ async def run_web_aggregator_search(
     allowed_provider_names: set[str] | None = None,
     app_state: Any,
 ) -> list[Any]:
-    """Run the web aggregator search for basic RAG mode.
+    """Run the shared web aggregator search with query optimization.
 
     Runs the shared query optimizer first (when enabled), then invokes
     the aggregator with the rewritten string. Optimizer failures fall
@@ -74,13 +74,13 @@ async def run_web_aggregator_search(
             effective_query = opt.searched_query
             if opt.applied:
                 logger.info(
-                    "basic_web_aggregator_query_rewritten",
+                    "web_aggregator_query_rewritten",
                     original=keyword_query,
                     rewritten=effective_query,
                 )
         except Exception as _opt_exc:
             logger.warning(
-                "basic_web_aggregator_optimizer_failed",
+                "web_aggregator_optimizer_failed",
                 error=str(_opt_exc),
             )
             # Fall through: use keyword_query unchanged.
@@ -118,7 +118,7 @@ async def run_web_aggregator_search(
                 apis=scilex_apis or _apis,
             )
             logger.info(
-                "basic_web_fallback_aggregator",
+                "web_aggregator_search_done",
                 providers=[
                     getattr(p, "name", type(p).__name__)
                     for p in getattr(aggregator, "_providers", [])
@@ -132,7 +132,7 @@ async def run_web_aggregator_search(
                 query=effective_query, max_results=max_docs * 6, apis=_apis,
             )
     except Exception as e:
-        logger.warning("basic_web_fallback_search_failed", error=str(e))
+        logger.warning("web_aggregator_search_failed", error=str(e))
         return []
 
     return web_papers
