@@ -409,16 +409,48 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
     async def _broad_search(self, query: str, databases: list[str] | None = None) -> list[Any]:
         """
         Broad search across multiple APIs.
-        
+
         Uses SciLEx to search across selected databases.
         """
         # Default databases if none specified
         if not databases:
             databases = ["semantic_scholar", "openalex", "pubmed"]
 
+        # Rewrite the query via the shared optimizer (Haiku) before searching.
+        effective_query = query
+        try:
+            _app_state = None
+            try:
+                from perspicacite.web.state import app_state as _gs
+                _app_state = _gs
+            except Exception:
+                pass
+
+            if _app_state is not None and getattr(_app_state, "config", None) is not None:
+                import perspicacite.search.query_optimizer as _qo_mod
+                opt = await _qo_mod.optimize_query(
+                    query=query,
+                    context=None,
+                    app_state=_app_state,
+                    optimize_enabled=None,
+                )
+                effective_query = opt.searched_query
+                if opt.applied:
+                    logger.info(
+                        "literature_survey_query_rewritten",
+                        original=query,
+                        rewritten=effective_query,
+                    )
+        except Exception as _opt_exc:
+            logger.warning(
+                "literature_survey_optimizer_failed",
+                error=str(_opt_exc),
+            )
+            effective_query = query
+
         try:
             papers = await self.scilex_adapter.search(
-                query=query,
+                query=effective_query,
                 max_results=100,  # Get more for comprehensive survey
                 apis=databases,
             )
