@@ -36,6 +36,54 @@ RAG_MODE_MAP = {
 router = APIRouter()
 
 
+# ---------------------------------------------------------------------------
+# Stop-button support
+# ---------------------------------------------------------------------------
+# Frontend "Stop" sends a hint here before aborting its fetch. We park the
+# conversation_id in a small in-memory set; the streaming generators can poll
+# Cancellation now lives in the shared registry so MCP and chat both
+# use the same state. The chat router only needs sync read access
+# (is_chat_cancelled) — the registry's is_cancelled is sync.
+from perspicacite.rag.cancellation import (
+    is_cancelled as _registry_is_cancelled,
+    mark_cancelled as _registry_mark_cancelled,
+    clear as _registry_clear,
+)
+
+
+def is_chat_cancelled(conversation_id: str | None) -> bool:
+    """Return True if the frontend asked to stop this conversation."""
+    return _registry_is_cancelled(conversation_id)
+
+
+def _clear_chat_cancel(conversation_id: str | None) -> None:
+    if conversation_id:
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(_registry_clear(conversation_id))
+            else:
+                loop.run_until_complete(_registry_clear(conversation_id))
+        except Exception:
+            pass
+
+
+class _CancelRequest(BaseModel):
+    conversation_id: str | None = Field(default=None)
+
+
+@router.post("/api/chat/cancel")
+async def cancel_chat(req: _CancelRequest):
+    """Mark a conversation as cancelled. Streaming generators check this
+    between yields and stop emitting.
+    """
+    if req.conversation_id:
+        await _registry_mark_cancelled(req.conversation_id)
+        logger.info("chat_cancel_requested", extra={"conversation_id": req.conversation_id})
+    return {"ok": True, "conversation_id": req.conversation_id}
+
+
 class ChatMessage(BaseModel):
     """A single message in the conversation."""
 
@@ -425,6 +473,7 @@ async def _stream_agentic(request: ChatRequest, conversation_id: str | None = No
         kb_name=request.kb_name,
         stream=True,
         max_papers_to_download=request.max_papers_to_download,
+        databases=request.databases,
     ):
         if event.get("type") == "papers_found":
             for p in event.get("papers") or []:
