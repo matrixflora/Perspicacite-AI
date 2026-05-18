@@ -30,6 +30,11 @@ class RAGMode(str, Enum):
 class SourceReference(BaseModel):
     """Reference to a source paper."""
 
+    # Allow both field name and alias for construction / serialisation.
+    # populate_by_name=True means callers can use either "discovery_sources"
+    # (new canonical name) or "sources_all" (legacy alias) interchangeably.
+    model_config = ConfigDict(populate_by_name=True)
+
     title: str
     authors: list[str] = Field(default_factory=list)
     year: int | None = None
@@ -48,6 +53,14 @@ class SourceReference(BaseModel):
     relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
     chunk_text: str | None = None
     kb_name: str | None = None
+    # Renamed: sources_all → discovery_sources (matches Paper.discovery_sources).
+    # The old name lives on as a Pydantic alias so existing JSON payloads
+    # (and the JS reading src.sources_all) keep working until UI catches up.
+    discovery_sources: list[str] | None = Field(
+        default=None,
+        alias="sources_all",
+        description="DBs that returned this paper (deduped). Multi-DB matches render as a chip group.",
+    )
 
     @field_validator("authors", mode="before")
     @classmethod
