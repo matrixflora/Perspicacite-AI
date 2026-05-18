@@ -12,6 +12,7 @@ import { groupByRecency } from "@/lib/groupByRecency";
 const SECTION_LINKS = [
   { href: "/kb", label: "Knowledge bases", icon: "📚" },
   { href: "/survey", label: "Literature survey", icon: "📊" },
+  { href: "/settings", label: "Settings", icon: "⚙" },
 ] as const;
 
 const HISTORY_VISIBLE_LIMIT = 12;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { ChatSource } from "@/lib/chat";
 import { ProviderPill } from "./ThinkingSteps";
 
@@ -17,7 +18,13 @@ export function SourcePill({
   index: number;
 }) {
   const [showAbstract, setShowAbstract] = useState(false);
-  const href =
+
+  // Prefer the in-app reader when we have a DOI we can resolve; fall
+  // through to whichever external URL the backend gave us.
+  const readerHref = source.doi
+    ? `/reader/${encodeURIComponent(source.doi)}`
+    : null;
+  const externalHref =
     source.url ??
     source.oa_url ??
     source.pdf_url ??
@@ -66,9 +73,17 @@ export function SourcePill({
           {index + 1}
         </span>
         <div className="min-w-0 flex-1">
-          {href ? (
+          {readerHref ? (
+            <Link
+              href={readerHref}
+              className="block truncate text-xs font-medium text-[var(--cnrs-blue)] hover:underline"
+              title={`Open in reader · ${label}`}
+            >
+              {label}
+            </Link>
+          ) : externalHref ? (
             <a
-              href={href}
+              href={externalHref}
               target="_blank"
               rel="noreferrer noopener"
               className="block truncate text-xs font-medium text-[var(--cnrs-blue)] hover:underline"

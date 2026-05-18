@@ -6,6 +6,7 @@ import { DatabasePicker } from "./DatabasePicker";
 import { SourcePill } from "./SourcePill";
 import { StatusBar, type ChatPhase } from "./StatusBar";
 import { ThinkingSteps } from "./ThinkingSteps";
+import { Markdown } from "./Markdown";
 import {
   streamChat,
   cancelChat,
@@ -17,6 +18,7 @@ import type { RAGMode } from "@/lib/modes";
 import { MODES, accentClasses } from "@/lib/modes";
 import { DEFAULT_DATABASES, type DatabaseId } from "@/lib/databases";
 import { conversations as convApi, type ConvMessage } from "@/lib/api";
+import { loadPreferences } from "@/lib/preferences";
 
 type Turn = {
   id: string;
@@ -74,6 +76,18 @@ export function ChatPanel({
   const [databases, setDatabases] = useState<DatabaseId[]>(DEFAULT_DATABASES);
   const [showDbPicker, setShowDbPicker] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [maxPapers, setMaxPapers] = useState<number>(5);
+  const [kbName, setKbName] = useState<string | null>(null);
+
+  // Honour user preferences on first mount (default mode, max papers,
+  // default DBs, default KB). Composer toggles still override per-request.
+  useEffect(() => {
+    const p = loadPreferences();
+    setMode(p.defaultMode);
+    setDatabases(p.defaultDatabases);
+    setMaxPapers(p.maxPapers);
+    setKbName(p.defaultKbName);
+  }, []);
   const conversationIdRef = useRef<string | undefined>(initialConversationId);
   const abortRef = useRef<AbortController | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -181,6 +195,8 @@ export function ChatPanel({
           mode,
           conversationId: conversationIdRef.current,
           databases,
+          kbName: kbName ?? undefined,
+          maxPapers,
           signal: ctrl.signal,
         })) {
           if (ev.kind === "token") {
@@ -585,7 +601,7 @@ function AssistantMessage({
             ⚠ {turn.error}
           </p>
         ) : turn.text ? (
-          <p className="whitespace-pre-wrap">{turn.text}</p>
+          <Markdown>{turn.text}</Markdown>
         ) : turn.streaming && streaming ? (
           <span className="inline-flex items-center gap-2 text-sm text-[var(--text-muted)]">
             <span className="cnrs-sun" aria-hidden />

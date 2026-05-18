@@ -84,15 +84,16 @@ export async function* streamChat(opts: {
   databases?: DatabaseId[];
   signal?: AbortSignal;
 }): AsyncGenerator<ChatStreamEvent> {
-  const body = {
+  // Drop kb_name when empty so the backend default kicks in.
+  const body: Record<string, unknown> = {
     query: opts.query,
     mode: opts.mode,
     stream: true,
     max_papers: opts.maxPapers ?? 5,
-    kb_name: opts.kbName,
     conversation_id: opts.conversationId,
     databases: opts.databases,
   };
+  if (opts.kbName) body.kb_name = opts.kbName;
 
   const res = await fetch(`${BACKEND}/api/chat`, {
     method: "POST",

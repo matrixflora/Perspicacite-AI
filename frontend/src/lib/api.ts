@@ -229,13 +229,20 @@ export type PaperDetail = {
   title?: string;
   authors?: string[];
   year?: number;
+  journal?: string | null;
   abstract?: string;
   full_text?: string;
-  references?: Array<{ doi?: string; title?: string; year?: number }>;
+  pdf_url?: string | null;
+  oa_url?: string | null;
+  citation_count?: number;
+  references?: Array<{ doi?: string; title?: string; year?: number; authors?: string[] }>;
   capsule?: {
     figures?: Array<{ id: string; caption?: string; url?: string }>;
     supplementary?: Array<{ name: string; url?: string }>;
   };
+  // When the paper was looked up from a KB, the server may attach
+  // the KB-side chunks for the reader to display.
+  chunks?: Array<{ section?: string; text: string; chunk_index?: number }>;
 };
 
 export const papers = {
