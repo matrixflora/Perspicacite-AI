@@ -557,6 +557,7 @@ class ProfoundRAGMode(BaseRAGMode):
                     request=request,
                     exited_early=True,
                     completion_reason="question_answered",
+                    cancelled_tid=_cancelled_tid,
                 )
 
             if plan_limit_reason:
@@ -630,6 +631,7 @@ class ProfoundRAGMode(BaseRAGMode):
             request=request,
             exited_early=False,
             completion_reason=completion_reason,
+            cancelled_tid=_cancelled_tid,
         )
 
     async def execute_stream(
@@ -2108,6 +2110,7 @@ Follow the system instructions for this situation."""
         request: RAGRequest,
         exited_early: bool,
         completion_reason: str | None = None,
+        cancelled_tid: str | None = None,
     ) -> RAGResponse:
         """Generate final response based on all research using v1 prompts."""
 
@@ -2184,11 +2187,10 @@ Follow the system instructions for this situation."""
             else []
         )
 
-        _cancelled_tid: str | None = None
         _resp_metadata: dict = {}
-        if _cancelled_tid:
+        if cancelled_tid:
             _resp_metadata["cancelled"] = True
-            _resp_metadata["task_id"] = _cancelled_tid
+            _resp_metadata["task_id"] = cancelled_tid
 
         return RAGResponse(
             answer=answer,

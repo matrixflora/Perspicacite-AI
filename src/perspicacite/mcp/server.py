@@ -4010,8 +4010,8 @@ async def web_search(
             "doi": p.doi,
             "url": p.url,
             "abstract": p.abstract,
-            "discovery_sources": (p.metadata or {}).get("sources") or [],
-            "enrichment_sources": (p.metadata or {}).get("enrichment_sources") or [],
+            "discovery_sources": list(p.discovery_sources or []),
+            "enrichment_sources": list(p.enrichment_sources or []),
         })
 
     return _json.dumps({
