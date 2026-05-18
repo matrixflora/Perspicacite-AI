@@ -355,6 +355,9 @@ async def search_literature(
     min_relevance: float = 0.0,
     relevance_method: str = "bm25",
     exclude_kb: str | None = None,
+    context: str | None = None,
+    optimize_query: bool | None = None,
+    enrich: bool = True,
 ) -> str:
     """
     Search academic databases for scientific papers matching a query.
@@ -388,6 +391,23 @@ async def search_literature(
         exclude_kb: Optional KB name. Papers whose DOI already exists in
             this knowledge base are removed from the results before
             returning, so callers only see literature not yet ingested.
+        context: Optional. A short grounding excerpt from earlier in the
+            conversation that disambiguates the query (e.g., a specific
+            finding, entity, or scope the user has been focused on). Keep
+            it short — one sentence or a short bullet is ideal. Skip
+            entirely when the user has shifted topic. Max ~300 chars;
+            truncated otherwise.
+        optimize_query: Whether to run the LLM-assisted query rewrite
+            before searching. ``True`` forces on, ``False`` forces off,
+            ``None`` falls back to
+            ``config.search.query_optimization.enabled`` (default True).
+            The rewrite uses one cheap Haiku call to produce a clean
+            scientific phrasing; on any failure (timeout, LLM error,
+            unparseable output) we silently fall back to the verbatim
+            query and surface ``fallback_reason`` in the response.
+        enrich: When True (default), enrich returned papers via Crossref
+            (fills missing abstracts, canonicalises author lists). Set
+            False for raw provider data.
 
     Returns:
         JSON with list of papers including title, authors, year, doi, abstract.
@@ -407,18 +427,55 @@ async def search_literature(
                 "or configure at least one search provider in config.yml.",
                 scilex_available=False,
             )
+        import perspicacite.search.query_optimizer as _qo_mod
+        opt = await _qo_mod.optimize_query(
+            query=query,
+            context=context,
+            app_state=state,
+            optimize_enabled=optimize_query,
+        )
+
         # When filtering by relevance, overfetch ~3x so the post-filter
         # has enough candidates to actually return ``max_results``
         # quality hits. Capped at SciLEx's per-DB ceiling.
         fetch_n = min(max_results * 3, 100) if min_relevance > 0 else max_results
         papers = await aggregator.search(
-            query=query,
+            query=opt.searched_query,
             max_results=fetch_n,
             year_min=year_min,
             year_max=year_max,
             apis=databases or ["semantic_scholar", "openalex", "pubmed"],
             article_type=article_type,
         )
+
+        # Collect structured warnings from SciLEx (e.g. unknown APIs dropped).
+        mcp_warnings: list[dict] = []
+        try:
+            from perspicacite.search.scilex_adapter import SciLExAdapter
+            for _prov in getattr(aggregator, "_providers", []):
+                if isinstance(_prov, SciLExAdapter):
+                    if _prov._last_dropped_apis:
+                        mcp_warnings.append({
+                            "kind": "unknown_apis_dropped",
+                            "apis": list(_prov._last_dropped_apis),
+                            "advice": (
+                                "Use the web_search MCP tool for non-SciLEx providers "
+                                "(google_scholar, europepmc, etc.)."
+                            ),
+                        })
+                    if _prov._last_quota_warning is not None:
+                        mcp_warnings.append(_prov._last_quota_warning)
+                    break
+        except Exception:
+            pass
+
+        # Crossref-enrich the returned papers (fills missing abstracts etc.).
+        if enrich and papers:
+            from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
+            try:
+                papers = await enrich_papers(papers)
+            except Exception as _ee:
+                logger.warning("mcp_search_literature_enrich_failed", error=str(_ee))
 
         # ── Dedup against existing KB (optional) ───────────────────────
         if exclude_kb:
@@ -506,7 +563,9 @@ async def search_literature(
 
         logger.info(
             "mcp_search_literature",
-            query=query, results=len(results),
+            query=query,
+            searched_query=opt.searched_query,
+            results=len(results),
             min_relevance=min_relevance,
             method=relevance_method if min_relevance > 0 else "none",
         )
@@ -527,7 +586,16 @@ async def search_literature(
 
         payload: dict[str, Any] = {
             "query": query, "total_results": len(results), "papers": results,
+            "warnings": mcp_warnings,
             "errors_by_database": errors_full,
+            "original_query": query,
+            "searched_query": opt.searched_query,
+            "query_optimization": {
+                "enabled": opt.enabled,
+                "applied": opt.applied,
+                "context_used": opt.context_used,
+                "fallback_reason": opt.fallback_reason,
+            },
         }
         if all_dbs_failed:
             payload["success"] = False
@@ -609,6 +677,7 @@ async def get_paper_content(
                 "content_source": result.content_source,
                 "full_text": result.full_text or "",
                 "full_text_length": len(result.full_text or ""),
+                "attempts": list(result.attempts),
             }
             if include_sections and result.sections:
                 resp["sections"] = result.sections
@@ -624,11 +693,15 @@ async def get_paper_content(
                     "content_type": "abstract",
                     "content_source": result.content_source,
                     "abstract": result.abstract,
+                    "attempts": list(result.attempts),
                     "note": "Full text not available; returning abstract only",
                 }
             )
 
-        return _json_error(f"Could not retrieve content for DOI: {doi}")
+        return _json_error(
+            f"Could not retrieve content for DOI: {doi}",
+            attempts=list(result.attempts),
+        )
 
     except Exception as e:
         logger.error("mcp_get_paper_content_error", doi=doi, error=str(e))
@@ -1163,6 +1236,10 @@ async def generate_report(
     max_papers: int = 10,
     recency_weight: float = 0.0,
     kb_names: list[str] | None = None,
+    task_id: str | None = None,
+    max_total_seconds: float | None = None,
+    batch_size: int | None = None,
+    crossref_concurrency: int | None = None,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1182,6 +1259,12 @@ async def generate_report(
         max_papers: Maximum papers to reference in the report
         recency_weight: Optional recency bias (0.0 = disabled, 1.0 = full recency). When > 0,
             retrieved chunks are re-scored toward more recent papers using exponential decay.
+        max_total_seconds: Override the per-mode wall-clock budget (30–1800 s). Applies to
+            the "profound" mode's cycle loop. None uses the config-file default.
+        batch_size: Override the abstract-analysis batch size for "literature_survey" mode
+            (1–100 papers per batch). None uses the config-file default (20).
+        crossref_concurrency: Override Crossref enrichment concurrency (1–10). None uses
+            the default (2 without mailto env var, 6 with).
 
     Returns:
         JSON with the report text, cited sources, and metadata.
@@ -1189,6 +1272,20 @@ async def generate_report(
     state = _require_state()
     if isinstance(state, str):
         return state
+
+    import uuid as _uuid
+    if not task_id:
+        task_id = f"mcp-{_uuid.uuid4().hex[:12]}"
+
+    # Emit the task_id immediately via ctx so the client can cancel.
+    if ctx is not None:
+        try:
+            await ctx.report_progress(
+                progress=0, total=100,
+                message=f"Task started — task_id={task_id}",
+            )
+        except Exception:
+            pass
 
     # Bind ctx for any nested LLM call via sampling. We use the
     # contextvar token directly here (rather than the `with` form) to
@@ -1232,6 +1329,12 @@ async def generate_report(
             tool_registry=state.tool_registry,
             config=state.config,
             session_store=getattr(state, "session_store", None),
+            # MCPState duck-types as the AppState protocol (carries .config
+            # and .llm_client); RAGEngine.auto-attach will set
+            # request.app_state = state for every mode dispatched here.
+            # Closes the Tier 3.5 loop so query optimization runs on
+            # MCP-originated requests instead of silently no-op'ing.
+            app_state=state,
         )
         engine.provenance_store = getattr(state, "provenance_store", None)
 
@@ -1268,8 +1371,25 @@ async def generate_report(
             recency_weight=recency_weight if recency_weight > 0 else None,
             provider=default_provider,
             model=default_model,
+            task_id=task_id,
+            max_total_seconds=max_total_seconds,
+            batch_size=batch_size,
+            crossref_concurrency=crossref_concurrency,
         )
 
+        # Build telemetry sink and attach to the request so each RAG mode
+        # can read it via getattr(request, "telemetry_sink", None).
+        # The SSE chat path never sets this field, so legacy code hits
+        # the `or []` fallback and behaves identically to before.
+        if ctx is not None:
+            from perspicacite.mcp.progress_adapter import MCPProgressAdapter
+            from perspicacite.rag.telemetry import CallbackTelemetrySink
+            _progress_adapter = MCPProgressAdapter(ctx)
+            rag_request.telemetry_sink = CallbackTelemetrySink(  # type: ignore[attr-defined]
+                _progress_adapter.on_event
+            )
+
+        cancelled_reason: str | None = None
         async for event in engine.query_stream(rag_request, message_id=message_id):
             if event.event == "content":
                 import json as _json
@@ -1291,6 +1411,40 @@ async def generate_report(
                         "kb_name": src.get("kb_name"),
                     }
                 )
+            elif event.event == "error":
+                # Modes signal cancellation by yielding an error event with
+                # ``reason="cancelled"``. Surface this as a structured response
+                # field so MCP clients can distinguish a cancelled partial
+                # result from a normally-completed report. Other error events
+                # (e.g. embedding-mismatch) flow through unchanged.
+                import json as _json
+
+                _err = _json.loads(event.data) if isinstance(event.data, str) else {}
+                if _err.get("reason") == "cancelled":
+                    cancelled_reason = "cancelled"
+                    break
+
+        if cancelled_reason == "cancelled":
+            logger.info(
+                "mcp_generate_report_cancelled",
+                query=query,
+                task_id=task_id,
+                partial_chars=len(report_text),
+            )
+            return _json_ok(
+                {
+                    "query": query,
+                    "kb_name": effective_kb_name,
+                    "kb_names": effective_kb_names,
+                    "mode": mode,
+                    "report": report_text,  # partial, may be empty
+                    "sources": sources,
+                    "papers_used": len(sources),
+                    "message_id": message_id,
+                    "cancelled": True,
+                    "task_id": task_id,
+                }
+            )
 
         logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
 
@@ -3807,6 +3961,147 @@ async def ingest_skill_bundle(
     }
 
 
+@mcp.tool()
+async def web_search(
+    query: str,
+    databases: list[str] | None = None,
+    max_results: int = 10,
+    enrich: bool = True,
+    optimize_query: bool = True,
+    ctx: Context | None = None,
+) -> str:
+    """Live academic web search across user-selected databases.
+
+    Wraps the shared aggregator pipeline (semantic_scholar, openalex,
+    pubmed, arxiv via SciLEx + standalone google_scholar, europepmc,
+    core, etc.) with Crossref enrichment + MiniLM rerank. Returns a
+    JSON-encoded payload with ``papers``, ``warnings``, and
+    ``telemetry_summary`` (per-provider hit counts).
+
+    Distinct from ``search_literature`` (SciLEx-only) and
+    ``generate_report`` (heavy mode-bound RAG). Use this when you
+    just want a focused literature lookup with cleaned-up metadata.
+
+    Args:
+        query: free-text scientific query
+        databases: list of provider names (default: semantic_scholar,
+            openalex, pubmed). Pass google_scholar / europepmc / core
+            for the standalone aggregator providers.
+        max_results: cap on returned papers (1-50)
+        enrich: when True (default) runs Crossref enrichment on the
+            returned papers — fills missing abstracts and canonicalises
+            author lists. Set False for raw provider data.
+        optimize_query: when True, runs the LLM-assisted keyword rewrite
+            before searching.
+        ctx: MCP context for live progress notifications (injected
+            automatically by fastmcp; do not pass manually).
+
+    Returns:
+        JSON string: {"papers": [...], "warnings": [...],
+                      "telemetry_summary": {"by_provider": {...}}}
+    """
+    import json as _json
+    from perspicacite.rag.resolve_papers import resolve_papers_pipeline
+    from perspicacite.rag.telemetry import (
+        ListTelemetrySink,
+        CallbackTelemetrySink,
+    )
+
+    # Choose a sink that buffers events for the telemetry_summary.
+    # When ctx is present, also forward events as live MCP progress
+    # notifications via MCPProgressAdapter.
+    if ctx is not None:
+        from perspicacite.mcp.progress_adapter import MCPProgressAdapter
+        _adapter = MCPProgressAdapter(ctx)
+        sink: Any = CallbackTelemetrySink(_adapter.on_event)
+    else:
+        sink = ListTelemetrySink()
+
+    # Use the MCP server's own state (carries .config + .llm_client) so
+    # the query optimizer runs on MCP-originated web_search calls. Without
+    # this, optimize_query=True is silently a no-op.
+    _state = _require_state()
+    try:
+        papers = await resolve_papers_pipeline(
+            query=query,
+            databases=databases,
+            max_docs=max(1, min(50, int(max_results))),
+            app_state=_state,
+            telemetry=sink,
+            enrich=enrich,
+            rerank=True,
+            optimize_query=bool(optimize_query),
+        )
+    except Exception as exc:
+        return _json.dumps({
+            "papers": [],
+            "warnings": [],
+            "error": f"web_search_failed: {exc}",
+        })
+
+    # Build response payload — scan buffered events for per-provider hit counts
+    by_provider: dict[str, int] = {}
+    for ev in (getattr(sink, "events", []) or []):
+        if ev.get("kind") == "provider_progress" and ev.get("phase") == "done":
+            by_provider.update(ev.get("by_provider", {}) or {})
+
+    serialised: list[dict] = []
+    for p in papers:
+        serialised.append({
+            "title": p.title,
+            "authors": [a.name for a in (p.authors or [])],
+            "year": p.year,
+            "journal": p.journal,
+            "doi": p.doi,
+            "url": p.url,
+            "abstract": p.abstract,
+            "discovery_sources": list(p.discovery_sources or []),
+            "enrichment_sources": list(p.enrichment_sources or []),
+        })
+
+    return _json.dumps({
+        "papers": serialised,
+        "warnings": [],  # provider-level warnings flow via search_with_warnings;
+                        # for direct web_search the aggregator surfaces them
+                        # in logs, not in the payload (yet).
+        "telemetry_summary": {"by_provider": by_provider},
+    })
+
+
+# =============================================================================
+# cancel_task — abort an in-flight generate_report / search_to_kb / web_search
+# =============================================================================
+
+
+@mcp.tool()
+async def cancel_task(task_id: str) -> str:
+    """Mark a running MCP task as cancelled.
+
+    Long-running tools (``generate_report``, ``search_to_kb``,
+    ``web_search``) check the cancellation registry at safe points
+    (between RAG cycles / batches / iterations) and return early
+    when the registry says their task_id has been cancelled.
+
+    The task_id is the same one returned in the first progress
+    notification of the cancellable tool's response.
+
+    Returns:
+        JSON: {"ok": true, "task_id": str, "was_running": bool}
+        ``was_running`` is best-effort — we cannot perfectly distinguish
+        a task that already finished from one that never existed.
+    """
+    import json as _json
+    from perspicacite.rag.cancellation import mark_cancelled
+    if not task_id:
+        return _json.dumps({"ok": False, "error": "missing task_id"})
+    await mark_cancelled(task_id)
+    return _json.dumps({
+        "ok": True,
+        "task_id": task_id,
+        "was_running": True,  # see docstring — best-effort
+    })
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
@@ -3837,6 +4132,8 @@ _TOOL_NAMES: list[str] = [
     "zotero_ingest_collection_to_kb",
     "ingest_github_repo",
     "ingest_skill_bundle",
+    "web_search",
+    "cancel_task",
 ]
 
 

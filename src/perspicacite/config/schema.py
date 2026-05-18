@@ -510,11 +510,14 @@ class LLMConfig(BaseModel):
     #     screening:          "claude-haiku-4-5"   # screen_papers LLM
     #     rephrase:           "claude-haiku-4-5"   # rephrase_query
     #     contextual:         "claude-haiku-4-5"   # contextual retrieval per-chunk
+    #     search_optimize:    "claude-haiku-4-5"   # query optimizer
+    #     grounding:          "claude-haiku-4-5"   # GUI grounding extractor
     models: dict[str, str] = Field(
         default_factory=dict,
         description=(
             "Per-stage model overrides. Keys: synthesis_basic, "
-            "synthesis_heavy, routing, screening, rephrase, contextual. "
+            "synthesis_heavy, routing, screening, rephrase, contextual, "
+            "search_optimize, grounding. "
             "Value is the model name; uses default_provider unless the "
             "name contains a provider prefix like 'anthropic/claude-...'. "
             "Empty dict = every stage uses the global default pair."
@@ -1047,6 +1050,56 @@ class UIConfig(BaseModel):
     citation_format: Literal["nature", "apa", "mla", "ieee"] = "nature"
 
 
+class QueryOptimizationConfig(BaseModel):
+    """Settings for the LLM-assisted query rewrite step in literature search.
+
+    The shared `query_optimizer` runs one Haiku call before the aggregator
+    fan-out; the GUI-only grounding extractor runs one additional Haiku call
+    to turn the prior assistant turn into a short context phrase (or None on
+    topic pivot).
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Default for the per-call optimize_query argument. When False, "
+            "search_literature and the basic RAG mode skip the rewrite step "
+            "and pass the user's query verbatim."
+        ),
+    )
+    timeout_s: float = Field(
+        default=5.0, ge=0.5, le=30.0,
+        description="Hard ceiling for the Haiku rewrite call (seconds).",
+    )
+    max_context_chars: int = Field(
+        default=300, ge=0, le=2000,
+        description=(
+            "Truncation cap (head-keep) for the `context` parameter passed "
+            "to the rewrite step."
+        ),
+    )
+    grounding_enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether the GUI chat router runs the grounding extractor step "
+            "before invoking the search path. Independent of `enabled` — set "
+            "False to disable only the GUI auto-grounding."
+        ),
+    )
+    grounding_timeout_s: float = Field(
+        default=4.0, ge=0.5, le=30.0,
+        description="Hard ceiling for the grounding-extractor Haiku call.",
+    )
+    grounding_max_prior_chars: int = Field(
+        default=200, ge=0, le=2000,
+        description="Truncation cap for the prior-turn excerpt fed to the extractor.",
+    )
+    grounding_max_query_chars: int = Field(
+        default=200, ge=0, le=2000,
+        description="Truncation cap for the new query fed to the extractor.",
+    )
+
+
 class SearchConfig(BaseModel):
     """Search provider routing configuration."""
 
@@ -1076,6 +1129,10 @@ class SearchConfig(BaseModel):
     ads_api_key: str = Field(
         default="",
         description="NASA ADS token (required for ADS provider; skipped if absent).",
+    )
+    query_optimization: QueryOptimizationConfig = Field(
+        default_factory=QueryOptimizationConfig,
+        description="LLM-assisted query rewrite + GUI grounding extractor.",
     )
 
 

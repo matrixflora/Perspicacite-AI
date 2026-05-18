@@ -171,23 +171,22 @@ class DomainAwareAggregator:
         for p, papers in zip(providers, results_per_provider, strict=True):
             provider_name = getattr(p, "name", "unknown")
             for paper in papers:
-                paper.metadata.setdefault("sources", [])
-                if provider_name not in paper.metadata["sources"]:
-                    paper.metadata["sources"].append(provider_name)
+                if provider_name not in paper.discovery_sources:
+                    paper.discovery_sources.append(provider_name)
 
         seen_dois: dict[str, Paper] = {}
         seen_title_hashes: dict[str, Paper] = {}
         merged: list[Paper] = []
         for papers in results_per_provider:
             for paper in papers:
-                new_sources: list[str] = paper.metadata.get("sources", [])
+                new_sources: list[str] = paper.discovery_sources
                 if paper.doi:
                     doi_key = paper.doi.lower().strip()
                     if doi_key in seen_dois:
                         kept = seen_dois[doi_key]
                         for s in new_sources:
-                            if s not in kept.metadata.get("sources", []):
-                                kept.metadata.setdefault("sources", []).append(s)
+                            if s not in kept.discovery_sources:
+                                kept.discovery_sources.append(s)
                         continue
                     seen_dois[doi_key] = paper
                 else:
@@ -195,8 +194,8 @@ class DomainAwareAggregator:
                     if title_hash in seen_title_hashes:
                         kept = seen_title_hashes[title_hash]
                         for s in new_sources:
-                            if s not in kept.metadata.get("sources", []):
-                                kept.metadata.setdefault("sources", []).append(s)
+                            if s not in kept.discovery_sources:
+                                kept.discovery_sources.append(s)
                         continue
                     seen_title_hashes[title_hash] = paper
                 merged.append(paper)

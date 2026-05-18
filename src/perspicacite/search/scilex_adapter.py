@@ -6,8 +6,11 @@ Uses SciLEx's collection, then manually aggregates and converts to Papers.
 
 import asyncio
 import json
+import logging as _stdlib_logging
 import os
+import re
 import tempfile
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -54,6 +57,47 @@ def _ss_key_is_valid(api_key: str) -> bool:
         return True
 
 
+class _QuotaLogCapture(_stdlib_logging.Handler):
+    """Captures SciLEx's stdlib-logger PubMed quota warnings.
+
+    SciLEx logs ``"PubMed API: Only N requests remaining in current period!"``
+    via the root logger; we attach this handler for the duration of a
+    SciLEx call, scan emitted messages for the quota pattern, and
+    surface the remaining-count as a structured warning to the caller.
+    """
+
+    _QUOTA_RE = re.compile(r"Only (\d+) requests remaining")
+
+    def __init__(self) -> None:
+        super().__init__(level=_stdlib_logging.WARNING)
+        self.last_remaining: int | None = None
+        self.provider = "pubmed"
+
+    def emit(self, record: _stdlib_logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+            m = self._QUOTA_RE.search(msg)
+            if m:
+                self.last_remaining = int(m.group(1))
+        except Exception:
+            pass
+
+
+@dataclass
+class SciLExSearchResult:
+    """Structured search result for the SciLEx adapter.
+
+    ``dropped_apis`` lists any APIs the caller asked for that SciLEx
+    doesn't know about. Surfaced upstream as a ``warnings`` field on
+    MCP responses so external agents can tell their pick was partially
+    honoured.
+    """
+
+    papers: list = field(default_factory=list)
+    dropped_apis: list[str] = field(default_factory=list)
+    warnings: list[dict] = field(default_factory=list)
+
+
 class SciLExAdapter:
     """Adapter to use SciLEx as a search provider."""
 
@@ -74,6 +118,8 @@ class SciLExAdapter:
         # callers can check this to distinguish "the upstream API was
         # down" from "the query had no hits".
         self.last_errors_by_database: dict[str, str] = {}
+        self._last_dropped_apis: list[str] = []
+        self._last_quota_warning: dict | None = None
 
     @classmethod
     def from_config(cls, config: Any) -> "SciLExAdapter":
@@ -189,6 +235,28 @@ class SciLExAdapter:
         if apis is None:
             apis = ["semantic_scholar", "openalex", "pubmed"]
 
+        # Defense in depth: SciLEx only knows the APIs in ``api_name_map``.
+        # Callers sometimes pass the full user-selected provider list (e.g.
+        # ``google_scholar``, ``europepmc``, ``core``) which would surface as
+        # KeyError('google_scholar') inside SciLEx. Filter them out — those
+        # providers are handled by the domain_aggregator directly.
+        _unknown = [a for a in apis if a not in api_name_map]
+        if _unknown:
+            logger.info(
+                "scilex_filtered_non_scilex_apis",
+                filtered=_unknown,
+                kept=[a for a in apis if a in api_name_map],
+            )
+        # Stash on self so search_with_warnings can include this list
+        # in its structured result. Cleared at the start of each call.
+        self._last_dropped_apis = list(_unknown)
+        apis = [a for a in apis if a in api_name_map]
+        if not apis:
+            # User explicitly selected only non-SciLEx databases — SciLEx has
+            # nothing to do; return empty cleanly so callers can handle it.
+            logger.info("scilex_no_supported_apis_selected", filtered=_unknown)
+            return []
+
         # Use year range if provided; default to last 3 years
         if year_min and year_max:
             years = [year_min, year_max]
@@ -218,6 +286,9 @@ class SciLExAdapter:
 
             api_config = self._build_api_config(apis)
 
+            _quota = _QuotaLogCapture()
+            _root_logger = _stdlib_logging.getLogger()
+            _root_logger.addHandler(_quota)
             try:
                 # Phase 1: Collect
                 logger.info("scilex_collection_start", query=query, apis=apis)
@@ -314,6 +385,28 @@ class SciLExAdapter:
                     logger.warning("scilex_no_results", query=query)
                     return []
 
+                # === Build a pre-dedupe archive map ===
+                # We need to remember EVERY archive (e.g. "pubmed",
+                # "openalex") that returned each paper, so the UI's
+                # Retrieval panel can show "pubmed 30, openalex 80" instead
+                # of attributing every paper to the single archive that
+                # happened to survive SciLEx's DOI dedupe. Key by DOI when
+                # present, else by normalized title.
+                pre_archives_by_doi: dict[str, set[str]] = {}
+                pre_archives_by_title: dict[str, set[str]] = {}
+                for rec in all_records:
+                    _arch = (rec.get("archive") or "unknown")
+                    _arch_norm = str(_arch).lower().replace("-", "_")
+                    if _arch_norm == "unknown":
+                        continue
+                    _doi = (rec.get("DOI") or "").strip().lower()
+                    if _doi:
+                        pre_archives_by_doi.setdefault(_doi, set()).add(_arch_norm)
+                    else:
+                        _title = (rec.get("title") or "").strip().lower()[:120]
+                        if _title:
+                            pre_archives_by_title.setdefault(_title, set()).add(_arch_norm)
+
                 # Create DataFrame
                 df = pd.DataFrame(all_records)
 
@@ -335,6 +428,22 @@ class SciLExAdapter:
                 # collapsed before comparison.
                 papers = self._dedupe_by_normalized_title(papers)
 
+                # === Re-attach multi-archive provenance ===
+                # After SciLEx's internal dedupe we only know the surviving
+                # record's archive. Cross-reference with our pre-dedupe map
+                # to recover the full set of archives that returned each
+                # paper.
+                for _p in papers:
+                    _archives: set[str] = set()
+                    if _p.doi:
+                        _archives = pre_archives_by_doi.get(_p.doi.lower().strip(), set())
+                    if not _archives and _p.title:
+                        _archives = pre_archives_by_title.get(
+                            _p.title.strip().lower()[:120], set()
+                        )
+                    if _archives:
+                        _p.discovery_sources = sorted(_archives)
+
                 # Post-filter by article_type
                 if article_type:
                     papers = self._filter_by_article_type(papers, article_type)
@@ -345,6 +454,20 @@ class SciLExAdapter:
             except Exception as e:
                 logger.error("scilex_collection_error", error=str(e))
                 raise
+
+            finally:
+                _root_logger.removeHandler(_quota)
+                # Surface the quota warning so search_with_warnings can include it.
+                if _quota.last_remaining is not None and _quota.last_remaining < 10:
+                    self._last_quota_warning = {
+                        "kind": "rate_limit_low",
+                        "provider": "pubmed",
+                        "remaining": _quota.last_remaining,
+                        "advice": (
+                            "Add NCBI_API_KEY to lift quota from 3 r/s to 10 r/s. "
+                            "Without a key, SciLEx is throttled aggressively."
+                        ),
+                    }
 
     def _filter_by_article_type(self, papers: list[Paper], article_type: str) -> list[Paper]:
         """Post-filter papers by article type.
@@ -591,10 +714,59 @@ class SciLExAdapter:
             citation_count=citation_count,
             source=PaperSource.SCILEX,
             keywords=[t.strip() for t in safe_str(row.get("tags")).split(", ")] if row.get("tags") else [],
-            metadata={
-                "archive": safe_str(row.get("archive"), "unknown"),
+            metadata=(lambda _archive: {
+                "archive": _archive,
                 "type": safe_str(row.get("itemType")) or safe_str(row.get("type")),
-            },
+                # Seed ``sources`` with the underlying SciLEx-internal API
+                # (normalised: lowercase, "Semantic-Scholar" → "semantic_scholar").
+                # The domain_aggregator will later append "scilex" to this list;
+                # the UI strips "scilex" before rendering, so the user sees
+                # the REAL upstream DB (pubmed / openalex / etc.) instead of
+                # a useless "scilex" chip. When the same DOI is also returned
+                # by a direct provider (europepmc, ads, ...), the merge in
+                # domain_aggregator produces a true multi-DB ``sources_all``.
+                "sources": (
+                    [_archive.lower().replace("-", "_")]
+                    if _archive and _archive != "unknown"
+                    else []
+                ),
+            })(safe_str(row.get("archive"), "unknown")),
+        )
+
+
+    async def search_with_warnings(
+        self,
+        query: str,
+        max_results: int = 50,
+        year_min: int | None = None,
+        year_max: int | None = None,
+        article_type: str | None = None,
+        apis: list[str] | None = None,
+    ) -> SciLExSearchResult:
+        """Same as ``search`` but returns a structured result with warnings.
+
+        Use this from MCP / API entry points where the caller benefits
+        from knowing their api list was partially dropped. The plain
+        ``search()`` method is unchanged for legacy callers that only
+        want ``list[Paper]``.
+        """
+        self._last_dropped_apis = []
+        self._last_quota_warning = None
+        papers = await self.search(
+            query=query,
+            max_results=max_results,
+            year_min=year_min,
+            year_max=year_max,
+            article_type=article_type,
+            apis=apis,
+        )
+        extra_warnings: list[dict] = []
+        if self._last_quota_warning is not None:
+            extra_warnings.append(self._last_quota_warning)
+        return SciLExSearchResult(
+            papers=papers,
+            dropped_apis=list(self._last_dropped_apis),
+            warnings=extra_warnings,
         )
 
 

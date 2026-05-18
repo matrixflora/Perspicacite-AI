@@ -149,6 +149,7 @@ class AgenticRAGMode(BaseRAGMode):
                 session_id=None,  # Stateless mode
                 kb_name=request.kb_name,
                 stream=False,  # We collect everything
+                task_id=getattr(request, "task_id", None),
             ):
                 event_type = event.get("type", "")
 
@@ -226,6 +227,7 @@ class AgenticRAGMode(BaseRAGMode):
                 session_id=None,
                 kb_name=request.kb_name,
                 stream=True,
+                task_id=getattr(request, "task_id", None),
             ):
                 event_type = event.get("type", "")
 

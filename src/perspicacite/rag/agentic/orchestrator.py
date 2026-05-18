@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import logging
 import re
 import time
 import uuid
@@ -11,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
+from perspicacite.logging import get_logger
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.provenance.context import get_collector
 from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
@@ -23,7 +23,7 @@ from perspicacite.search.scilex_adapter import SciLExAdapter
 from .intent import IntentClassifier
 from .planner import Plan, ResearchPlanner, Step, StepType, _log_steps_detail
 
-logger = logging.getLogger(__name__)
+logger = get_logger("perspicacite.rag.agentic.orchestrator")
 
 # Cap per-paper extraction LLM calls during final answer (map-reduce style).
 MAP_REDUCE_MAX_PAPERS = 8
@@ -296,6 +296,12 @@ class AgentSession:
     max_papers_to_download: int | None = None  # Override orchestrator default
     evidence: EvidenceStore | None = None
 
+    # MCP cancellation tracking: when set, the orchestrator's iteration loop
+    # checks ``cancellation.is_cancelled(task_id)`` at the top of each
+    # iteration and returns early. Threaded from ``RAGRequest.task_id`` via
+    # AgenticRAGMode → orchestrator.chat(task_id=...).
+    task_id: str | None = None
+
     def add_message(self, role: str, content: str, metadata: dict | None = None):
         """Add a message to the session."""
         self.messages.append(Message(role=role, content=content, metadata=metadata or {}))
@@ -380,6 +386,12 @@ Guidelines:
                 temperature=0.0,
                 max_tokens=300,
             )
+            if not response:
+                logger.warning(
+                    "agentic_quality_assessment_error",
+                    error="empty_response_from_llm",
+                )
+                return False, ["Assessment error: empty LLM response"], 0.0
 
             # Parse JSON response
             json_match = re.search(r"\{.*\}", response, re.DOTALL)
@@ -395,7 +407,7 @@ Guidelines:
             )
 
         except Exception as e:
-            logger.warning(f"Quality assessment error: {e}")
+            logger.warning("agentic_quality_assessment_error", error=str(e))
             # Conservative default - assume insufficient
             return False, ["Assessment error"], 0.0
 
@@ -428,9 +440,11 @@ class AgenticOrchestrator:
         recency_half_life_years: float | None = None,
         kb_metas: list | None = None,
         config: Any = None,
+        app_state: Any = None,
     ):
         self.llm = llm_client
         self.config = config
+        self.app_state = app_state
         self.tools = tool_registry
         self.embeddings = embedding_provider
         self.vector_store = vector_store
@@ -545,6 +559,8 @@ class AgenticOrchestrator:
         kb_name: str | None = None,
         stream: bool = True,
         max_papers_to_download: int | None = None,
+        databases: list[str] | None = None,
+        task_id: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Main chat entry point with true agentic behavior.
@@ -555,30 +571,41 @@ class AgenticOrchestrator:
             kb_name: Optional knowledge base to search first
             stream: Whether to stream responses
             max_papers_to_download: Override default max papers to download (for user preference)
+            databases: Optional list of user-selected databases (e.g. ``["semantic_scholar", "europepmc"]``)
+                used to scope SciLEx and standalone-provider fan-out. When None, defaults to
+                ``["semantic_scholar", "openalex", "pubmed"]`` (legacy behaviour).
 
         Yields:
             Dict with type: "thinking", "tool_call", "tool_result", "answer", "papers_found"
         """
-        logger.info("=" * 80)
-        logger.info("NEW CHAT REQUEST")
-        logger.info(f"Query: {query}")
-        logger.info(f"Session ID (client): {session_id!r}")
-        logger.info(f"KB: {kb_name or 'none'}")
         logger.info(
-            f"Max papers to download: {max_papers_to_download or self.max_papers_to_download}"
+            "agentic_new_chat_request",
+            query=query,
+            session_id=session_id,
+            kb=kb_name or "none",
+            max_papers_to_download=max_papers_to_download or self.max_papers_to_download,
+            databases=databases or "default",
         )
 
         session = self.get_or_create_session(session_id)
-        logger.info(f"Resolved session_id: {session.session_id}")
+        logger.info("agentic_session_resolved", session_id=session.session_id)
         session.add_message("user", query)
         session.kb_name = kb_name
+        # Stash the user's database selection on the session so tool-execution
+        # helpers (``_scilex_search``) can honour it without changing every
+        # internal call signature. ``None`` means "use defaults".
+        session.databases = databases  # type: ignore[attr-defined]
+        # MCP cancellation: the iteration loop reads session.task_id and
+        # bails out when cancellation.is_cancelled(task_id) flips True.
+        # Threaded here from RAGRequest.task_id via AgenticRAGMode.
+        session.task_id = task_id
         session.evidence = EvidenceStore()
 
         # Store user preference for download cap in session
         if max_papers_to_download is not None:
             session.max_papers_to_download = max_papers_to_download
 
-        logger.info(f"Session messages count: {len(session.messages)}")
+        logger.info("agentic_session_message_count", count=len(session.messages))
 
         # Clear accumulated papers from previous requests
         self._found_papers = []
@@ -596,7 +623,9 @@ class AgenticOrchestrator:
             self._found_papers.append(url_paper)
             yield {"type": "thinking", "message": f"Retrieved: {title[:80]}"}
             logger.info(
-                f"URL pre-fetch: {title[:80]} ({len(url_paper.get('full_text', ''))} chars)"
+                "agentic_url_prefetch",
+                title=title[:80],
+                full_text_chars=len(url_paper.get("full_text", "")),
             )
         else:
             if _URL_RE.search(query):
@@ -606,6 +635,7 @@ class AgenticOrchestrator:
                 }
 
         # Step 1: Classify intent
+        yield {"type": "phase_transition", "phase": "classify"}
         yield {"type": "thinking", "message": "Analyzing your query..."}
 
         intent_result = await self.intent_classifier.classify(
@@ -613,13 +643,14 @@ class AgenticOrchestrator:
             conversation_history=session.get_conversation_history(),
             active_kb_name=kb_name,
         )
-        logger.info(f"Intent classified: {intent_result.intent.name}")
-        logger.info(f"Confidence: {intent_result.confidence}")
         logger.info(
-            f"Query complexity: {getattr(intent_result, 'query_complexity', 'simple')} "
-            f"({getattr(intent_result, 'query_complexity_source', '')})"
+            "agentic_intent_classified",
+            intent=intent_result.intent.name,
+            confidence=intent_result.confidence,
+            query_complexity=getattr(intent_result, "query_complexity", "simple"),
+            query_complexity_source=getattr(intent_result, "query_complexity_source", ""),
+            suggested_tools=intent_result.suggested_tools,
         )
-        logger.info(f"Suggested tools: {intent_result.suggested_tools}")
 
         # Provenance: trace intent classification
         _c = get_collector()
@@ -627,12 +658,21 @@ class AgenticOrchestrator:
             _c.add_trace("intent", detail={"value": intent_result.intent.name})
 
         yield {
+            "type": "intent_result",
+            "intent": intent_result.intent.name,
+            "confidence": round(float(intent_result.confidence), 3),
+            "reasoning": intent_result.reasoning,
+            "suggested_tools": list(intent_result.suggested_tools or []),
+            "query_complexity": getattr(intent_result, "query_complexity", "simple"),
+        }
+        yield {
             "type": "thinking",
             "message": f"Intent: {intent_result.intent.name.replace('_', ' ').title()}",
             "details": intent_result.reasoning,
         }
 
         # Step 2: Create dynamic plan
+        yield {"type": "phase_transition", "phase": "plan"}
         yield {"type": "thinking", "message": "Creating research plan..."}
 
         # Available tools: registered tools (excluding deactivated ones) + built-in
@@ -641,7 +681,7 @@ class AgenticOrchestrator:
             "kb_search",
             "paper_lookup",
         ]
-        logger.info(f"Available tools: {available_tools}")
+        logger.info("agentic_available_tools", tools=available_tools)
         previous_findings = self._summarize_findings(session.research_findings)
 
         plan = await self.planner.create_plan(
@@ -678,8 +718,10 @@ class AgenticOrchestrator:
                             ),
                         )
                     logger.info(
-                        f"Injected {len(subs)} parallel kb_search step(s) for KB {kb_name!r} "
-                        f"(composite): queries={subs!r}"
+                        "agentic_kb_search_injected_composite",
+                        count=len(subs),
+                        kb_name=kb_name,
+                        queries=subs,
                     )
                 else:
                     kb_step = Step(
@@ -691,27 +733,50 @@ class AgenticOrchestrator:
                     )
                     plan.steps.insert(0, kb_step)
                     logger.info(
-                        f"Injected kb_search as step1 for KB {kb_name!r} tool_input.query={clean_query!r}"
+                        "agentic_kb_search_injected",
+                        kb_name=kb_name,
+                        query=clean_query,
                     )
             elif qcomp == "composite":
                 await self._maybe_upgrade_single_kb_to_composite_parallel(plan, query, kb_name)
             plan.estimated_steps = len(plan.steps)
 
-        logger.info(f"Orchestrator plan reasoning ({len(plan.reasoning)} chars): {plan.reasoning}")
+        logger.info(
+            "agentic_plan_reasoning",
+            reasoning_chars=len(plan.reasoning),
+            reasoning=plan.reasoning,
+        )
         _log_steps_detail(plan.steps, "Orchestrator plan (final, after KB inject if any)")
 
         # Provenance: trace plan
         if _c is not None:
             _c.add_trace("plan", detail={"steps": len(plan.steps)})
 
+        yield {
+            "type": "plan",
+            "reasoning": plan.reasoning,
+            "can_answer_from_history": bool(getattr(plan, "can_answer_from_history", False)),
+            "estimated_steps": len(plan.steps),
+            "steps": [
+                {
+                    "id": s.id,
+                    "type": s.type.value,
+                    "tool": s.tool or s.type.value,
+                    "description": s.description,
+                    "query": (s.tool_input or {}).get("query", ""),
+                    "depends_on": list(s.depends_on or []),
+                }
+                for s in plan.steps
+            ],
+        }
+
         self._register_evidence_facets(session, plan)
 
         if plan.can_answer_from_history:
             # Planner decided we have enough — check if pre-fetched paper has full text
             if url_paper and url_paper.get("full_text"):
-                logger.info(
-                    "Planner says can_answer_from_history + url_paper has full_text → single-paper answer"
-                )
+                logger.info("agentic_plan_answer_from_history_with_url_paper")
+                yield {"type": "phase_transition", "phase": "synth"}
                 yield {"type": "thinking", "message": "Generating answer from retrieved paper..."}
                 papers = [url_paper]
                 is_summary = not any(
@@ -755,6 +820,7 @@ class AgenticOrchestrator:
                 # assistantDiv.innerHTML, so a papers_found emitted before
                 # the answer would be wiped.
                 yield {"type": "papers_found", "papers": _clean_papers_for_event(papers)}
+                yield {"type": "phase_transition", "phase": "done"}
                 return
             else:
                 yield {
@@ -763,12 +829,23 @@ class AgenticOrchestrator:
                 }
 
         # Step 3: Execute plan iteratively
+        yield {"type": "phase_transition", "phase": "retrieve"}
         step_results: dict[str, Any] = {}
         completed_steps: list[Step] = []
         replan_count = 0
 
         for iteration in range(self.max_iterations):
-            logger.info(f"\n--- Iteration {iteration + 1}/{self.max_iterations} ---")
+            from perspicacite.rag.cancellation import is_cancelled
+            _tid = getattr(session, "task_id", None)
+            if _tid and is_cancelled(_tid):
+                logger.info("agentic_cancelled", task_id=_tid, iteration=iteration)
+                return
+
+            logger.info(
+                "agentic_iteration_start",
+                iteration=iteration + 1,
+                max_iterations=self.max_iterations,
+            )
 
             # Provenance: trace iteration start
             if _c is not None:
@@ -776,13 +853,13 @@ class AgenticOrchestrator:
 
             batch = self._get_next_parallel_batch(plan, completed_steps, step_results)
             if not batch:
-                logger.info("No more steps to execute")
+                logger.info("agentic_no_more_steps")
                 break
 
             to_run: list[Step] = []
             for s in batch:
                 if s.condition and not self._evaluate_condition(s.condition, step_results):
-                    logger.info(f"Step {s.id} condition not met, skipping")
+                    logger.info("agentic_step_condition_not_met", step_id=s.id)
                     completed_steps.append(s)
                 else:
                     to_run.append(s)
@@ -791,7 +868,8 @@ class AgenticOrchestrator:
 
             if len(to_run) > 1:
                 logger.info(
-                    "Parallel batch: " + ", ".join(f"{s.id} ({s.type.value})" for s in to_run)
+                    "agentic_parallel_batch",
+                    steps=[f"{s.id} ({s.type.value})" for s in to_run],
                 )
 
             async def _run_step(step: Step) -> tuple[Step, Any, float]:
@@ -815,11 +893,16 @@ class AgenticOrchestrator:
                 next_step = to_run[0]
                 step, result, step_duration = await _run_step(next_step)
                 result_str = str(result)
-                logger.info(f"Step {step.id} completed in {step_duration:.2f}s")
-                logger.info(f"Result length: {len(result_str)} chars")
                 preview_len = min(2000, len(result_str))
                 logger.info(
-                    f"Result preview: {result_str[:preview_len]}{'...[truncated]' if len(result_str) > preview_len else ''}"
+                    "agentic_step_complete",
+                    step_id=step.id,
+                    duration_s=round(step_duration, 2),
+                    result_chars=len(result_str),
+                    result_preview=(
+                        result_str[:preview_len]
+                        + ("...[truncated]" if len(result_str) > preview_len else "")
+                    ),
                 )
                 step_results[step.id] = result
                 completed_steps.append(step)
@@ -833,8 +916,13 @@ class AgenticOrchestrator:
                 gathered = await asyncio.gather(*[_run_step(s) for s in to_run])
                 for step, result, step_duration in gathered:
                     result_str = str(result)
-                    logger.info(f"Step {step.id} completed in {step_duration:.2f}s")
-                    logger.info(f"Result length: {len(result_str)} chars")
+                    logger.info(
+                        "agentic_step_complete",
+                        step_id=step.id,
+                        duration_s=round(step_duration, 2),
+                        result_chars=len(result_str),
+                        result_preview=result_str[:100] if result_str else "",
+                    )
                     step_results[step.id] = result
                     completed_steps.append(step)
                     yield {
@@ -879,16 +967,18 @@ class AgenticOrchestrator:
                 )
                 decision = eval_result["decision"]
                 logger.info(
-                    f"Progress evaluation: decision={decision}, "
-                    f"gaps={eval_result['gap_facets']}, "
-                    f"missing={eval_result['missing_aspects'][:3]}"
+                    "agentic_progress_evaluation",
+                    decision=decision,
+                    gap_facets=eval_result["gap_facets"],
+                    missing_aspects=eval_result["missing_aspects"][:3],
                 )
 
                 if decision == "replan":
                     if replan_count >= MAX_REPLANS:
                         logger.info(
-                            f"Replan budget exhausted ({replan_count}/{MAX_REPLANS}), "
-                            "forcing answer with current evidence"
+                            "agentic_replan_budget_exhausted",
+                            replan_count=replan_count,
+                            max_replans=MAX_REPLANS,
                         )
                         break
                     replan_count += 1
@@ -924,21 +1014,23 @@ class AgenticOrchestrator:
                         "new_step_count": len(plan.steps),
                     }
                 elif decision == "answer":
-                    logger.info("Sufficient results, moving to answer")
+                    logger.info("agentic_sufficient_results")
                     break
 
-        logger.info("\n=== Execution complete ===")
-        logger.info(f"Completed {len(completed_steps)} steps")
-        logger.info(f"Step results keys: {list(step_results.keys())}")
+        logger.info(
+            "agentic_execution_complete",
+            completed_steps=len(completed_steps),
+            step_result_keys=list(step_results.keys()),
+        )
 
         # Step 4: Extract and process papers with progress updates
         yield {"type": "thinking", "message": "Extracting papers from search results..."}
         papers = self._extract_papers_from_results(step_results)
-        logger.info(f"Extracted {len(papers)} papers from search results")
+        logger.info("agentic_papers_extracted", count=len(papers))
 
         all_from_kb = all(p.get("source") == "kb_search" for p in papers) if papers else False
         if all_from_kb and papers:
-            logger.info("All papers from KB (pre-scored at 4); skipping LLM relevance scoring")
+            logger.info("agentic_kb_papers_skip_relevance_scoring", count=len(papers))
             yield {
                 "type": "thinking",
                 "message": f"Using {len(papers)} KB papers (relevance scoring skipped)",
@@ -994,6 +1086,7 @@ class AgenticOrchestrator:
             }
 
         # Generate final answer
+        yield {"type": "phase_transition", "phase": "synth"}
         yield {"type": "thinking", "message": "Synthesizing answer..."}
         answer, citation_map = await self._generate_answer(
             query=query, plan=plan, step_results=step_results, session=session, papers=papers
@@ -1032,6 +1125,8 @@ class AgenticOrchestrator:
         ]
         if relevant_papers:
             yield {"type": "papers_found", "papers": _clean_papers_for_event(relevant_papers)}
+
+        yield {"type": "phase_transition", "phase": "done"}
 
     async def _maybe_upgrade_single_kb_to_composite_parallel(
         self, plan: Plan, query: str, kb_name: str
@@ -1078,10 +1173,10 @@ class AgenticOrchestrator:
             if old_id in s.depends_on:
                 s.depends_on = [d for d in s.depends_on if d != old_id] + new_ids
         logger.info(
-            "Composite KB upgrade: replaced single root kb_search %r with %d step(s) subs=%r",
-            old_id,
-            len(new_steps),
-            subs,
+            "agentic_kb_composite_upgrade",
+            old_step_id=old_id,
+            new_step_count=len(new_steps),
+            subqueries=subs,
         )
 
     # ------------------------------------------------------------------
@@ -1149,7 +1244,7 @@ class AgenticOrchestrator:
                     paper_dict["content_type"] = result.content_type
                     return paper_dict
             except Exception as e:
-                logger.warning(f"URL pre-fetch via retrieve_paper_content failed for {doi}: {e}")
+                logger.warning("agentic_url_prefetch_failed", doi=doi, error=str(e))
 
         # Fallback: Semantic Scholar metadata lookup (no full text, just title + abstract).
         # Triggered when the unified pipeline returned no full text (very new papers, paywalled
@@ -1158,10 +1253,10 @@ class AgenticOrchestrator:
 
         lookup_id = doi or bare_id or arxiv_id
         if lookup_id:
-            logger.info(f"URL pre-fetch fallback: S2 lookup for {lookup_id}")
+            logger.info("agentic_url_prefetch_s2_fallback", lookup_id=lookup_id)
             paper = await lookup_paper(lookup_id)
             if paper:
-                logger.info(f"S2 fallback: found '{paper.title[:60]}'")
+                logger.info("agentic_url_prefetch_s2_found", title=paper.title[:60])
                 paper_dict = normalize_paper_dict(
                     {
                         "id": paper.id,
@@ -1203,8 +1298,8 @@ class AgenticOrchestrator:
         if not ev.facets:
             ev.register_facet("main", "main")
         logger.info(
-            "Evidence facets registered: %s",
-            {k: f.step_ids for k, f in ev.facets.items()},
+            "agentic_evidence_facets_registered",
+            facets={k: f.step_ids for k, f in ev.facets.items()},
         )
 
     def _facet_key_for_step(self, session: AgentSession, step: Step) -> str:
@@ -1260,12 +1355,12 @@ class AgenticOrchestrator:
         """Execute a single step."""
 
         if step.type == StepType.LOTUS_SEARCH:
-            logger.info("LOTUS_SEARCH: skipped (deactivated)")
+            logger.info("agentic_lotus_search_skipped")
             return "LOTUS search is currently deactivated."
 
         elif step.type == StepType.LITERATURE_SEARCH:
             query = step.tool_input.get("query", original_query)
-            logger.info(f"LITERATURE_SEARCH: query='{query}'")
+            logger.info("agentic_literature_search", query=query)
             return await self._scilex_search(query, step_id=step.id, session=session)
 
         elif step.type == StepType.DOWNLOAD_PAPERS:
@@ -1286,12 +1381,14 @@ class AgenticOrchestrator:
                     collection_name = chroma_collection_name_for_kb(session.kb_name)
                     kb_query = step.tool_input.get("query", original_query)
 
-                    logger.info("========== KB_SEARCH ==========")
                     logger.info(
-                        f"KB_SEARCH: kb_name={session.kb_name!r} collection={collection_name!r} "
-                        f"step_id={step.id!r}"
+                        "agentic_kb_search_start",
+                        kb_name=session.kb_name,
+                        collection=collection_name,
+                        step_id=step.id,
+                        query=kb_query,
+                        query_chars=len(kb_query),
                     )
-                    logger.info(f"KB_SEARCH: search_query ({len(kb_query)} chars)={kb_query!r}")
 
                     dkb = self._build_kb_retriever(default_kb_name=session.kb_name)
                     # Dynamic top_k: planner can specify via tool_input
@@ -1302,20 +1399,20 @@ class AgenticOrchestrator:
                     _default_min_rel = getattr(_kb_cfg, "min_relevance_score", 0.0)
                     top_k = planner_top_k if planner_top_k is not None else _default_top_k
                     logger.info(
-                        f"KB_SEARCH: top_k={top_k} min_relevance_score={_default_min_rel} "
-                        f"embedding_model={getattr(self.embeddings, 'model_name', '?')!r} "
-                        f"retriever={type(dkb).__name__}"
+                        "agentic_kb_search_config",
+                        top_k=top_k,
+                        min_relevance_score=_default_min_rel,
+                        embedding_model=getattr(self.embeddings, "model_name", "?"),
+                        retriever=type(dkb).__name__,
                     )
 
                     results = await dkb.search(kb_query, top_k=top_k)
-                    logger.info(
-                        f"KB_SEARCH: vector hits (after dedupe/score filter)={len(results)}"
-                    )
+                    logger.info("agentic_kb_search_vector_hits", hit_count=len(results))
 
                     # Apply hybrid retrieval if enabled
                     if self.use_hybrid and results:
                         try:
-                            logger.info("KB_SEARCH: applying hybrid retrieval (BM25 + vector)")
+                            logger.info("agentic_kb_search_hybrid_retrieval")
                             # Convert results to format expected by hybrid_retrieval
                             vector_scores = [r.get("score", 0.5) for r in results]
 
@@ -1347,13 +1444,9 @@ class AgenticOrchestrator:
                                     }
                                 )
 
-                            logger.info(
-                                f"KB_SEARCH: hybrid retrieval complete, {len(results)} results"
-                            )
+                            logger.info("agentic_kb_search_hybrid_complete", result_count=len(results))
                         except Exception as e:
-                            logger.warning(
-                                f"KB_SEARCH: hybrid retrieval failed: {e}", exc_info=True
-                            )
+                            logger.warning("agentic_kb_search_hybrid_failed", error=str(e), exc_info=True)
 
                     # Filter results by minimum relevance score (0.5 = medium relevance)
                     min_relevance_threshold = 0.5
@@ -1362,8 +1455,10 @@ class AgenticOrchestrator:
                     ]
                     if len(filtered_results) < len(results):
                         logger.info(
-                            f"KB_SEARCH: filtered {len(results) - len(filtered_results)} low-relevance results "
-                            f"(score < {min_relevance_threshold}), kept {len(filtered_results)}"
+                            "agentic_kb_search_relevance_filtered",
+                            filtered_out=len(results) - len(filtered_results),
+                            kept=len(filtered_results),
+                            threshold=min_relevance_threshold,
                         )
                         results = filtered_results
                     for j, r in enumerate(results, 1):
@@ -1383,17 +1478,27 @@ class AgenticOrchestrator:
                         # Warn if text is empty - this indicates a data quality issue
                         if not txt.strip():
                             logger.warning(
-                                f"KB_SEARCH hit {j}: EMPTY TEXT CONTENT for paper_id={pid!r} title={title!r}"
+                                "agentic_kb_search_hit_empty_text",
+                                hit_index=j,
+                                paper_id=pid,
+                                title=title,
                             )
 
                         logger.info(
-                            f"KB_SEARCH hit {j}/{len(results)}: paper_id={pid!r} "
-                            f"score={r.get('score', 0):.4f} title={title!r} text_len={len(txt)}"
+                            "agentic_kb_search_hit",
+                            hit_index=j,
+                            total_hits=len(results),
+                            paper_id=pid,
+                            score=round(r.get("score", 0), 4),
+                            title=title,
+                            text_len=len(txt),
                         )
                         preview = txt[:280].replace("\n", " ")
                         if preview.strip():
                             logger.info(
-                                f"KB_SEARCH hit {j} text_preview: {preview}{'…' if len(txt) > 280 else ''}"
+                                "agentic_kb_search_hit_preview",
+                                hit_index=j,
+                                preview=preview + ("…" if len(txt) > 280 else ""),
                             )
 
                     if results:
@@ -1479,11 +1584,12 @@ class AgenticOrchestrator:
                                                 }
                                             )
                                         logger.info(
-                                            f"KB_SEARCH: two-pass enrichment: {len(paper_ids)} papers, "
-                                            f"{len(all_chunks)} chunks total"
+                                            "agentic_kb_search_two_pass_enrichment",
+                                            paper_count=len(paper_ids),
+                                            chunk_count=len(all_chunks),
                                         )
                                 except Exception as e:
-                                    logger.warning(f"KB_SEARCH: two-pass enrichment failed: {e}")
+                                    logger.warning("agentic_kb_search_two_pass_failed", error=str(e))
 
                         # Format results for the agent
                         formatted_parts = [
@@ -1519,11 +1625,14 @@ class AgenticOrchestrator:
                                 ) or item.get("paper_id")
 
                             logger.info(
-                                "KB_SEARCH: content_lengths "
-                                f"doc={i}/{len(items)} paper_id={pid!r} "
-                                f"joined_full_len={len(joined_full)} "
-                                f"formatted_content_len={len(text_content)} cap={fmt_cap} "
-                                f"truncated={len(joined_full) > len(text_content)}"
+                                "agentic_kb_search_content_lengths",
+                                doc_index=i,
+                                total_docs=len(items),
+                                paper_id=pid,
+                                joined_full_len=len(joined_full),
+                                formatted_content_len=len(text_content),
+                                cap=fmt_cap,
+                                truncated=len(joined_full) > len(text_content),
                             )
 
                             formatted_parts.append(f"\n- {title} (relevance: {score:.2f})")
@@ -1593,14 +1702,14 @@ class AgenticOrchestrator:
                                     )
 
                         out = "\n".join(formatted_parts)
-                        logger.info(f"KB_SEARCH: formatted tool result length={len(out)} chars")
+                        logger.info("agentic_kb_search_result_formatted", result_chars=len(out))
                         return out
-                    logger.info("KB_SEARCH: no hits — empty result for downstream / judge")
+                    logger.info("agentic_kb_search_no_hits")
                     return "No relevant documents found in knowledge base."
                 except Exception as e:
-                    logger.error(f"KB_SEARCH failed: {e}", exc_info=True)
+                    logger.error("agentic_kb_search_failed", error=str(e), exc_info=True)
                     return "Knowledge base search failed."
-            logger.info("KB_SEARCH: skipped — no knowledge base selected on session")
+            logger.info("agentic_kb_search_skipped_no_kb")
             return "No knowledge base selected."
 
         elif step.type == StepType.PAPER_LOOKUP:
@@ -1608,14 +1717,14 @@ class AgenticOrchestrator:
             if not paper_id:
                 return "No paper ID provided for lookup."
 
-            logger.info(f"PAPER_LOOKUP: paper_id='{paper_id}'")
+            logger.info("agentic_paper_lookup", paper_id=paper_id)
 
             from perspicacite.search.semantic_scholar import lookup_paper
 
             paper = await lookup_paper(paper_id)
 
             if paper is None:
-                logger.info(f"PAPER_LOOKUP: paper not found for {paper_id}")
+                logger.info("agentic_paper_lookup_not_found", paper_id=paper_id)
                 return f"Paper not found for identifier: {paper_id}"
 
             paper_dict = {
@@ -1633,7 +1742,9 @@ class AgenticOrchestrator:
             }
             self._found_papers.append(paper_dict)
             logger.info(
-                f"PAPER_LOOKUP: found '{paper.title[:60]}' (citations: {paper.citation_count})"
+                "agentic_paper_lookup_found",
+                title=paper.title[:60],
+                citation_count=paper.citation_count,
             )
 
             parts = [f"Paper: {paper.title}"]
@@ -1676,18 +1787,20 @@ class AgenticOrchestrator:
 
         # Log what we're working with
         logger.info(
-            f"KB_JUDGE: input length={len(kb_result_text or '')} chars, excerpt length={len(excerpt)} chars"
+            "agentic_kb_judge_input",
+            input_chars=len(kb_result_text or ""),
+            excerpt_chars=len(excerpt),
         )
 
         if not excerpt:
-            logger.info("KB_JUDGE: empty excerpt -> insufficient")
+            logger.info("agentic_kb_judge_empty_excerpt")
             return False
         if (
             "no relevant documents" in low
             or "knowledge base search failed" in low
             or "no knowledge base selected" in low
         ):
-            logger.info("KB_JUDGE: found failure phrase -> insufficient")
+            logger.info("agentic_kb_judge_failure_phrase")
             return False
 
         max_judge_chars = 8000
@@ -1695,7 +1808,7 @@ class AgenticOrchestrator:
             excerpt = excerpt[:max_judge_chars] + "\n[... truncated for judge ...]"
 
         # Log the actual excerpt being sent to judge (first 1000 chars)
-        logger.info(f"KB_JUDGE: excerpt preview (first 1000 chars): {excerpt[:1000]}...")
+        logger.info("agentic_kb_judge_excerpt_preview", preview=excerpt[:1000])
 
         prompt = (
             "You decide if KNOWLEDGE BASE retrieval is enough to answer the user's question "
@@ -1722,22 +1835,22 @@ class AgenticOrchestrator:
         try:
             raw = await self.llm.complete(prompt, temperature=0.0)
             text = raw.strip()
-            logger.info(f"KB_JUDGE: raw LLM response length={len(text)} chars")
-            logger.debug(f"KB_JUDGE: raw response preview: {text[:500]}...")
+            logger.info("agentic_kb_judge_llm_response", response_chars=len(text))
+            logger.debug("agentic_kb_judge_llm_response_preview", preview=text[:500])
             m_fence = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
             if m_fence:
                 text = m_fence.group(1).strip()
             start, end = text.find("{"), text.rfind("}")
             if start < 0 or end <= start:
-                logger.warning(f"KB_JUDGE: no JSON object in response. Text preview: {text[:200]}")
+                logger.warning("agentic_kb_judge_no_json", text_preview=text[:200])
                 return False
             obj = json.loads(text[start : end + 1])
             sufficient = bool(obj.get("sufficient"))
             reason = obj.get("reason", "")
-            logger.info(f"KB_JUDGE: sufficient={sufficient} reason={reason!r}")
+            logger.info("agentic_kb_judge_result", sufficient=sufficient, reason=reason)
             return sufficient
         except Exception as e:
-            logger.warning(f"KB_JUDGE: failed with error: {e}")
+            logger.warning("agentic_kb_judge_failed", error=str(e))
             return False
 
     async def _evaluate_progress(
@@ -1793,14 +1906,14 @@ class AgenticOrchestrator:
             uncovered_gaps = [f for f in gap_facets if f not in covered_by_remaining]
             if uncovered_gaps:
                 facet_labels = "; ".join(f'"{f}" ({gaps[f]})' for f in uncovered_gaps[:4])
-                logger.info(f"Facet gaps with no remaining steps, forcing replan: {facet_labels}")
+                logger.info("agentic_facet_gaps_force_replan", facet_labels=facet_labels)
                 result["decision"] = "replan"
                 result["evaluation_text"] = f"Facets still uncovered: {facet_labels}"
                 return result
             else:
                 logger.info(
-                    f"Gap facets exist but remaining plan steps already target them: "
-                    f"{list(covered_by_remaining)[:4]} — continuing"
+                    "agentic_gap_facets_covered_by_remaining",
+                    covered=list(covered_by_remaining)[:4],
                 )
 
         # --- Quality assessor (per-batch documents) ---
@@ -1824,29 +1937,29 @@ class AgenticOrchestrator:
                 result["missing_aspects"] = missing_aspects or []
 
                 logger.info(
-                    f"Quality assessment: sufficient={is_sufficient}, "
-                    f"confidence={confidence:.2f}, missing={len(missing_aspects)} aspects"
+                    "agentic_quality_assessment",
+                    sufficient=is_sufficient,
+                    confidence=round(confidence, 2),
+                    missing_aspects_count=len(missing_aspects),
                 )
 
                 if is_sufficient and confidence >= self.early_exit_confidence:
                     all_covered = all(v == "covered" for v in gaps.values()) if gaps else True
                     if all_covered:
                         logger.info(
-                            f"Early exit: confidence {confidence:.2f} >= {self.early_exit_confidence}, "
-                            "all facets covered"
+                            "agentic_early_exit",
+                            confidence=round(confidence, 2),
+                            threshold=self.early_exit_confidence,
                         )
                         result["decision"] = "answer"
                         result["evaluation_text"] = "All facets covered; evidence sufficient."
                         return result
                     else:
-                        logger.info(
-                            "Quality assessor says sufficient but facets not all covered — "
-                            "continuing to fill gaps"
-                        )
+                        logger.info("agentic_quality_sufficient_facets_incomplete")
 
                 if not is_sufficient and missing_aspects:
                     aspect_str = ", ".join(missing_aspects[:3])
-                    logger.info(f"Quality insufficient, missing: {aspect_str}")
+                    logger.info("agentic_quality_insufficient", missing=aspect_str)
                     if gap_facets:
                         result["decision"] = "replan"
                         result["evaluation_text"] = (
@@ -2065,9 +2178,11 @@ Provide a synthesized summary that combines the key insights from all sources.""
     ) -> tuple[str, dict[str, Any]]:
         """Generate final answer and return ``(answer_text, citation_map)``."""
 
-        logger.info("\n--- Generating Answer ---")
-        logger.info(f"Query: {query}")
-        logger.info(f"Step results available: {list(step_results.keys())}")
+        logger.info(
+            "agentic_generating_answer",
+            query=query,
+            step_result_keys=list(step_results.keys()),
+        )
 
         if papers is None:
             papers = self._extract_papers_from_results(step_results)
@@ -2090,7 +2205,7 @@ Provide a synthesized summary that combines the key insights from all sources.""
 
         if "lotus" in step_results:
             lotus_result = step_results["lotus"]
-            logger.info(f"LOTUS result length: {len(str(lotus_result))} chars")
+            logger.info("agentic_lotus_result", result_chars=len(str(lotus_result)))
             context_parts.append(f"LOTUS Search Results:\n{lotus_result}")
 
         map_reduce_block = await self._map_reduce_paper_bullets(query, papers)
@@ -2099,14 +2214,16 @@ Provide a synthesized summary that combines the key insights from all sources.""
                 "\n\n---\n\nQuery-focused extractions (per paper; cite using [N] from the numbered list):\n"
                 + map_reduce_block
             )
-            logger.info(
-                "Answer context: using map-reduce per-paper extractions (raw step results suppressed)"
-            )
+            logger.info("agentic_answer_context_map_reduce")
         else:
             for step_id, result in step_results.items():
                 if step_id != "lotus" and result:
                     result_str = str(result)
-                    logger.info(f"Step {step_id} result length: {len(result_str)} chars")
+                    logger.info(
+                        "agentic_answer_step_result_length",
+                        step_id=step_id,
+                        result_chars=len(result_str),
+                    )
                     context_parts.append(f"{step_id}:\n{result_str[:3000]}")
 
             full_text_parts = []
@@ -2121,13 +2238,13 @@ Provide a synthesized summary that combines the key insights from all sources.""
                 context_parts.append(
                     "\n\n---\n\nDownloaded Full Text:\n" + "\n\n---\n\n".join(full_text_parts)
                 )
-                logger.info(f"Added {len(full_text_parts)} full text documents to context")
+                logger.info("agentic_answer_full_text_docs", count=len(full_text_parts))
 
         context = "\n\n".join(context_parts)
-        logger.info(f"Total context length: {len(context)} chars")
+        logger.info("agentic_answer_context_length", context_chars=len(context))
 
         if not context.strip():
-            logger.warning("Context is empty! No research results to use.")
+            logger.warning("agentic_answer_context_empty")
 
         conversation_context = session.get_context_string()
 
@@ -2191,8 +2308,8 @@ Important: Do not provide an answer if the question contains hate speech, offens
 
 Generate your answer:"""
 
-        logger.info(f"Prompt length: {len(prompt)} chars")
-        logger.info("Calling LLM for answer...")
+        logger.info("agentic_answer_prompt_length", prompt_chars=len(prompt))
+        logger.info("agentic_answer_llm_call")
 
         mm_chunks = (
             self._chunks_with_figure_refs(step_results)
@@ -2205,8 +2322,7 @@ Generate your answer:"""
             chunks=mm_chunks,
             config=getattr(self, "config", None),
         )
-        logger.info(f"Answer generated, length: {len(answer)} chars")
-        logger.info(f"Answer content:\n{answer}")
+        logger.info("agentic_answer_generated", answer_chars=len(answer), answer=answer)
 
         answer, citation_map = self._verify_citations(answer, papers)
 
@@ -2215,15 +2331,17 @@ Generate your answer:"""
             answer, papers = self._compact_citations(answer, papers, cited_indices)
             citation_map["compacted"] = True
             logger.info(
-                f"Compacted citations: {len(cited_indices)} cited out of "
-                f"{citation_map['total_papers']} → renumbered to [1]-[{len(papers)}]"
+                "agentic_citations_compacted",
+                cited=len(cited_indices),
+                total_papers=citation_map["total_papers"],
+                renumbered_to=len(papers),
             )
 
         if papers:
             references_section = self._format_references_section(papers)
             if references_section:
                 answer = answer.rstrip() + "\n\n" + references_section
-                logger.info(f"References section added, total length: {len(answer)} chars")
+                logger.info("agentic_references_section_added", answer_chars=len(answer))
 
         return answer, citation_map
 
@@ -2264,8 +2382,9 @@ Generate your answer:"""
             answer = cls._CITE_RE.sub(_strip_invalid, answer)
             answer = re.sub(r"  +", " ", answer)
             logger.warning(
-                f"Citation verification: stripped {len(invalid_refs)} invalid ref(s): "
-                f"{sorted(invalid_refs)}"
+                "agentic_citations_invalid_stripped",
+                invalid_count=len(invalid_refs),
+                invalid_refs=sorted(invalid_refs),
             )
 
         cited_indices = sorted(valid_refs)
@@ -2290,13 +2409,17 @@ Generate your answer:"""
 
         if papers and len(uncited_indices) > len(papers) * 0.5:
             logger.warning(
-                f"Citation coverage low: {len(cited_indices)}/{len(papers)} papers cited "
-                f"({len(uncited_indices)} uncited) — possible over-retrieval"
+                "agentic_citation_coverage_low",
+                cited=len(cited_indices),
+                total=len(papers),
+                uncited=len(uncited_indices),
             )
         else:
             logger.info(
-                f"Citation verification: {len(cited_indices)}/{len(papers)} papers cited, "
-                f"{len(invalid_refs)} invalid stripped"
+                "agentic_citation_verification",
+                cited=len(cited_indices),
+                total=len(papers),
+                invalid_stripped=len(invalid_refs),
             )
 
         return answer, citation_map
@@ -2347,8 +2470,10 @@ Generate your answer:"""
         doi = paper.get("doi", "")
 
         logger.info(
-            f"Single-paper answer path: title={title[:60]!r}, "
-            f"full_text_len={len(full_text)}, is_summary={is_summary_request}"
+            "agentic_single_paper_answer",
+            title=title[:60],
+            full_text_len=len(full_text),
+            is_summary=is_summary_request,
         )
 
         conversation_context = session.get_context_string()
@@ -2360,10 +2485,10 @@ Generate your answer:"""
                 "key contributions and innovations, main results and findings, "
                 "limitations, and significance."
             )
-            logger.info("Single-paper: URL-only query → summary mode")
+            logger.info("agentic_single_paper_summary_mode")
         else:
             effective_question = query
-            logger.info("Single-paper: specific question → focused answer")
+            logger.info("agentic_single_paper_question_mode")
 
         prompt = f"""You are a scientific research assistant. You have the full text of a single research paper.
 
@@ -2390,7 +2515,7 @@ Guidelines:
 
 Generate your answer:"""
 
-        logger.info(f"Single-paper prompt length: {len(prompt)} chars")
+        logger.info("agentic_single_paper_prompt_length", prompt_chars=len(prompt))
         # Single-paper path doesn't surface step_results / DocumentChunks here,
         # so multimodal degrades to text-only. Pass None for chunks; the wrap
         # function won't be invoked.
@@ -2400,7 +2525,7 @@ Generate your answer:"""
             chunks=None,
             config=getattr(self, "config", None),
         )
-        logger.info(f"Single-paper answer generated: {len(answer)} chars")
+        logger.info("agentic_single_paper_answer_generated", answer_chars=len(answer))
 
         # Build citation map for single paper (always [1])
         citation_map: dict[str, Any] = {
@@ -2566,8 +2691,9 @@ Generate your answer:"""
                         paper["relevance_score"] = 0
                         paper["relevance_reason"] = "No LLM score provided"
                         logger.info(
-                            f"Paper [{i}] '{paper.get('title', '')[:50]}...' "
-                            f"score: MISSING - DISCARDED (non-KB, no score)"
+                            "agentic_relevance_score_missing_discarded",
+                            paper_index=i,
+                            title=paper.get("title", "")[:50],
                         )
                         continue
 
@@ -2582,22 +2708,33 @@ Generate your answer:"""
                         ).strip()
                     filtered.append(paper)
                     logger.info(
-                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' "
-                        f"score: {paper['relevance_score']} - INCLUDED (KB paper)"
+                        "agentic_relevance_paper_included_kb",
+                        paper_index=i,
+                        title=paper.get("title", "")[:50],
+                        score=paper["relevance_score"],
                     )
                 elif score >= min_score:
                     filtered.append(paper)
                     logger.info(
-                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - INCLUDED"
+                        "agentic_relevance_paper_included",
+                        paper_index=i,
+                        title=paper.get("title", "")[:50],
+                        score=score,
                     )
                 else:
                     logger.info(
-                        f"Paper [{i}] '{paper.get('title', '')[:50]}...' score: {score} - FILTERED"
+                        "agentic_relevance_paper_filtered",
+                        paper_index=i,
+                        title=paper.get("title", "")[:50],
+                        score=score,
                     )
 
             logger.info(
-                f"Relevance filtering: {len(filtered)}/{n_papers} papers included "
-                f"(min_score={min_score}, complete={is_complete})"
+                "agentic_relevance_filtering_complete",
+                included=len(filtered),
+                total=n_papers,
+                min_score=min_score,
+                complete=is_complete,
             )
             return filtered, is_complete
 
@@ -2608,8 +2745,9 @@ Generate your answer:"""
             # If scores are incomplete, retry once with stricter instruction
             if not is_complete:
                 logger.warning(
-                    f"Relevance scorer returned incomplete scores "
-                    f"({len(filtered)}/{n_papers} kept). Retrying once."
+                    "agentic_relevance_scorer_incomplete",
+                    kept=len(filtered),
+                    total=n_papers,
                 )
                 retry_prompt = (
                     prompt + "\n\nIMPORTANT: Your previous response was missing scores for "
@@ -2622,10 +2760,54 @@ Generate your answer:"""
                     filtered = retry_filtered
                     is_complete = retry_complete
 
+            # === Graceful threshold relaxation ===
+            # If the strict scorer rejected almost everything (common for
+            # "What is X" definitional queries — the prompt is calibrated
+            # for narrow questions and over-penalises "applies X" papers),
+            # rescue the top-scoring non-KB papers by including any that
+            # scored ``min_score - 1`` (typically 2). This avoids the
+            # degenerate "agentic returned 1 paper" outcome the user hit
+            # while keeping the strict floor when there are plenty of
+            # truly-relevant papers.
+            #
+            # Triggers when:
+            #   - fewer than 2 non-KB papers passed AND
+            #   - the candidate pool was at least 3 (otherwise no rescue
+            #     can help) AND
+            #   - we have papers at relaxed_floor (e.g. score=2) to promote
+            non_kb_kept = [
+                p for p in filtered if p.get("source") != "kb_search"
+            ]
+            if len(non_kb_kept) < 2 and n_papers >= 3 and min_score > 1:
+                relaxed_floor = min_score - 1
+                rescued: list[dict[str, Any]] = []
+                for p in papers:
+                    if p in filtered:
+                        continue  # already kept
+                    if p.get("source") == "kb_search":
+                        continue
+                    sc = int(p.get("relevance_score") or 0)
+                    if sc == relaxed_floor:
+                        rescued.append(p)
+                # Cap rescues so we don't drown the strict picks in noise.
+                rescued.sort(
+                    key=lambda x: int(x.get("relevance_score") or 0),
+                    reverse=True,
+                )
+                rescued = rescued[:5]
+                if rescued:
+                    logger.info(
+                        "agentic_relevance_threshold_relaxed",
+                        kept_strict=len(filtered),
+                        rescued=len(rescued),
+                        relaxed_floor=relaxed_floor,
+                    )
+                    filtered = filtered + rescued
+
             return filtered
 
         except Exception as e:
-            logger.error(f"Error scoring papers for relevance: {e}")
+            logger.error("agentic_relevance_scoring_error", error=str(e))
             # Never treat unscored literature as relevance-approved (UI + downstream use
             # relevance_score). KB hits are pre-trusted; literature without a successful
             # score is excluded from the paper list so synthesis falls back to raw step
@@ -2644,16 +2826,12 @@ Generate your answer:"""
                     p["relevance_reason"] = "Excluded: relevance scoring error"
             if retained:
                 logger.warning(
-                    "Relevance scoring failed: returning %d KB paper(s) only; "
-                    "excluding %d literature paper(s) without scores.",
-                    len(retained),
-                    len(papers) - len(retained),
+                    "agentic_relevance_scoring_failed_kb_only",
+                    kb_papers=len(retained),
+                    excluded_literature=len(papers) - len(retained),
                 )
                 return retained
-            logger.warning(
-                "Relevance scoring failed with no KB papers; returning no scored papers "
-                "(answer may use raw search result text only)."
-            )
+            logger.warning("agentic_relevance_scoring_failed_no_papers")
             return []
 
     def _format_references_section(self, papers: list[dict[str, Any]]) -> str:
@@ -2682,14 +2860,56 @@ Generate your answer:"""
 
         Falls back to direct OpenAlex if SciLEx is not available.
         """
-        logger.info(f"SciLEx search: '{query}'")
+        logger.info("agentic_scilex_search", query=query)
 
+        # -- query optimization --
+        _app_state = getattr(self, "app_state", None)
+        effective_query = query
+        if _app_state is not None and getattr(_app_state, "config", None) is not None:
+            import perspicacite.search.query_optimizer as _qo_mod
+            try:
+                opt = await _qo_mod.optimize_query(
+                    query=query,
+                    context=None,
+                    app_state=_app_state,
+                    optimize_enabled=None,
+                )
+                effective_query = opt.searched_query
+                if opt.applied:
+                    logger.info(
+                        "agentic_scilex_query_rewritten",
+                        original=query,
+                        rewritten=effective_query,
+                    )
+            except Exception as _opt_exc:
+                logger.warning("agentic_scilex_optimizer_failed", error=str(_opt_exc))
+
+        # Honour the user's database selection threaded through ``chat()``;
+        # falls back to the legacy default when no session-level override is
+        # set. Unknown providers (e.g. ``google_scholar``) are filtered out by
+        # ``SciLExAdapter.search`` so we can pass the raw list through.
+        _selected_dbs = (
+            getattr(session, "databases", None)
+            if session is not None
+            else None
+        )
+        _apis = _selected_dbs or ["semantic_scholar", "openalex", "pubmed"]
         try:
             papers = await self.scilex_adapter.search(
-                query=query,
+                query=effective_query,
                 max_results=max_results,
-                apis=["semantic_scholar", "openalex", "pubmed"],
+                apis=_apis,
             )
+
+            # Crossref-enrich: fills missing abstracts (Google Scholar /
+            # SciLEx don't always include them), canonicalises author lists
+            # and journal names. Same enrichment basic/advanced web-fallback
+            # uses; ensures agentic synthesis works on clean records.
+            try:
+                from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
+                papers = await enrich_papers(papers)
+            except Exception as _ee:
+                logger.warning("agentic_enrich_failed", error=str(_ee))
 
             if papers:
                 paper_dicts = []
@@ -2713,18 +2933,18 @@ Generate your answer:"""
                         self._found_papers.extend(paper_dicts)
                     self._accumulate_lit_evidence(paper_dicts, step_id, session)
 
-                logger.info(f"SciLEx search found {len(paper_dicts)} papers")
+                logger.info("agentic_scilex_search_found", count=len(paper_dicts))
                 return self._format_paper_list(paper_dicts)
             else:
-                logger.warning("SciLEx returned no results, falling back to OpenAlex")
+                logger.warning("agentic_scilex_search_no_results")
                 return await self._fallback_openalex_search(
-                    query, max_results, step_id=step_id, session=session
+                    effective_query, max_results, step_id=step_id, session=session
                 )
 
         except Exception as e:
-            logger.error(f"SciLEx search failed: {e}, falling back to OpenAlex")
+            logger.error("agentic_scilex_search_failed", error=str(e))
             return await self._fallback_openalex_search(
-                query, max_results, step_id=step_id, session=session
+                effective_query, max_results, step_id=step_id, session=session
             )
 
     async def _fallback_openalex_search(
@@ -2738,7 +2958,7 @@ Generate your answer:"""
         import httpx
 
         search_terms = query.strip()
-        logger.info(f"OpenAlex fallback search: '{search_terms}'")
+        logger.info("agentic_openalex_fallback_search", search_terms=search_terms)
 
         url = "https://api.openalex.org/works"
         params = {
@@ -2781,10 +3001,10 @@ Generate your answer:"""
                         self._found_papers.extend(papers)
                     self._accumulate_lit_evidence(papers, step_id, session)
 
-                logger.info(f"OpenAlex fallback found {len(papers)} papers")
+                logger.info("agentic_openalex_fallback_found", count=len(papers))
                 return self._format_paper_list(papers)
         except Exception as e:
-            logger.error(f"OpenAlex fallback failed: {e}")
+            logger.error("agentic_openalex_fallback_failed", error=str(e))
             return f"Literature search failed: {e}"
 
     def _accumulate_lit_evidence(
@@ -2940,9 +3160,7 @@ Generate your answer:"""
 
         out = list(best.values())
         if len(out) < len(papers):
-            logger.info(
-                f"Paper dedupe: {len(papers)} -> {len(out)} (by DOI / OpenAlex id / title fingerprint)"
-            )
+            logger.info("agentic_paper_dedupe", before=len(papers), after=len(out))
         return out
 
     @staticmethod
@@ -3056,7 +3274,7 @@ Generate your answer:"""
                 paper["pdf_downloaded"] = False
 
         except Exception as e:
-            logger.warning(f"Failed to download/parse content for {doi}: {e}")
+            logger.warning("agentic_download_failed", doi=doi, error=str(e))
             paper["pdf_downloaded"] = False
 
         return paper
@@ -3094,11 +3312,13 @@ Generate your answer:"""
         )
 
         if not download_candidates:
-            logger.info("No papers met the relevance threshold for download")
+            logger.info("agentic_download_no_candidates")
             return papers
 
         logger.info(
-            f"Attempting to download {len(download_candidates)} relevant papers (threshold >= {relevance_threshold})"
+            "agentic_download_candidates",
+            count=len(download_candidates),
+            relevance_threshold=relevance_threshold,
         )
 
         enriched = []

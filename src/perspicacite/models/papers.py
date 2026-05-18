@@ -72,6 +72,25 @@ class Paper(BaseModel):
     citation_count: int | None = None
     source: PaperSource = PaperSource.BIBTEX
     keywords: list[str] = Field(default_factory=list)
+    # === Provenance ===
+    # Which DBs returned this specific paper (e.g. ["openalex", "pubmed"]).
+    discovery_sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Upstream databases that returned this paper. Filled by "
+            "the aggregator merge step."
+        ),
+    )
+    # Which DBs ENRICHED the metadata (Crossref, Unpaywall, OpenAlex
+    # fill-in, etc.). Distinct from discovery_sources.
+    enrichment_sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Secondary databases that contributed metadata enrichment "
+            "(Crossref bibliographic patch, OpenAlex abstract fill, "
+            "Unpaywall OA detection)."
+        ),
+    )
     full_text: str | None = None
     # Pipeline content-tier marker carried from PaperContent.content_type:
     # one of "structured" | "full_text" | "abstract" | "none". None when

@@ -1,6 +1,6 @@
 """Base classes and utilities for download modules."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -78,19 +78,7 @@ class PaperContent:
     abstract: str | None = None
     content_source: str = "none"  # "pmc", "arxiv_html", "publisher_pdf", etc.
     metadata: dict[str, Any] | None = None
-
-    def __post_init__(self) -> None:
-        # `attempts` is intentionally not a dataclass field so existing
-        # call sites (which use positional or kwargs-only construction)
-        # keep working. Initialize it here so .attempts is always usable.
-        if not hasattr(self, "_attempts"):
-            self._attempts: list[dict[str, Any]] = []
-
-    @property
-    def attempts(self) -> list[dict[str, Any]]:
-        if not hasattr(self, "_attempts"):
-            self._attempts = []
-        return self._attempts
+    attempts: list[dict[str, Any]] = field(default_factory=list)
 
     def record_attempt(
         self, source: str, status: str, *, error: str | None = None, **extra: Any,

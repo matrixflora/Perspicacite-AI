@@ -44,8 +44,8 @@
 
 /* Inline thinking message in chat */
 .message.thinking-message {
-    background: #f1f5f9;
-    border: 1px dashed #cbd5e1;
+    background: var(--bg-subtle);
+    border: 1px dashed var(--border-strong);
     font-size: 13px;
     padding: 12px 16px;
 }
@@ -84,38 +84,6 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-}
-
-.thinking-step {
-    display: flex;
-    gap: 8px;
-    padding: 8px;
-    background: white;
-    border-radius: 6px;
-    border: 1px solid #e2e8f0;
-}
-
-.thinking-step .icon {
-    flex-shrink: 0;
-}
-
-.thinking-step .content {
-    flex: 1;
-}
-
-.thinking-step .details {
-    margin-top: 4px;
-    padding: 8px;
-    background: #f8fafc;
-    border-radius: 4px;
-    font-size: 12px;
-    color: #475569;
-}
-
-.thinking-step .query-info {
-    margin-top: 4px;
-    font-size: 11px;
-    color: #64748b;
 }
 
 .input-area {
@@ -160,7 +128,7 @@
     justify-content: flex-end;
     gap: 12px;
     padding-top: 8px;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid var(--border);
 }
 
 .mode-dropdown {
@@ -238,11 +206,39 @@
     height: 16px;
 }
 
+/* Stop button — same footprint as send-btn so swapping in/out doesn't shift
+   the input row. Red palette signals "cancel in flight". */
+.stop-btn {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: #dc2626;
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.stop-btn:hover {
+    background: #b91c1c;
+    transform: scale(1.05);
+}
+
+.stop-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
 .input-container {
     padding: 12px 24px 20px;
     display: flex;
     gap: 12px;
-    background: #fafbfc;
+    background: var(--bg-main);
 }
 
 .input-container input {
@@ -254,7 +250,8 @@
     font-family: inherit;
     outline: none;
     transition: border-color 0.2s, box-shadow 0.2s;
-    background: white;
+    background: var(--bg-card);
+    color: var(--text-main);
 }
 
 .input-container input:focus {
@@ -452,6 +449,22 @@ body.chat-active .chat-status-bar {
     text-decoration: none;
 }
 .source-provider-tag:hover { text-decoration: underline; }
+
+/* Enrichment chip — secondary databases that cleaned up the record
+   (Crossref bibliographic patch, OpenAlex abstract fill, Unpaywall OA).
+   Visually subtler than the upstream-source chip so the user can tell
+   "where it came from" vs "what enriched it" at a glance. */
+.source-enrichment-tag {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 5px;
+    background: rgba(99,102,241,0.10);
+    color: #6366f1;
+    border: 1px dashed rgba(99,102,241,0.35);
+    border-radius: 4px;
+    font-size: 10.5px;
+    font-weight: 500;
+}
 
 /* Rolling "..." next to the active thinking-mode label. Cycles 0→1→2→3
    dots so the user sees the panel is alive while the step is in flight. */
@@ -1124,4 +1137,342 @@ details[open] .advanced-options-summary::before { content: '▼ '; }
 .figure-card .figure-caption {
     font-size: 11px;
     color: #aaa;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Live agentic visibility (May 2026 GUI refinement).
+   - Elapsed counter in the thinking header.
+   - Phase-progress strip for agentic / profound modes.
+   - mode-expanded class makes the thinking content visible by default
+     for those modes.
+   ───────────────────────────────────────────────────────────────────── */
+
+.thinking-elapsed {
+    margin-left: auto;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    font-weight: 500;
+    background: var(--badge-soft-bg);
+    border: 1px solid var(--badge-soft-border);
+    border-radius: 999px;
+    padding: 1px 8px;
+}
+/* When the thinking-count exists too, it sits after elapsed. */
+.thinking-elapsed + .thinking-count { margin-left: 0; }
+
+.thinking-phase-strip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: 10px 0 4px 0;
+    padding: 6px 8px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+.thinking-phase-strip .phase-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.thinking-phase-strip .phase-pill .phase-label {
+    letter-spacing: 0.02em;
+}
+.thinking-phase-strip .phase-pill.done {
+    color: var(--accent);
+    background: var(--badge-good-bg);
+    border-color: var(--badge-good-border);
+}
+.thinking-phase-strip .phase-pill.active {
+    color: var(--primary);
+    background: var(--badge-info-bg);
+    border-color: var(--badge-info-border);
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+}
+.thinking-phase-strip .phase-sep {
+    opacity: 0.45;
+    user-select: none;
+}
+
+/* The mode-expanded class signals that the thinking panel should be
+   visible by default — set on agentic / profound / literature_survey
+   in createThinkingMessage(). Nothing else to do here; the .collapsed
+   class is simply omitted at construction time. The marker exists so
+   future styles (e.g. taller default content area) can target it. */
+.message.thinking-message.mode-expanded {
+    /* room to breathe when the panel is visible without a click */
+    padding-bottom: 14px;
+}
+
+/* References block: hard URL/DOI wrapping so they don't overflow. */
+.references-block,
+.message.assistant a[href] {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+/* Mode dropdown — give it a clear chip outline so it doesn't look
+   like plain text. */
+.mode-dropdown {
+    border: 1px solid var(--border-strong);
+    background: var(--bg-card);
+}
+.mode-dropdown:hover {
+    border-color: var(--primary-light);
+}
+
+/* Message widths scale with the viewport so interaction step boxes
+   expand when the user widens the window. Cap at 1200px on very wide
+   displays so chat rows don't become unreadably long. Thinking-message
+   panels get a wider cap because they hold structured step content
+   (provider chips, source cards) that benefits from horizontal space. */
+@media (min-width: 1100px) {
+    .message { max-width: min(85%, 900px); }
+    .message.thinking-message { max-width: min(95%, 1200px); }
+}
+@media (min-width: 1500px) {
+    .message { max-width: min(80%, 1100px); }
+    .message.thinking-message { max-width: min(92%, 1400px); }
+}
+@media (min-width: 1900px) {
+    .message { max-width: min(70%, 1300px); }
+    .message.thinking-message { max-width: min(88%, 1700px); }
+}
+
+/* ── Structured agentic events: intent_result, plan ──────────────────────── */
+
+.thinking-step.agentic-structured {
+    /* Override the category color blocks with a neutral elevated card so the
+       structured payload is readable; keep the colored border-left so users can
+       still tell intent (analyzing) and plan (planning) apart at a glance. */
+    background: var(--bg-elevated);
+    color: var(--text-main);
+}
+.thinking-step.agentic-structured .content > div:first-child {
+    font-size: 13px;
+}
+.agentic-conf {
+    display: inline-block;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--badge-info-bg);
+    color: var(--badge-info-fg);
+    border: 1px solid var(--badge-info-border);
+    margin-left: 4px;
+    font-variant-numeric: tabular-nums;
+}
+.agentic-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+.agentic-pill {
+    display: inline-block;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 4px;
+    background: var(--badge-soft-bg);
+    color: var(--badge-soft-fg);
+    border: 1px solid var(--badge-soft-border);
+    font-family: 'Quicksand', monospace;
+}
+.agentic-pill-muted {
+    opacity: 0.85;
+    font-family: inherit;
+}
+.agentic-reasoning {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    line-height: 1.45;
+    font-style: italic;
+}
+.agentic-plan-list {
+    margin: 8px 0 0;
+    padding-left: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.agentic-plan-list li {
+    font-size: 12px;
+    color: var(--text-main);
+    line-height: 1.4;
+}
+.agentic-plan-list li .agentic-pill {
+    margin-right: 6px;
+}
+.agentic-plan-desc {
+    color: var(--text-main);
+}
+.agentic-plan-query {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.agentic-plan-query code {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border: 1px solid var(--code-border);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: 'Quicksand', monospace;
+}
+
+/* Query rephrasing card: dimmed original on top, bold rewritten below,
+   tiny down-arrow between them. */
+.agentic-rephrase-original {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-muted);
+    text-decoration-thickness: 1px;
+    line-height: 1.4;
+}
+.agentic-rephrase-arrow {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin: 1px 0 0 2px;
+    line-height: 1;
+}
+.agentic-rephrase-rewritten {
+    margin-top: 2px;
+    font-size: 13px;
+    color: var(--text-main);
+    line-height: 1.4;
+}
+
+/* Indented sub-steps with connector lines. Any thinking-step marked
+   data-depth="1" is treated as a child of the immediately preceding
+   top-level step. We render:
+   - 24px (or 48px) left indent — the indentation level
+   - a CONTINUOUS vertical guide rail running through the entire run of
+     sibling depth-1 (or depth-2) steps. We achieve continuity through the
+     8px inter-step margin with a ::after extension that paints a line
+     covering the gap below each step.
+   - a small horizontal tick at the icon's vertical centre, "meeting" the
+     vertical line — the L-shaped tree connector.
+
+   Implementation:
+   - border-left = vertical rail inside the step's own box.
+   - ::after extends the rail through the bottom margin (height: 8px,
+     bottom: -8px) so two stacked siblings appear connected.
+   - The LAST depth-N child in a run is detected via :not(+ depth-N) is
+     hard in CSS, so the trailing ::after is fine: it terminates exactly
+     where the next non-child sibling begins (the visual rail naturally
+     stops at the next top-level step). */
+.thinking-step[data-depth="1"],
+.thinking-step[data-depth="2"] {
+    position: relative;
+    padding-left: 18px;
+    border-left: 1.5px solid var(--border);
+}
+.thinking-step[data-depth="1"] { margin-left: 24px; }
+.thinking-step[data-depth="2"] { margin-left: 48px; }
+
+/* The L-connector horizontal tick: a 14px stub at the icon row pointing
+   from the vertical rail to the step content. */
+.thinking-step[data-depth="1"]::before,
+.thinking-step[data-depth="2"]::before {
+    content: '';
+    position: absolute;
+    left: -1.5px;            /* sit on top of the rail */
+    top: 18px;               /* aligned with the icon's mid-row */
+    width: 14px;
+    height: 1.5px;
+    background: var(--border);
+    border-bottom-left-radius: 4px;
+}
+
+/* The rail-extension that bridges the 8px inter-step margin so a run of
+   siblings looks like ONE continuous vertical line instead of N short
+   stubs with gaps. */
+.thinking-step[data-depth="1"]::after,
+.thinking-step[data-depth="2"]::after {
+    content: '';
+    position: absolute;
+    left: -1.5px;
+    bottom: -9px;            /* 8px margin-bottom + 1px overdraw */
+    width: 1.5px;
+    height: 9px;
+    background: var(--border);
+}
+
+/* When the next sibling is NOT a child at the same depth, the rail must
+   stop. CSS :has() lets us check the immediate next sibling cleanly. */
+.thinking-step[data-depth="1"]:not(:has(+ .thinking-step[data-depth="1"]))::after,
+.thinking-step[data-depth="1"]:not(:has(+ .thinking-step[data-depth="2"]))::after { /* depth-2 child still child of depth-1 chain */
+    /* No-op: kept for documentation. The actual "stop" rule below
+       overrides correctly when neither continuation exists. */
+}
+.thinking-step:not([data-depth="1"]):not([data-depth="2"]) {
+    /* When a top-level step follows a depth-N run, the previous step's
+       ::after still paints. We can't reach back to remove it from CSS
+       alone, so we accept a tiny trailing 9px stub. It reads as "rail
+       ended here" rather than as a disconnect. */
+}
+
+/* Background-color tweak: depth-N steps reuse the same coloured pills
+   as top-level steps. The continuous rail looks best against a calmer
+   surface, so soften the background for indented children. */
+.thinking-step[data-depth="1"],
+.thinking-step[data-depth="2"] {
+    background: var(--bg-subtle, rgba(0,0,0,0.02));
+}
+
+/* Override the legacy .thinking-step.result rule which forces
+   margin-left:50px — that conflicts with our depth-based indents. */
+.thinking-step.result[data-depth="1"] { margin-left: 24px; }
+.thinking-step.result[data-depth="2"] { margin-left: 48px; }
+
+/* Header icon-links (GitHub, About). Match the theme-toggle visual
+   weight so the three buttons look like a coherent group. */
+.header-icon-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+.header-icon-link:hover {
+    background: var(--bg-secondary);
+    color: var(--primary);
+}
+
+/* Per-provider progress: thin horizontal bar; same look in dark mode via
+   var(--badge-soft-*). */
+.agentic-progress-bar {
+    margin-top: 6px;
+    height: 6px;
+    width: 100%;
+    background: var(--badge-soft-bg);
+    border: 1px solid var(--badge-soft-border);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.agentic-progress-bar-fill {
+    height: 100%;
+    background: var(--primary);
+    transition: width 200ms ease-out;
 }

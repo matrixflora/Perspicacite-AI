@@ -1,9 +1,9 @@
 """RAG models."""
 
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from perspicacite.models.search import SearchFilters
 
@@ -30,6 +30,11 @@ class RAGMode(str, Enum):
 class SourceReference(BaseModel):
     """Reference to a source paper."""
 
+    # Allow both field name and alias for construction / serialisation.
+    # populate_by_name=True means callers can use either "discovery_sources"
+    # (new canonical name) or "sources_all" (legacy alias) interchangeably.
+    model_config = ConfigDict(populate_by_name=True)
+
     title: str
     authors: list[str] = Field(default_factory=list)
     year: int | None = None
@@ -45,9 +50,33 @@ class SourceReference(BaseModel):
     # SciLEx doesn't expose per-paper provenance so we can only say which
     # APIs were called, not which one returned this specific paper.
     source_apis: list[str] | None = None
+    # Metadata enrichment provenance — which secondary sources contributed
+    # to *enriching* this record after the initial search hit. Common
+    # values: "crossref" (canonical bibliographic patch), "openalex"
+    # (abstract / OA URL fill-in), "unpaywall" (PDF availability + OA
+    # status). Distinct from ``discovery_sources`` (which databases RETURNED
+    # the paper) vs ``enrichment_sources`` (which databases CLEANED IT UP).
+    # Renders as a separate chip group with a subtle visual treatment.
+    enrichment_sources: list[str] | None = None
     relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
     chunk_text: str | None = None
+    # Full abstract text, used by the paper-detail side panel for
+    # Google-Scholar / web-fallback papers without a DOI (the side
+    # panel can't fall back to a /api/paper lookup in that case). Kept
+    # separate from ``chunk_text`` which is sometimes a truncated chunk
+    # rather than a full abstract.
+    abstract: str | None = None
     kb_name: str | None = None
+    # All upstream providers that returned THIS specific paper (deduped).
+    # Renamed from legacy ``sources_all`` → ``discovery_sources`` (matches
+    # Paper.discovery_sources). The old name lives on as a Pydantic alias
+    # so existing JSON payloads (and JS reading src.sources_all when
+    # dumped with by_alias=True) keep working until UI catches up.
+    discovery_sources: list[str] | None = Field(
+        default=None,
+        alias="sources_all",
+        description="DBs that returned this paper (deduped). Multi-DB matches render as a chip group.",
+    )
 
     @field_validator("authors", mode="before")
     @classmethod
@@ -92,6 +121,13 @@ class SourceReference(BaseModel):
 class RAGRequest(BaseModel):
     """Request for RAG query."""
 
+    # extra="allow" lets callers attach transient runtime fields like
+    # ``telemetry_sink`` without subclassing. These extra fields are never
+    # serialised / validated, keeping the schema stable.
+    # arbitrary_types_allowed=True because app_state holds an AppState /
+    # MinimalAppState instance that is not itself a Pydantic model.
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+
     query: str
     kb_name: str = "default"
     mode: RAGMode = RAGMode.BASIC
@@ -125,6 +161,32 @@ class RAGRequest(BaseModel):
     recency_weight: float | None = Field(default=None, ge=0.0, le=1.0)
     recency_half_life_years: float | None = Field(default=None, gt=0.0)
     kb_names: list[str] | None = None
+    task_id: str | None = Field(
+        default=None,
+        description="Optional task ID for MCP cancellation tracking",
+    )
+    app_state: Any = Field(
+        default=None,
+        description="AppState / MinimalAppState; threaded by RAGEngine",
+        exclude=True,
+    )
+
+    # === Per-call overrides for budget / parallelism ===
+    # Each is None by default, in which case the mode uses its
+    # config-file default. Bounded to safe ranges.
+    max_total_seconds: float | None = Field(
+        default=None, ge=30.0, le=1800.0,
+        description="Overrides per-mode max_total_seconds (30-1800s)",
+    )
+    batch_size: int | None = Field(
+        default=None, ge=1, le=100,
+        description="Overrides literature_survey batch_size (1-100)",
+    )
+    crossref_concurrency: int | None = Field(
+        default=None, ge=1, le=10,
+        description="Overrides Crossref enrichment concurrency (1-10)",
+    )
+    # max_iterations already exists; existing validator stays.
 
     def __repr__(self) -> str:
         return (
@@ -171,6 +233,7 @@ class RAGResponse(BaseModel):
     tokens_used: int | None = None
     figures: list[FigureRef] = Field(default_factory=list)
     code_excerpts: list[CodeExcerpt] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
 
     def __repr__(self) -> str:
         return (
@@ -206,6 +269,29 @@ class StreamEvent(BaseModel):
         import json
 
         return cls(event="status", data=json.dumps({"message": message}))
+
+    @classmethod
+    def status_kind(cls, message: str, kind: str, **extra: Any) -> "StreamEvent":
+        """Create a structured status event with a discriminator ``kind``.
+
+        The chat router forwards status events as-is (status_data is spread
+        into the SSE payload), so adding fields here lets the frontend
+        render rich cards (query rephrasing, provider progress, batch
+        progress) without expanding the StreamEvent literal type.
+
+        Conventions:
+        - ``kind="query_rephrased"`` → extras: ``original``, ``rewritten``,
+          ``by`` ("conversation_history" | "keyword_optimizer")
+        - ``kind="provider_progress"`` → extras: ``phase`` ("start"|"done"),
+          ``provider``, optional ``count``
+        - ``kind="batch_progress"`` → extras: ``current``, ``total``,
+          ``stage``
+        """
+        import json
+
+        payload: dict[str, Any] = {"message": message, "kind": kind}
+        payload.update(extra)
+        return cls(event="status", data=json.dumps(payload))
 
     @classmethod
     def content(cls, delta: str) -> "StreamEvent":

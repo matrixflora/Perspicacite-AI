@@ -58,7 +58,9 @@ from perspicacite.pipeline.symbol_index import (
 )
 from perspicacite.rag.code_excerpts import collect_code_excerpts
 
-RESULTS_DIR = ROOT / "tests" / "audit" / "results"
+_audit_repo = Path.home() / "git" / "research-tools-audit"
+_default_results = _audit_repo / "results" / "perspicacite-current" if _audit_repo.is_dir() else ROOT / "tests" / "audit" / "results"
+RESULTS_DIR = Path(os.environ["AUDIT_RESULTS_DIR"]).expanduser() if os.environ.get("AUDIT_RESULTS_DIR") else _default_results
 RESULTS_DIR.mkdir(exist_ok=True, parents=True)
 
 

@@ -382,11 +382,137 @@ class ContradictionRAGMode(BaseRAGMode):
             real_papers = [p for p in by_paper if p != "?"]
             n = len(real_papers)
 
+            # Web fallback: when the KB has too few papers (or none), try
+            # a live literature search. Contradiction analysis is most
+            # useful when there ARE multiple competing sources to compare,
+            # so a fresh aggregator fetch can often rescue an empty KB
+            # scenario without forcing the user to switch modes.
             if n < MIN_PAPERS_FOR_ANALYSIS:
+                _db_pretty = ", ".join(
+                    d.replace("_", " ").title() for d in (request.databases or [])
+                ) or "Semantic Scholar, OpenAlex, PubMed"
+                yield StreamEvent.status(
+                    f"Contradiction analysis: KB has {n} paper(s) "
+                    f"(need {MIN_PAPERS_FOR_ANALYSIS}+) — falling back to web "
+                    f"literature search across {_db_pretty}…"
+                )
+                try:
+                    from perspicacite.rag.modes.basic import _web_fallback_papers
+                    # Telemetry pattern: MCP-attached sink (live notifications)
+                    # OR plain list (legacy SSE drain). See Task 2.4.
+                    web_telemetry: Any = getattr(request, "telemetry_sink", None) or []
+                    web_papers = await _web_fallback_papers(
+                        query=request.query,
+                        databases=request.databases,
+                        max_docs=12,  # need >= 3, fetch a healthy pool
+                        config=getattr(self, "config", None),
+                        app_state=getattr(request, "app_state", None),
+                        telemetry=web_telemetry,
+                    )
+                    # Drain telemetry into SSE only when we're holding a list
+                    # (legacy path); the CallbackTelemetrySink path already
+                    # forwarded events live to ctx.report_progress.
+                    if isinstance(web_telemetry, list):
+                        for _ev in web_telemetry:
+                            _k = _ev.get("kind")
+                            if _k == "query_rephrased":
+                                yield StreamEvent.status_kind(
+                                    f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
+                                    kind="query_rephrased",
+                                    original=_ev.get("original", ""),
+                                    rewritten=_ev.get("rewritten", ""),
+                                    by=_ev.get("by", "keyword_optimizer"),
+                                )
+                            elif _k == "provider_progress" and _ev.get("phase") == "start":
+                                _provs = ", ".join(
+                                    p.replace("_", " ").title() for p in _ev.get("providers", [])
+                                )
+                                yield StreamEvent.status_kind(
+                                    f"Querying databases: {_provs}…",
+                                    kind="provider_progress",
+                                    phase="start",
+                                    providers=_ev.get("providers", []),
+                                )
+                            elif _k == "provider_progress" and _ev.get("phase") == "done":
+                                _bp = _ev.get("by_provider", {}) or {}
+                                _msg = ", ".join(
+                                    f"{src.replace('_',' ').title()}: {nn}"
+                                    for src, nn in sorted(_bp.items(), key=lambda kv: -kv[1])
+                                ) if _bp else f"Total {_ev.get('total', 0)} hits"
+                                yield StreamEvent.status_kind(
+                                    f"Database results — {_msg}",
+                                    kind="provider_progress",
+                                    phase="done",
+                                    total=_ev.get("total", 0),
+                                    by_provider=_bp,
+                                )
+                except Exception as _wf_exc:
+                    logger.warning("contradiction_web_fallback_failed", error=str(_wf_exc))
+                    web_papers = []
+
+                if len(web_papers) >= MIN_PAPERS_FOR_ANALYSIS:
+                    yield StreamEvent.status(
+                        f"Contradiction analysis: web search returned "
+                        f"{len(web_papers)} paper(s) — running multi-paper claim comparison…"
+                    )
+                    # Synthesize via the web papers directly: turn each
+                    # web paper into a "summary" entry of the right shape
+                    # for _cluster_claims, bypassing the chunk-based
+                    # by_paper grouping.
+                    paper_summaries = []
+                    for p in web_papers[:12]:
+                        paper_summaries.append({
+                            "paper_id": p.get("paper_id") or p.get("doi") or p.get("title"),
+                            "title": p.get("title", "Untitled"),
+                            "authors": p.get("authors") or [],
+                            "year": p.get("year"),
+                            "doi": p.get("doi"),
+                            "claims": [p.get("abstract") or p.get("chunk_text") or ""],
+                        })
+                    clusters = await self._cluster_claims(
+                        request.query, paper_summaries, llm,
+                    )
+                    # Reuse the main synthesis stream; chunks=[] is fine
+                    # because the synthesizer reads paper_summaries +
+                    # clusters for its citations and brief generation.
+                    async for ev in self._synthesize_stream(
+                        request=request,
+                        query=request.query,
+                        clusters=clusters,
+                        paper_summaries=paper_summaries,
+                        documents=[],
+                        llm=llm,
+                    ):
+                        yield ev
+                    # Emit source events for transparency.
+                    for p in web_papers[:12]:
+                        yield StreamEvent.source(
+                            SourceReference(
+                                title=p.get("title") or "Untitled",
+                                authors=p.get("authors") or [],
+                                year=p.get("year"),
+                                doi=p.get("doi"),
+                                url=p.get("url"),
+                                source=p.get("source"),
+                                source_apis=p.get("source_apis"),
+                                sources_all=p.get("sources_all"),
+                                enrichment_sources=p.get("enrichment_sources"),
+                                relevance_score=p.get("paper_score", 0.5),
+                            )
+                        )
+                    yield StreamEvent.done(
+                        conversation_id="",
+                        tokens_used=0,
+                        mode="contradiction",
+                        iterations=1,
+                    )
+                    return
+                # Otherwise: fall through to the original "answer normally" path.
                 yield StreamEvent.content(
                     f"_Note: contradiction analysis works best with at least "
                     f"{MIN_PAPERS_FOR_ANALYSIS} papers; "
-                    f"only {n} found in this knowledge base. "
+                    f"only {n} found in this knowledge base and "
+                    f"{len(web_papers)} from a live web search. "
                     f"Answering normally instead._\n\n"
                 )
                 async for ev in self._fallback_answer_stream(request, chunks, llm):

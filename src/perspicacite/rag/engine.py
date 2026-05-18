@@ -39,6 +39,7 @@ class RAGEngine:
         tool_registry: ToolRegistry,
         config: Config,
         session_store: Any = None,
+        app_state: Any = None,
     ):
         """
         Initialize RAG engine.
@@ -56,6 +57,7 @@ class RAGEngine:
         self.embedding_provider = embedding_provider
         self.tool_registry = tool_registry
         self.config = config
+        self.app_state = app_state
         self.provenance_store: Any | None = None
 
         # Build survey mode separately so we can inject the session_store
@@ -91,6 +93,9 @@ class RAGEngine:
         Returns:
             RAG response
         """
+        if getattr(request, "app_state", None) is None:
+            request.app_state = getattr(self, "app_state", None)
+
         logger.info(
             "rag_query_start",
             mode=request.mode.value,
@@ -147,6 +152,9 @@ class RAGEngine:
         Yields:
             Stream events
         """
+        if getattr(request, "app_state", None) is None:
+            request.app_state = getattr(self, "app_state", None)
+
         logger.info(
             "rag_stream_start",
             mode=request.mode.value,

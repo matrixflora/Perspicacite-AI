@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from perspicacite.models.rag import RAGMode
 from perspicacite.provenance.collector import ProvenanceCollector
+from perspicacite.web.routers._grounding import extract_grounding_context
 from perspicacite.web.state import app_state
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,54 @@ RAG_MODE_MAP = {
 }
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Stop-button support
+# ---------------------------------------------------------------------------
+# Frontend "Stop" sends a hint here before aborting its fetch. We park the
+# conversation_id in a small in-memory set; the streaming generators can poll
+# Cancellation now lives in the shared registry so MCP and chat both
+# use the same state. The chat router only needs sync read access
+# (is_chat_cancelled) — the registry's is_cancelled is sync.
+from perspicacite.rag.cancellation import (
+    is_cancelled as _registry_is_cancelled,
+    mark_cancelled as _registry_mark_cancelled,
+    clear as _registry_clear,
+)
+
+
+def is_chat_cancelled(conversation_id: str | None) -> bool:
+    """Return True if the frontend asked to stop this conversation."""
+    return _registry_is_cancelled(conversation_id)
+
+
+def _clear_chat_cancel(conversation_id: str | None) -> None:
+    if conversation_id:
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(_registry_clear(conversation_id))
+            else:
+                loop.run_until_complete(_registry_clear(conversation_id))
+        except Exception:
+            pass
+
+
+class _CancelRequest(BaseModel):
+    conversation_id: str | None = Field(default=None)
+
+
+@router.post("/api/chat/cancel")
+async def cancel_chat(req: _CancelRequest):
+    """Mark a conversation as cancelled. Streaming generators check this
+    between yields and stop emitting.
+    """
+    if req.conversation_id:
+        await _registry_mark_cancelled(req.conversation_id)
+        logger.info("chat_cancel_requested", extra={"conversation_id": req.conversation_id})
+    return {"ok": True, "conversation_id": req.conversation_id}
 
 
 class ChatMessage(BaseModel):
@@ -75,6 +124,15 @@ class ChatRequest(BaseModel):
     databases: list[str] = Field(
         default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
         description="List of databases to search (semantic_scholar, openalex, pubmed, arxiv, ieee, springer, dblp)",
+    )
+    context: str | None = Field(
+        default=None,
+        description=(
+            "Optional. If set, used directly as the grounding context for "
+            "query optimization. If unset and the conversation has a prior "
+            "assistant turn, the server auto-extracts a short context phrase. "
+            "Set to an empty string to explicitly disable grounding."
+        ),
     )
 
 
@@ -126,12 +184,35 @@ async def chat_endpoint(request: ChatRequest, raw_request: Request):
             conversation_id = conv.id
             logger.info(f"Created new conversation: {conversation_id} for session {session_id}")
 
+    # --- Grounding context resolution for basic mode ---
+    resolved_context: str | None = None
+    if request.mode == "basic":
+        if request.context is not None:
+            # Explicit client-provided context (empty string = disable)
+            resolved_context = request.context or None
+        else:
+            # Auto-extract from last assistant turn
+            prior_excerpt: str | None = None
+            for msg in reversed(request.messages):
+                if msg.role == "assistant":
+                    prior_excerpt = msg.content
+                    break
+            if prior_excerpt:
+                resolved_context = await extract_grounding_context(
+                    prior_excerpt=prior_excerpt,
+                    query=request.query,
+                    app_state=app_state,
+                )
+
     if request.stream:
         return StreamingResponse(
             agentic_chat_stream(request, conversation_id), media_type="text/event-stream"
         )
     else:
         # Non-streaming: consume the SSE stream internally, return JSON
+        if request.mode == "basic":
+            return await _invoke_basic_rag(request, conversation_id, context=resolved_context)
+
         answer = ""
         sources = []
         papers_list = []
@@ -392,6 +473,7 @@ async def _stream_agentic(request: ChatRequest, conversation_id: str | None = No
         kb_name=request.kb_name,
         stream=True,
         max_papers_to_download=request.max_papers_to_download,
+        databases=request.databases,
     ):
         if event.get("type") == "papers_found":
             for p in event.get("papers") or []:
@@ -573,6 +655,16 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
         provider=default_provider,
         model=default_model,
     )
+    # Thread app_state and grounding context onto the RAGRequest so that
+    # BasicRAGMode.execute() can pass them to the optimizer.
+    try:
+        object.__setattr__(rag_request, "app_state", app_state)
+        object.__setattr__(
+            rag_request, "_resolved_context",
+            getattr(request, "_resolved_context", None),
+        )
+    except Exception:
+        pass
     # Execute using RAGEngine streaming
     full_answer = ""
     sources = []
@@ -664,3 +756,63 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
 
     # End of stream (fallback if no done event)
     yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
+
+
+async def _invoke_basic_rag(
+    request: "ChatRequest",
+    conversation_id: str | None = None,
+    *,
+    context: str | None = None,
+) -> dict:
+    """Dispatch basic RAG mode with optional grounding context.
+
+    Wraps ``_stream_rag_mode`` for basic mode.
+    Separated into a named helper so tests can patch it and verify the
+    grounding context was threaded through correctly.
+    """
+    answer = ""
+    sources: list = []
+    papers_list: list = []
+    answer_tokens: list[str] = []
+
+    # Propagate the resolved grounding context so _stream_rag_mode can
+    # thread it onto the RAGRequest for BasicRAGMode.execute to consume.
+    try:
+        object.__setattr__(request, "_resolved_context", context)
+    except Exception:
+        pass
+
+    async for event in _stream_rag_mode(request, conversation_id):
+        if not event.startswith("data:"):
+            continue
+        try:
+            data = json.loads(event[5:].strip())
+        except Exception:
+            continue
+        etype = data.get("type", "")
+        if etype == "answer":
+            cb64 = data.get("content_b64")
+            if cb64:
+                answer = base64.b64decode(cb64).decode("utf-8", errors="replace")
+            elif "content" in data:
+                answer = str(data["content"])
+        elif etype == "token":
+            db64 = data.get("delta_b64")
+            if db64:
+                answer_tokens.append(base64.b64decode(db64).decode("utf-8", errors="replace"))
+            elif "delta" in data:
+                answer_tokens.append(str(data["delta"]))
+        elif etype == "source":
+            sources.append(data.get("source", {}))
+        elif etype == "papers_found":
+            papers_list = data.get("papers", [])
+
+    if not answer and answer_tokens:
+        answer = "".join(answer_tokens)
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "papers_found": len(papers_list) or len(sources),
+        "conversation_id": conversation_id,
+    }

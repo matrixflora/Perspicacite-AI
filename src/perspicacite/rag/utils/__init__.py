@@ -89,17 +89,36 @@ def prepare_sources(
 
     for doc in documents:
         # Extract metadata
+        kb_name: str | None = None
+        source_str: str | None = None
+        sources_all: list[str] | None = None
+        url: str | None = None
         if hasattr(doc, "chunk") and hasattr(doc.chunk, "metadata"):
             meta = doc.chunk.metadata
             title = getattr(meta, "title", "Untitled")
             authors = getattr(meta, "authors", [])
             year = getattr(meta, "year", None)
             doi = getattr(meta, "doi", None)
+            url = getattr(meta, "url", None)
+            # ChunkMetadata.source is a PaperSource enum (PaperSource.BIBTEX
+            # by default). Convert to lowercase string for UI provenance.
+            _src = getattr(meta, "source", None)
+            if _src is not None:
+                source_str = getattr(_src, "value", None) or (
+                    str(_src).replace("PaperSource.", "").lower() if _src else None
+                )
+            # kb_name is sometimes attached to the doc wrapper by the
+            # multi-KB retriever; fall back to None.
+            kb_name = getattr(doc, "kb_name", None)
         elif isinstance(doc, dict):
             title = doc.get("title", doc.get("source", "Unknown"))
             authors = doc.get("authors", [])
             year = doc.get("year")
             doi = doc.get("doi")
+            url = doc.get("url") or doc.get("pdf_url")
+            source_str = doc.get("source")
+            sources_all = doc.get("sources_all")
+            kb_name = doc.get("kb_name")
         else:
             continue
 
@@ -130,6 +149,10 @@ def prepare_sources(
                 authors=authors_str,
                 year=year,
                 doi=doi,
+                url=url,
+                source=source_str,
+                sources_all=sources_all,
+                kb_name=kb_name,
                 relevance_score=relevance_score,
             )
         )

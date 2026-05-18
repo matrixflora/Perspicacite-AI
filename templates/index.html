@@ -202,10 +202,22 @@
             <div class="header">
                 <div class="header-content">
                     <div class="header-title">
-                        <h1>🔬 Perspicacité AI</h1>
+                        <h1>📖 Perspicacité AI</h1>
                         <p>Literature AI assistant — KB-first retrieval with web fallback</p>
                     </div>
                     <a id="ro-crate-link" class="ro-crate-link" href="#" download style="display:none;" title="Download RO-Crate bundle">RO-Crate bundle</a>
+                    <a class="header-icon-link" href="https://github.com/holobiomicslab/Perspicacite-AI/issues/new" target="_blank" rel="noopener noreferrer" title="Report a bug or ask a question on GitHub">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.69-3.88-1.37-3.88-1.37-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.07 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.21-1.49 3.18-1.18 3.18-1.18.63 1.6.23 2.78.11 3.07.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.4-5.27 5.69.41.36.78 1.06.78 2.13v3.16c0 .31.21.66.8.55C20.22 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/>
+                        </svg>
+                    </a>
+                    <button class="header-icon-link" type="button" onclick="showAboutModal()" title="About Perspicacité-AI">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="16" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                        </svg>
+                    </button>
                     <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode">
                         <span id="theme-icon">🌙</span>
                     </button>
@@ -278,13 +290,14 @@
                         </div>
                     </details>
                     <div class="input-actions">
-                        <select id="mode-dropdown" class="mode-dropdown" onchange="setMode(this.value)">
-                            <option value="basic" selected>📚 Quick Search</option>
-                            <option value="advanced">⚡ Advanced (Hybrid)</option>
-                            <option value="profound">🔬 Deep Research</option>
-                            <option value="agentic">🤖 Perspicacité Agentic</option>
-                            <option value="literature_survey">📖 Literature Survey</option>
-                            <option value="contradiction">⚖️ Contradiction</option>
+                        <select id="mode-dropdown" class="mode-dropdown" onchange="setMode(this.value)"
+                                title="Search mode — hover an option for what it does.">
+                            <option value="basic" selected title="Fast single-pass retrieval over your KB and the web. Best for one-shot factual lookups.">📚 Quick Search</option>
+                            <option value="advanced" title="Query expansion + hybrid BM25/vector retrieval with rerank. Use when keyword and semantic both matter.">⚡ Advanced (Hybrid)</option>
+                            <option value="profound" title="Iterates plan → retrieve → reflect up to 3 cycles. For ambiguous or under-specified questions.">🔬 Deep Research</option>
+                            <option value="agentic" title="Classifies the intent, plans tool use, and executes multi-step research (search → curate → synthesize) with full audit trail.">🤖 Perspicacité Agentic</option>
+                            <option value="literature_survey" title="Broad search across databases, then clusters retrieved papers into themes and recommends additions to your KB.">📖 Literature Survey</option>
+                            <option value="contradiction" title="Highlights agreement / disagreement / open questions across cited papers. Needs ≥3 sources to engage.">⚖️ Contradiction</option>
                         </select>
                         <div id="download-cap-control" class="download-cap-control" title="Number of papers retrieved and passed to the answer (also caps full-text download in Agentic mode)">
                             <label>📄 Papers for answer:</label>
@@ -295,6 +308,11 @@
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <line x1="22" y1="2" x2="11" y2="13"></line>
                                 <polygon points="22,2 15,22 11,13 2,9"></polygon>
+                            </svg>
+                        </button>
+                        <button id="stop-btn" class="stop-btn" onclick="stopQuery()" style="display:none;" title="Stop the current request">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                                <rect x="6" y="6" width="12" height="12" rx="2"></rect>
                             </svg>
                         </button>
                     </div>
@@ -317,6 +335,23 @@
 
     <!-- Paper detail slide-over panel -->
     <div id="paper-detail-panel" class="paper-detail-panel" hidden></div>
+
+    <!-- About / GitHub Modal -->
+    <div id="about-modal" class="modal-overlay">
+        <div class="modal">
+            <h3>📖 Perspicacité-AI</h3>
+            <p>A local-first, AI-powered scientific literature research assistant. Six RAG modes over your knowledge base with web-search fallback when the KB is insufficient.</p>
+            <p><strong>Useful links:</strong></p>
+            <ul style="margin: 0 0 12px 18px; padding: 0;">
+                <li><a href="https://github.com/holobiomicslab/Perspicacite-AI" target="_blank" rel="noopener noreferrer">GitHub repository</a></li>
+                <li><a href="https://github.com/holobiomicslab/Perspicacite-AI/issues/new" target="_blank" rel="noopener noreferrer">Report a bug / open an issue</a></li>
+                <li><a href="https://github.com/holobiomicslab/Perspicacite-AI/blob/main/README.md" target="_blank" rel="noopener noreferrer">Documentation (README)</a></li>
+            </ul>
+            <div class="modal-buttons">
+                <button class="modal-cancel" onclick="hideAboutModal()">Close</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Delete KB Confirmation Modal -->
     <div id="delete-modal" class="modal-overlay">

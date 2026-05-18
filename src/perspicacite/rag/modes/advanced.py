@@ -542,6 +542,13 @@ Sources:
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
             request.refined_query = refined  # type: ignore[misc]
+            yield StreamEvent.status_kind(
+                f"Rewrote question using conversation context: '{request.query}' → '{refined}'",
+                kind="query_rephrased",
+                original=request.query,
+                rewritten=refined,
+                by="conversation_history",
+            )
         scope = await resolve_paper_scope_for_query(
             retrieval_query,
             kb_collection,
@@ -576,7 +583,108 @@ Sources:
                 selected_documents,
             )
 
+        # Web-search fallback: if the WRRF retrieval over the KB(s) returned
+        # nothing, run a live literature search using the user-selected
+        # database providers — mirrors the behaviour of basic mode so the
+        # welcome-screen promise ("falls back to web literature search when
+        # your KB is insufficient") holds across modes.
         paper_results: list[dict[str, Any]] = []
+        web_fallback_used_advanced = False
+        if not selected_documents:
+            from perspicacite.rag.modes.basic import _web_fallback_papers
+
+            _db_pretty = ", ".join(
+                d.replace("_", " ").title() for d in (request.databases or [])
+            ) or "Semantic Scholar, OpenAlex, PubMed"
+            # Run the keyword optimizer UPFRONT so query_rephrased lands
+            # in the panel before the slow aggregator call (parity with
+            # basic mode — see comment there for rationale).
+            search_query = retrieval_query
+            try:
+                from perspicacite.search.query_optimizer import optimize_query as _qopt
+                # request.app_state is auto-attached by RAGEngine (web AppState
+                # or MCPState — both duck-type as the protocol). If callers
+                # bypass the engine, optimizer skips itself gracefully.
+                _app = getattr(request, "app_state", None)
+                opt_res = await _qopt(
+                    query=retrieval_query,
+                    context=None,
+                    app_state=_app,
+                    optimize_enabled=True,
+                )
+                if opt_res.applied and opt_res.searched_query:
+                    search_query = opt_res.searched_query
+                    yield StreamEvent.status_kind(
+                        f"Rewrote search query: '{retrieval_query}' → '{search_query}'",
+                        kind="query_rephrased",
+                        original=retrieval_query,
+                        rewritten=search_query,
+                        by="keyword_optimizer",
+                    )
+            except Exception as _qe:
+                logger.debug("advanced_upfront_optimizer_failed", error=str(_qe))
+            yield StreamEvent.status(
+                f"No KB results — falling back to web literature search across {_db_pretty}…"
+            )
+            # Telemetry pattern: if the MCP layer set request.telemetry_sink
+            # (Task 2.4), pass it through directly — events flow to
+            # ctx.report_progress live and the local drain is a no-op.
+            # Otherwise use a fresh list for the SSE drain below.
+            _telemetry: Any = getattr(request, "telemetry_sink", None) or []
+            paper_results = await _web_fallback_papers(
+                query=search_query,
+                databases=request.databases,
+                max_docs=cap,
+                config=getattr(self, "config", None),
+                app_state=getattr(request, "app_state", None),
+                telemetry=_telemetry,
+                optimize_query=False,
+            )
+            if isinstance(_telemetry, list):
+                for _ev in _telemetry:
+                    _k = _ev.get("kind")
+                    if _k == "query_rephrased":
+                        yield StreamEvent.status_kind(
+                            f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
+                            kind="query_rephrased",
+                            original=_ev.get("original", ""),
+                            rewritten=_ev.get("rewritten", ""),
+                            by=_ev.get("by", "keyword_optimizer"),
+                        )
+                    elif _k == "provider_progress" and _ev.get("phase") == "start":
+                        _provs = ", ".join(
+                            p.replace("_", " ").title() for p in _ev.get("providers", [])
+                        )
+                        yield StreamEvent.status_kind(
+                            f"Querying databases: {_provs}…",
+                            kind="provider_progress",
+                            phase="start",
+                            providers=_ev.get("providers", []),
+                        )
+                    elif _k == "provider_progress" and _ev.get("phase") == "done":
+                        _bp = _ev.get("by_provider", {}) or {}
+                        _msg = ", ".join(
+                            f"{src.replace('_',' ').title()}: {n}"
+                            for src, n in sorted(_bp.items(), key=lambda kv: -kv[1])
+                        ) if _bp else f"Total {_ev.get('total', 0)} hits"
+                        yield StreamEvent.status_kind(
+                            f"Database results — {_msg}",
+                            kind="provider_progress",
+                            phase="done",
+                            total=_ev.get("total", 0),
+                            by_provider=_bp,
+                        )
+            web_fallback_used_advanced = True
+            if paper_results:
+                yield StreamEvent.status(
+                    f"Web search returned {len(paper_results)} relevant paper(s)."
+                )
+            else:
+                yield StreamEvent.status(
+                    "Web search returned no relevant papers."
+                )
+
+
         if self.use_two_pass and selected_documents:
             from perspicacite.rag.utils import deduplicate_chunk_overlaps
 
@@ -668,6 +776,15 @@ Sources:
                         authors=p.get("authors"),
                         year=p.get("year"),
                         doi=p.get("doi"),
+                        url=p.get("url") or p.get("pdf_url"),
+                        # Propagate provider provenance from the web-fallback
+                        # path so the UI shows "europepmc" / "openalex" /
+                        # "pubmed" tags instead of "unknown" — these are set
+                        # by ``_web_fallback_papers`` in basic.py.
+                        source=p.get("source"),
+                        source_apis=p.get("source_apis"),
+                        sources_all=p.get("sources_all"),
+                        enrichment_sources=p.get("enrichment_sources"),
                         relevance_score=p.get("paper_score", 0.0),
                         kb_name=p.get("kb_name") or request.kb_name,
                     )
@@ -677,8 +794,11 @@ Sources:
         for source in sources:
             yield StreamEvent.source(source)
 
-        # Step 4: Stream the response generation
-        if not selected_documents:
+        # Step 4: Stream the response generation. Allow proceeding when EITHER
+        # KB documents OR web-fallback paper_results are available — the
+        # downstream answer path (line ~693) prefers paper_results, then falls
+        # back to selected_documents.
+        if not selected_documents and not paper_results:
             yield StreamEvent.content("No relevant documents found to answer your question.")
             yield StreamEvent.done(
                 conversation_id="",
@@ -799,7 +919,13 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                     max_tokens=100,
                 )
 
-                # Clean and add the generated query
+                # Clean and add the generated query. Guard against the
+                # LLM returning None (provider returned empty body) which
+                # would crash with "'NoneType' object has no attribute
+                # 'strip'" and abort the whole query-expansion loop.
+                if not response:
+                    logger.warning("advanced_generated_query_empty_response")
+                    break
                 new_query = response.strip()
                 if new_query and new_query not in queries:
                     queries.append(new_query)

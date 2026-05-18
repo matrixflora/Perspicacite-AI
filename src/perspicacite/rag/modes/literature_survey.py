@@ -192,7 +192,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
 
         # Phase 1: Broad search
         logger.info("phase_1_search")
-        papers = await self._broad_search(request.query, request.databases)
+        papers = await self._broad_search(request.query, request.databases, app_state=getattr(request, "app_state", None))
 
         # Pre-filter: remove papers already in any provided KB
         papers = self._filter_known_papers(papers, known_paper_ids)
@@ -295,6 +295,10 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         session = SurveySession(session_id=session_id, query=request.query)
         self.sessions[session_id] = session
 
+        # Store active request so nested helpers can read per-call overrides
+        # (e.g. batch_size, crossref_concurrency) without signature changes.
+        self._current_request = request
+
         # Prepare KB context
         kb_context_block, known_paper_ids = await self._prepare_kb_context(
             request, vector_store, embedding_provider
@@ -304,7 +308,47 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
 
         # Phase 1: Search
         yield StreamEvent.status("Literature Survey: Searching across academic databases...")
-        papers = await self._broad_search(request.query, request.databases)
+        _bs_telemetry = getattr(request, "telemetry_sink", None) or []
+        papers = await self._broad_search(
+            request.query, request.databases, telemetry=_bs_telemetry,
+            app_state=getattr(request, "app_state", None),
+        )
+        # When _bs_telemetry is a CallbackTelemetrySink (MCP path), events
+        # already flowed to ctx.report_progress live — skip the drain.
+        if isinstance(_bs_telemetry, list):
+            for _ev in _bs_telemetry:
+                _k = _ev.get("kind")
+                if _k == "query_rephrased":
+                    yield StreamEvent.status_kind(
+                        f"Rewrote search query: '{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
+                        kind="query_rephrased",
+                        original=_ev.get("original", ""),
+                        rewritten=_ev.get("rewritten", ""),
+                        by=_ev.get("by", "keyword_optimizer"),
+                    )
+                elif _k == "provider_progress" and _ev.get("phase") == "start":
+                    _provs = ", ".join(
+                        p.replace("_", " ").title() for p in _ev.get("providers", [])
+                    )
+                    yield StreamEvent.status_kind(
+                        f"Querying databases: {_provs}…",
+                        kind="provider_progress",
+                        phase="start",
+                        providers=_ev.get("providers", []),
+                    )
+                elif _k == "provider_progress" and _ev.get("phase") == "done":
+                    _bp = _ev.get("by_provider", {}) or {}
+                    _msg = ", ".join(
+                        f"{src.replace('_',' ').title()}: {n}"
+                        for src, n in sorted(_bp.items(), key=lambda kv: -kv[1])
+                    ) if _bp else f"Total {_ev.get('total', 0)} hits"
+                    yield StreamEvent.status_kind(
+                        f"Database results — {_msg}",
+                        kind="provider_progress",
+                        phase="done",
+                        total=_ev.get("total", 0),
+                        by_provider=_bp,
+                    )
 
         # Pre-filter: remove papers already in any provided KB
         papers = self._filter_known_papers(papers, known_paper_ids)
@@ -331,11 +375,72 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 detail={"count": len(session.papers), "kb_name": _target_kb(request)},
             )
 
-        # Phase 2: Batch analysis
+        # Phase 2: Batch analysis with live progress events.
+        # Run the analyzer as a background task; use an asyncio.Queue to pipe
+        # per-batch progress out to the SSE stream so the UI shows
+        # "Analyzing batch 3/5 (20 papers)" updates in real time.
+        _progress_q: asyncio.Queue = asyncio.Queue()
+
+        async def _progress_cb(
+            current: int,
+            total: int,
+            batch_size: int,
+            stage: str = "abstract_analysis",
+        ) -> None:
+            await _progress_q.put({
+                "kind": "batch_progress",
+                "stage": stage,
+                "current": current,
+                "total": total,
+                "batch_size": batch_size,
+            })
+
+        # Cancellation check — respect MCP cancel_task requests
+        from perspicacite.rag.cancellation import is_cancelled as _is_cancelled
+        _tid = getattr(request, "task_id", None)
+        if _tid and _is_cancelled(_tid):
+            logger.info("literature_survey_cancelled", task_id=_tid, stage="pre_analysis")
+            yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
+            return
+
         yield StreamEvent.status("Literature Survey: Analyzing abstracts in batches...")
-        session.themes = await self._analyze_abstracts_batch(
-            session.papers, request.query, llm
+
+        analysis_task = asyncio.create_task(
+            self._analyze_abstracts_batch(
+                session.papers, request.query, llm,
+                progress_cb=_progress_cb,
+            )
         )
+
+        # Drain the queue concurrently with the analysis task. When the task
+        # is done AND the queue is empty, we exit the loop.
+        while not analysis_task.done() or not _progress_q.empty():
+            try:
+                ev = await asyncio.wait_for(_progress_q.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                # Also check for cancellation between batches
+                if _tid and _is_cancelled(_tid):
+                    analysis_task.cancel()
+                    try:
+                        await analysis_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass  # swallow any other exception from the cancelled task
+                    logger.info("literature_survey_cancelled", task_id=_tid, stage="mid_analysis")
+                    yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
+                    return
+                continue
+            yield StreamEvent.status_kind(
+                f"Analyzing batch {ev['current']}/{ev['total']} ({ev['batch_size']} papers)…",
+                kind="batch_progress",
+                stage=ev["stage"],
+                current=ev["current"],
+                total=ev["total"],
+                batch_size=ev["batch_size"],
+            )
+
+        session.themes = await analysis_task
         yield StreamEvent.status(
             f"Literature Survey: Identified {len(session.themes)} research themes"
         )
@@ -406,21 +511,71 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
 
 
 
-    async def _broad_search(self, query: str, databases: list[str] | None = None) -> list[Any]:
+    async def _broad_search(
+        self,
+        query: str,
+        databases: list[str] | None = None,
+        telemetry: list[dict[str, Any]] | None = None,
+        app_state: Any = None,
+    ) -> list[Any]:
         """
         Broad search across multiple APIs.
-        
-        Uses SciLEx to search across selected databases.
+
+        Uses SciLEx to search across selected databases. ``telemetry`` lets the
+        streaming caller surface query rewriting + per-DB results to SSE.
         """
         # Default databases if none specified
         if not databases:
             databases = ["semantic_scholar", "openalex", "pubmed"]
 
+        # Rewrite the query via the shared optimizer (Haiku) before searching.
+        _app_state = app_state
+
+        # Optimizer call in its own try/except
+        effective_query = query
+        if _app_state is not None and getattr(_app_state, "config", None) is not None:
+            import perspicacite.search.query_optimizer as _qo_mod
+            try:
+                opt = await _qo_mod.optimize_query(
+                    query=query,
+                    context=None,
+                    app_state=_app_state,
+                    optimize_enabled=None,
+                )
+                effective_query = opt.searched_query
+                if opt.applied:
+                    logger.info(
+                        "literature_survey_query_rewritten",
+                        original=query,
+                        rewritten=effective_query,
+                    )
+                    if telemetry is not None:
+                        telemetry.append({
+                            "kind": "query_rephrased",
+                            "by": "keyword_optimizer",
+                            "original": query,
+                            "rewritten": effective_query,
+                        })
+            except Exception as _opt_exc:
+                logger.warning("literature_survey_optimizer_failed", error=str(_opt_exc))
+                # effective_query already = query, no reassignment needed
+
+        # Route through the unified pipeline (aggregator → Crossref enrich).
+        # rerank=False: survey keeps its own LLM-based relevance analyser
+        # (_analyze_abstracts_batch) which scores papers 1-5 after broad
+        # collection — MiniLM reranking here would prematurely bias the
+        # corpus before the theme clustering pass sees it.
         try:
-            papers = await self.scilex_adapter.search(
-                query=query,
-                max_results=100,  # Get more for comprehensive survey
-                apis=databases,
+            from perspicacite.rag.resolve_papers import resolve_papers_pipeline
+            papers = await resolve_papers_pipeline(
+                query=effective_query,
+                databases=databases,
+                max_docs=100,
+                app_state=_app_state,
+                telemetry=telemetry,
+                enrich=True,
+                rerank=False,  # survey keeps its own analyser
+                optimize_query=False,  # already optimised above
             )
             return papers
         except Exception as e:
@@ -635,14 +790,25 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         papers: list[PaperCandidate],
         query: str,
         llm: Any,
+        progress_events: list[dict[str, Any]] | None = None,
+        progress_cb: Any = None,
     ) -> list[Theme]:
         """
         Analyze abstracts in batches and identify themes.
-        
+
         Process:
         1. Score each paper's relevance (1-5)
         2. Accumulate insights across batches
         3. Identify themes from patterns
+
+        Args:
+            progress_events: Optional list the function appends per-batch
+                progress dicts to (kind, current, total, batch_size). Allows
+                the streaming caller to drain progress AFTER the await — used
+                when an async generator wrapper is not in play.
+            progress_cb: Optional ``async def cb(current, total, batch_size)``
+                invoked before each batch. Preferred over ``progress_events``
+                because it fires DURING execution, enabling live SSE updates.
         """
         logger.info("theme_analysis_start", total_papers=len(papers))
 
@@ -655,21 +821,67 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             logger.warning("no_abstracts_found")
             return []
 
-        # Process in batches
-        all_analyses = []
-        total_batches = (len(papers_with_abstracts) + self.batch_size - 1) // self.batch_size
+        # === Parallel batch analysis ===
+        # Previously this loop awaited each `_analyze_batch` SEQUENTIALLY,
+        # which dominated literature_survey latency (~3-6 min per batch ×
+        # 4 batches = 20+ min wall time, even though each batch is just one
+        # LLM call). Run them concurrently with a small semaphore so the
+        # provider sees ~3 parallel completions, which is well within
+        # OpenRouter / DeepSeek rate caps for a normal account.
+        all_analyses: list[dict[str, Any]] = []
+        # Per-call batch_size override; fall back to config-file default.
+        _req = getattr(self, "_current_request", None)
+        batch_size = (
+            getattr(_req, "batch_size", None) or self.batch_size
+        )
+        total_batches = (len(papers_with_abstracts) + batch_size - 1) // batch_size
+        batches = [
+            papers_with_abstracts[i:i + batch_size]
+            for i in range(0, len(papers_with_abstracts), batch_size)
+        ]
+        # Concurrency cap. 3 is conservative; raise carefully if rate
+        # limits permit. Each call sends ~10-25 abstract previews.
+        sem = asyncio.Semaphore(3)
+        completed = {"n": 0}
+        cb_lock = asyncio.Lock()
 
-        for i in range(0, len(papers_with_abstracts), self.batch_size):
-            batch = papers_with_abstracts[i:i + self.batch_size]
-            batch_num = i // self.batch_size + 1
+        async def _one_batch(idx: int, batch: list[PaperCandidate]) -> list[dict[str, Any]]:
+            async with sem:
+                try:
+                    result = await self._analyze_batch(batch, query, llm)
+                except Exception as e:
+                    logger.warning("batch_analysis_exception", idx=idx + 1, error=str(e))
+                    result = []
+            # Emit progress AFTER each batch lands so the UI ticks in real
+            # time despite parallel execution.
+            async with cb_lock:
+                completed["n"] += 1
+                done_n = completed["n"]
+                if progress_events is not None:
+                    progress_events.append({
+                        "kind": "batch_progress",
+                        "stage": "abstract_analysis",
+                        "current": done_n,
+                        "total": total_batches,
+                        "batch_size": len(batch),
+                    })
+                if progress_cb is not None:
+                    try:
+                        await progress_cb(done_n, total_batches, len(batch))
+                    except Exception as _cb_exc:
+                        logger.warning("batch_progress_cb_failed", error=str(_cb_exc))
+            return result
 
-            logger.info(f"Analyzing batch {batch_num}/{total_batches}")
-
-            batch_analysis = await self._analyze_batch(batch, query, llm)
-            all_analyses.extend(batch_analysis)
-
-            # Small delay to avoid rate limits
-            await asyncio.sleep(0.5)
+        logger.info(
+            "abstract_batches_parallel_start",
+            total_batches=total_batches,
+            parallelism=3,
+        )
+        batch_results = await asyncio.gather(
+            *(_one_batch(i, b) for i, b in enumerate(batches))
+        )
+        for r in batch_results:
+            all_analyses.extend(r)
 
         # Update papers with scores
         logger.info("batch_analysis_complete", successful_analyses=len(all_analyses), total_papers=len(papers_with_abstracts))
@@ -680,12 +892,54 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     p.relevance_score = analysis.get("relevance_score", 0)
                     break
 
-        # Identify themes from all analyses
-        themes = await self._identify_themes(all_analyses, query, llm)
+        # === Relevance pre-filter for clustering ===
+        # Only feed papers scoring >= 3/5 (on-topic) into theme identification.
+        # Previously off-topic noise (papers the LLM scored 1-2) was diluting
+        # the concept pool and producing themes that drifted away from the
+        # user's query (e.g. "molecular networking" surfacing unrelated themes).
+        # We still keep low-relevance papers in `papers` for stats / assignment
+        # fallback, but they no longer shape the theme taxonomy.
+        on_topic_analyses = [
+            a for a in all_analyses
+            if int(a.get("relevance_score", 0) or 0) >= 3
+        ]
+        logger.info(
+            "theme_clustering_input",
+            on_topic=len(on_topic_analyses),
+            total=len(all_analyses),
+            dropped_low_relevance=len(all_analyses) - len(on_topic_analyses),
+        )
+        # If filter wipes everything out (e.g. very strict LLM scoring) fall
+        # back to using all analyses so we still produce *some* themes.
+        clustering_analyses = on_topic_analyses if on_topic_analyses else all_analyses
+
+        # Identify themes from on-topic analyses only
+        themes = await self._identify_themes(clustering_analyses, query, llm)
         logger.info("themes_identified", count=len(themes), theme_names=[t.name for t in themes])
 
-        # Assign papers to themes (all papers have abstracts)
-        await self._assign_papers_to_themes(papers_with_abstracts, themes, llm)
+        # Assign papers to themes (all papers have abstracts). Pipe the
+        # progress callback through so the parallel classifier emits live
+        # "Theme assignment: 12/100" events to the SSE stream.
+        async def _theme_assign_progress(done: int, tot: int) -> None:
+            if progress_cb is not None:
+                # Use a 4th positional arg as stage marker so the streaming
+                # caller can route this to a separate progress card.
+                try:
+                    await progress_cb(done, tot, 0, "theme_assignment")
+                except TypeError:
+                    # Caller hasn't upgraded to the 4-arg signature — fall
+                    # back to the 3-arg form so older wrappers don't crash.
+                    try:
+                        await progress_cb(done, tot, 0)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+        await self._assign_papers_to_themes(
+            papers_with_abstracts, themes, llm,
+            progress_cb=_theme_assign_progress,
+        )
 
         # Log theme statistics
         for theme in themes:
@@ -706,14 +960,23 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             for i, p in enumerate(batch)
         ])
 
-        prompt = f"""Analyze these papers for: "{query}"
+        prompt = f"""Analyze these papers for the topic: "{query}"
 
-For each paper, return JSON with:
+For each paper return JSON with:
 - paper_id: use the ID shown
-- relevance_score: 1-5 (how relevant to query)
-- key_concepts: list of main topics
+- relevance_score: 1-5, STRICTLY calibrated as follows:
+    5 = paper is squarely about "{query}" (core method, central application, or direct contribution)
+    4 = paper directly studies "{query}" but is one step removed (e.g. an application of it)
+    3 = paper uses or touches "{query}" but it is not the focus
+    2 = paper mentions "{query}" only in passing or treats a tangentially related topic
+    1 = paper is off-topic w.r.t. "{query}" even if surface keywords match
+- key_concepts: 3-6 SHORT noun phrases ONLY tightly related to "{query}". Skip generic
+  concepts like "statistics", "machine learning", "case study" unless they are central.
 - methodology: brief methods used
 - contribution: main contribution
+
+Be ruthless with 1s and 2s — off-topic papers should NOT score 3+. We are
+building a focused survey on "{query}" and noise damages the themes.
 
 PAPERS:
 {papers_text}
@@ -727,28 +990,58 @@ JSON ONLY (no other text):
 
         try:
             messages = [{"role": "user", "content": prompt}]
-            # Increased token limit to handle larger responses
+            # Bumped 4000 → 8000: a 25-paper batch can need 6-7k tokens for
+            # the full analyses array with key_concepts + methodology +
+            # contribution per paper. Truncation here cascades into
+            # "Expecting ',' delimiter" JSON errors that wipe the entire
+            # batch's relevance scores.
             response = await llm.complete(
-                messages, temperature=0.3, max_tokens=4000, stage="survey.cluster"
+                messages, temperature=0.3, max_tokens=8000, stage="survey.cluster"
             )
 
-            # Parse JSON with better error handling
+            if not response:
+                logger.warning("batch_analysis_empty_response")
+                return []
+
+            # Parse JSON with better error handling. The previous greedy
+            # regex `\{.*\}` matched FROM the first `{` TO the LAST `}`
+            # which can span unrelated text on multi-block responses; this
+            # is fine for our prompt but breaks when the closing brace is
+            # truncated. We try a salvage pass that closes orphan brackets
+            # when the strict parse fails.
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
-                json_str = json_match.group()
-                # Try to fix common JSON issues
-                json_str = self._fix_json(json_str)
-                data = json.loads(json_str)
-                return data.get("analyses", [])
+                json_str = self._fix_json(json_match.group())
+                try:
+                    data = json.loads(json_str)
+                    return data.get("analyses", [])
+                except json.JSONDecodeError as _de:
+                    salvaged = self._salvage_truncated_json(json_str)
+                    if salvaged is not None:
+                        logger.info(
+                            "batch_analysis_json_salvaged",
+                            recovered=len(salvaged),
+                            error=str(_de),
+                        )
+                        return salvaged
+                    raise
             return []
         except Exception as e:
             logger.error("batch_analysis_failed", error=str(e), response_preview=response[:200] if 'response' in locals() else "N/A")
             return []
 
+    def _salvage_truncated_json(self, json_str: str) -> list[dict[str, Any]] | None:
+        """Best-effort recovery from a truncated LLM analyses array."""
+        from perspicacite.rag.utils.json_salvage import salvage_truncated_array
+        return salvage_truncated_array(json_str, "analyses")
+
     def _fix_json(self, json_str: str) -> str:
         """Fix common JSON formatting issues from LLM responses."""
-        # Remove trailing commas before closing brackets
         import re
+        from perspicacite.rag.utils.json_salvage import clean_control_chars
+        # Strip raw control chars some providers emit inside string values.
+        json_str = clean_control_chars(json_str)
+        # Remove trailing commas before closing brackets
         json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
         # Remove any markdown code block markers
         json_str = json_str.replace("```json", "").replace("```", "")
@@ -788,18 +1081,36 @@ JSON ONLY (no other text):
         concepts_text = ", ".join(set(all_concepts))
         logger.info("theme_concepts_aggregated", unique_concepts=len(set(all_concepts)))
 
-        prompt = f"""Based on these research concepts from papers on "{query}",
-identify the main research themes (3-8 themes).
+        # Anchored on the user query. The old prompt asked for "3-8 themes"
+        # which over-encourages padding even when only one or two are
+        # genuinely relevant. The new prompt:
+        #   - foregrounds the query as the topic anchor
+        #   - asks for 1-5 themes (fewer if the concept pool is narrow)
+        #   - explicitly rejects themes that aren't tightly related to the query
+        #   - asks the LLM to drop noisy / tangential concepts
+        prompt = f"""You are clustering research concepts into themes for a
+literature survey on the topic: "{query}".
 
-CONCEPTS FOUND:
+INSTRUCTIONS:
+- Identify between 1 and 5 themes that DIRECTLY advance understanding of "{query}".
+- Prefer FEWER, HIGH-QUALITY themes. If the corpus only supports one or two
+  tightly-relevant themes, return only one or two.
+- IGNORE concepts that are tangential to "{query}" (e.g. unrelated diseases,
+  unrelated methods, generic statistics). Do NOT invent a catch-all theme to
+  absorb them.
+- Each theme must be specific to "{query}" — reject generic themes like
+  "Methods", "Applications", "Future Work".
+- The theme NAME should make the connection to "{query}" obvious.
+
+CONCEPTS FROM ON-TOPIC PAPERS:
 {concepts_text}
 
 Respond in JSON format:
 {{
     "themes": [
         {{
-            "name": "Theme Name",
-            "description": "Brief description of this research theme"
+            "name": "Specific theme name relevant to {query}",
+            "description": "How this theme advances {query} research (1-2 sentences)"
         }}
     ]
 }}"""
@@ -827,23 +1138,58 @@ Respond in JSON format:
         self,
         papers: list[PaperCandidate],
         themes: list[Theme],
-        llm: Any
+        llm: Any,
+        progress_cb: Any = None,
     ):
         """Assign papers to themes based on content.
-        
+
         All papers passed to this method are expected to have abstracts.
         Papers without abstracts are filtered out during candidate conversion.
+
+        Performance: runs the per-paper LLM classification calls **in
+        parallel** (concurrency cap of 8) — previously sequential, which
+        dominated literature_survey end-to-end latency at ~2s/paper. With
+        100 papers that's 25s instead of 3+ minutes. ``progress_cb`` (if
+        provided) is awaited as ``(done, total)`` for live SSE progress.
         """
         if not themes:
             logger.warning("no_themes_to_assign_papers")
             return
 
         theme_names = [t.name for t in themes]
+
+        # Skip off-topic papers during theme assignment. Their concepts didn't
+        # shape the theme taxonomy (see _analyze_abstracts_batch pre-filter),
+        # so forcing them into a theme just inflates paper counts and dilutes
+        # the recommendations downstream. They remain in `papers` for stats.
+        on_topic_papers = [
+            p for p in papers
+            if (p.relevance_score or 0) >= 3
+        ]
+        # Hard fallback if filter is empty.
+        if not on_topic_papers:
+            on_topic_papers = papers
+            logger.info("theme_assignment_no_on_topic_falling_back", total=len(papers))
+        else:
+            logger.info(
+                "theme_assignment_filtered",
+                on_topic=len(on_topic_papers),
+                total=len(papers),
+                dropped=len(papers) - len(on_topic_papers),
+            )
+        papers = on_topic_papers
+
         logger.info("assigning_papers_to_themes", papers_count=len(papers), themes=theme_names)
 
-        assigned_count = 0
+        # Concurrency cap balances OpenRouter rate limits vs end-to-end
+        # latency. 8 keeps us well under provider rate limits for the
+        # short prompt + 100-token response shape.
+        sem = asyncio.Semaphore(8)
+        done_counter = {"n": 0}
+        total = len(papers)
+        cb_lock = asyncio.Lock()
 
-        for paper in papers:
+        async def _classify(paper: PaperCandidate) -> tuple[PaperCandidate, list[str]]:
             prompt = f"""Which theme(s) does this paper belong to?
 
 THEMES: {', '.join(theme_names)}
@@ -852,26 +1198,56 @@ PAPER: {paper.title}
 ABSTRACT: {paper.abstract[:400]}
 
 Respond with theme names separated by commas, or "None" if no match."""
+            async with sem:
+                try:
+                    messages = [{"role": "user", "content": prompt}]
+                    response = await llm.complete(
+                        messages, temperature=0.2, max_tokens=100, stage="survey.cluster"
+                    )
+                    if not response:
+                        # Empty LLM response — count as no-match rather than
+                        # crashing on "None not in NoneType".
+                        return paper, []
+                    if "None" in response:
+                        return paper, []
+                    assigned = [
+                        t.strip() for t in response.split(",")
+                        if t.strip() in theme_names
+                    ]
+                    return paper, assigned
+                except Exception as e:
+                    logger.warning(
+                        "paper_theme_assignment_failed",
+                        paper=paper.title[:50],
+                        error=str(e),
+                    )
+                    return paper, []
+                finally:
+                    if progress_cb is not None:
+                        async with cb_lock:
+                            done_counter["n"] += 1
+                            try:
+                                await progress_cb(done_counter["n"], total)
+                            except Exception as _cb_exc:
+                                logger.warning(
+                                    "theme_assign_progress_cb_failed",
+                                    error=str(_cb_exc),
+                                )
 
-            try:
-                messages = [{"role": "user", "content": prompt}]
-                response = await llm.complete(
-                    messages, temperature=0.2, max_tokens=100, stage="survey.cluster"
-                )
+        results = await asyncio.gather(
+            *(_classify(p) for p in papers), return_exceptions=False
+        )
 
-                if "None" not in response:
-                    assigned = [t.strip() for t in response.split(",") if t.strip() in theme_names]
-                    paper.themes = assigned
-                    assigned_count += 1
-
-                    # Add to theme's paper list
-                    for theme_name in assigned:
-                        for theme in themes:
-                            if theme.name == theme_name:
-                                theme.papers.append(paper.__dict__)
-                                break
-            except Exception as e:
-                logger.warning("paper_theme_assignment_failed", paper=paper.title[:50], error=str(e))
+        assigned_count = 0
+        for paper, assigned in results:
+            if assigned:
+                paper.themes = assigned
+                assigned_count += 1
+                for theme_name in assigned:
+                    for theme in themes:
+                        if theme.name == theme_name:
+                            theme.papers.append(paper.__dict__)
+                            break
 
         # If no papers were assigned, assign all to first theme as fallback
         if assigned_count == 0 and themes and papers:
@@ -897,13 +1273,23 @@ Respond with theme names separated by commas, or "None" if no match."""
             if p.relevance_score < 1.0:  # If no score assigned, give default
                 p.relevance_score = 2.0  # Default to "somewhat relevant"
 
-        # Filter to relevant papers (use lower threshold for more inclusive results)
-        relevant_threshold = 1.5  # Slightly lower than default 2.0
+        # Filter to on-topic papers. Bumped from 1.5 → 3.0 to match the
+        # stricter clustering pipeline above: only papers the LLM scored as
+        # "uses or touches the query" or better are eligible to be
+        # recommended for deep reading.
+        relevant_threshold = 3.0
         relevant_papers = [p for p in papers if p.relevance_score >= relevant_threshold]
 
         logger.info("relevant_papers_filtered", count=len(relevant_papers), threshold=relevant_threshold)
 
-        # If still no relevant papers, use all papers
+        # Graceful relaxation: if stricter threshold yields nothing, fall
+        # back to >=2 (tangential ok), then to all papers as last resort.
+        if not relevant_papers:
+            relevant_papers = [p for p in papers if p.relevance_score >= 2.0]
+            logger.warning(
+                "relevant_papers_relaxed_threshold",
+                count=len(relevant_papers), threshold=2.0,
+            )
         if not relevant_papers:
             logger.warning("no_relevant_papers_using_all", total_papers=len(papers))
             relevant_papers = papers

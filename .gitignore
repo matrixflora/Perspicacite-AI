@@ -202,3 +202,9 @@ coverage.xml
 # tests/audit/results/audit_kb/. These are run-specific and shouldn't be
 # tracked (the symbol_index gets re-derived from live code on every run).
 tests/audit/results/audit_kb/
+
+# Audit results migrated to ~/git/research-tools-audit going forward.
+# Files already tracked here remain tracked; new runs land in the audit
+# repo so they can sync across machines.
+tests/audit/results/*.json
+tests/audit/results/*.md

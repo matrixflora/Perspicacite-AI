@@ -245,6 +245,45 @@ result = await client.call_tool("push_to_zotero", {
 # → {"created": ["10.1038/..."], "skipped": [], "failed": []}
 ```
 
+### web_search
+
+```
+web_search(query, databases=None, max_results=10, enrich=True, optimize_query=True)
+```
+
+Live academic web search across user-selected databases. Returns cleaned metadata
+with optional Crossref enrichment. Distinct from `search_literature` (SciLEx-only)
+and `generate_report` (full RAG). Use this for focused literature lookups without
+spinning up a full RAG pipeline.
+
+**Args:**
+- `query` — free-text scientific query.
+- `databases` — list of provider names. Defaults to `["semantic_scholar", "openalex", "pubmed"]`.
+  Additional providers: `google_scholar`, `europepmc`, `core`, `inspire`, `pubchem`.
+- `max_results` — cap on returned papers (1–50, default 10).
+- `enrich` — when `True` (default), runs Crossref enrichment to fill missing abstracts
+  and canonicalise author lists.
+- `optimize_query` — when `True` (default), runs LLM-assisted keyword rewrite before
+  searching.
+
+**Returns:** JSON string with:
+- `papers` — list of paper objects (title, authors, year, journal, doi, url, abstract,
+  discovery_sources, enrichment_sources).
+- `warnings` — list of provider-level warning strings (currently empty; surfaced in logs).
+- `telemetry_summary` — `{"by_provider": {"semantic_scholar": N, ...}}` hit counts.
+- `error` — only present on failure; `papers` will be `[]`.
+
+**Example call:**
+
+```python
+result = await client.call_tool("web_search", {
+    "query": "CRISPR base editing off-target effects",
+    "databases": ["semantic_scholar", "europepmc"],
+    "max_results": 20,
+})
+# → {"papers": [...], "warnings": [], "telemetry_summary": {"by_provider": {...}}}
+```
+
 ---
 
 ## Recommended Workflows
