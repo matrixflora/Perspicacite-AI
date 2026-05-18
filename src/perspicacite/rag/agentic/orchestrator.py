@@ -2684,9 +2684,36 @@ Generate your answer:"""
         """
         logger.info(f"SciLEx search: '{query}'")
 
+        # -- query optimization --
+        _app_state = None
+        try:
+            from perspicacite.web.state import app_state as _gs
+            _app_state = _gs
+        except Exception:
+            pass
+        effective_query = query
+        if _app_state is not None and getattr(_app_state, "config", None) is not None:
+            import perspicacite.search.query_optimizer as _qo_mod
+            try:
+                opt = await _qo_mod.optimize_query(
+                    query=query,
+                    context=None,
+                    app_state=_app_state,
+                    optimize_enabled=None,
+                )
+                effective_query = opt.searched_query
+                if opt.applied:
+                    logger.info(
+                        "agentic_scilex_query_rewritten original=%r rewritten=%r",
+                        query,
+                        effective_query,
+                    )
+            except Exception as _opt_exc:
+                logger.warning("agentic_scilex_optimizer_failed error=%s", _opt_exc)
+
         try:
             papers = await self.scilex_adapter.search(
-                query=query,
+                query=effective_query,
                 max_results=max_results,
                 apis=["semantic_scholar", "openalex", "pubmed"],
             )
@@ -2718,13 +2745,13 @@ Generate your answer:"""
             else:
                 logger.warning("SciLEx returned no results, falling back to OpenAlex")
                 return await self._fallback_openalex_search(
-                    query, max_results, step_id=step_id, session=session
+                    effective_query, max_results, step_id=step_id, session=session
                 )
 
         except Exception as e:
             logger.error(f"SciLEx search failed: {e}, falling back to OpenAlex")
             return await self._fallback_openalex_search(
-                query, max_results, step_id=step_id, session=session
+                effective_query, max_results, step_id=step_id, session=session
             )
 
     async def _fallback_openalex_search(
