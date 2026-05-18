@@ -1103,62 +1103,17 @@ JSON ONLY (no other text):
             return []
 
     def _salvage_truncated_json(self, json_str: str) -> list[dict[str, Any]] | None:
-        """Best-effort recovery from a truncated LLM analyses array.
-
-        If max_tokens cut off the last paper mid-object, we try to extract
-        all complete `{...}` analysis entries from the array and return
-        them. Returns None if no entries are recoverable. This trades
-        completeness for partial progress — better to keep 23/25 scored
-        papers than to drop the whole batch.
-        """
-        # Look for the start of an analyses array.
-        m = re.search(r'"analyses"\s*:\s*\[', json_str)
-        if not m:
-            return None
-        start = m.end()
-        depth = 0
-        i = start
-        complete_objects: list[str] = []
-        obj_start = -1
-        in_str = False
-        esc = False
-        while i < len(json_str):
-            c = json_str[i]
-            if in_str:
-                if esc:
-                    esc = False
-                elif c == "\\":
-                    esc = True
-                elif c == '"':
-                    in_str = False
-            else:
-                if c == '"':
-                    in_str = True
-                elif c == "{":
-                    if depth == 0:
-                        obj_start = i
-                    depth += 1
-                elif c == "}":
-                    depth -= 1
-                    if depth == 0 and obj_start >= 0:
-                        complete_objects.append(json_str[obj_start:i + 1])
-                        obj_start = -1
-                elif c == "]" and depth == 0:
-                    break
-            i += 1
-
-        recovered: list[dict[str, Any]] = []
-        for obj_str in complete_objects:
-            try:
-                recovered.append(json.loads(obj_str))
-            except Exception:
-                continue
-        return recovered or None
+        """Best-effort recovery from a truncated LLM analyses array."""
+        from perspicacite.rag.utils.json_salvage import salvage_truncated_array
+        return salvage_truncated_array(json_str, "analyses")
 
     def _fix_json(self, json_str: str) -> str:
         """Fix common JSON formatting issues from LLM responses."""
-        # Remove trailing commas before closing brackets
         import re
+        from perspicacite.rag.utils.json_salvage import clean_control_chars
+        # Strip raw control chars some providers emit inside string values.
+        json_str = clean_control_chars(json_str)
+        # Remove trailing commas before closing brackets
         json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
         # Remove any markdown code block markers
         json_str = json_str.replace("```json", "").replace("```", "")

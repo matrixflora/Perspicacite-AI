@@ -128,7 +128,10 @@ class ProfoundRAGMode(BaseRAGMode):
         # loop fanning out indefinitely. Default 15 covers a typical cycle
         # (plan + 3-5 steps + reflection + finalize) with headroom.
         self.max_llm_calls = int(rag_settings.get("max_llm_calls", 20))
-        self.use_websearch = bool(rag_settings.get("use_websearch", False))
+        # Default ON: Profound is positioned as the "deep research" mode and
+        # users expect it to consult the web when the KB falls short. Explicit
+        # ``use_websearch: false`` in config still wins.
+        self.use_websearch = bool(rag_settings.get("use_websearch", True))
         self.use_relevancy_optimization = bool(rag_settings.get("use_relevancy_optimization", True))
         self.use_refinement = bool(rag_settings.get("enable_reflection", rag_settings.get("use_refinement", True)))
         self.enable_plan_review = bool(rag_settings.get("enable_plan_review", True))
@@ -331,6 +334,7 @@ class ProfoundRAGMode(BaseRAGMode):
         tools: Any,
         kb_name: str,
         collection_names: list[str] | None = None,
+        telemetry: list[dict[str, Any]] | None = None,
     ) -> tuple[list[ResearchStep], list[Any], str | None, bool]:
         """
         Run one cycle's plan steps with v1 consecutive-failure plan review.
@@ -358,6 +362,8 @@ class ProfoundRAGMode(BaseRAGMode):
                 kb_name=kb_name,
                 model=getattr(request, "model", None),
                 collection_names=collection_names,
+                telemetry=telemetry,
+                databases=getattr(request, "databases", None),
             )
             cycle_steps.append(step)
             cycle_documents.extend(step.documents)
@@ -635,6 +641,33 @@ class ProfoundRAGMode(BaseRAGMode):
         kb_names = getattr(request, "kb_names", None) or [request.kb_name]
         collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
 
+        # Run the keyword optimizer UPFRONT so the rephrase event lands
+        # immediately. Without this, the rephrase only fires when the
+        # per-step web search runs the optimizer internally — visible
+        # mid-cycle (after 1-3 min) instead of at the very start.
+        try:
+            from perspicacite.search.query_optimizer import optimize_query as _qopt
+            _app = getattr(request, "app_state", None)
+            if _app is None:
+                from perspicacite.web.state import app_state as _global_app
+                _app = _global_app
+            opt_res = await _qopt(
+                query=request.query,
+                context=None,
+                app_state=_app,
+                optimize_enabled=True,
+            )
+            if opt_res.applied and opt_res.searched_query:
+                yield StreamEvent.status_kind(
+                    f"Rewrote search query: '{request.query}' → '{opt_res.searched_query}'",
+                    kind="query_rephrased",
+                    original=request.query,
+                    rewritten=opt_res.searched_query,
+                    by="keyword_optimizer",
+                )
+        except Exception as _qe:
+            logger.debug("profound_upfront_optimizer_failed", error=str(_qe))
+
         for cycle in range(self.max_cycles):
             self.iterations = cycle + 1
             yield StreamEvent.status(
@@ -643,10 +676,16 @@ class ProfoundRAGMode(BaseRAGMode):
 
             plan = await self._create_plan(query=request.query, llm=llm)
             yield StreamEvent.status(f"Profound RAG: Executing {len(plan)} research steps...")
+            if self.use_websearch and "web_search" in tools.list_tools():
+                yield StreamEvent.status(
+                    "Profound RAG: Web search is available — will consult live "
+                    "databases when KB coverage is insufficient."
+                )
             _c_plan_s = get_collector()
             if _c_plan_s is not None:
                 _c_plan_s.add_trace("plan", detail={"cycle": self.iterations, "steps": len(plan)})
 
+            _cycle_telemetry: list[dict[str, Any]] = []
             cycle_steps, cycle_documents, plan_limit_reason, early_exit = (
                 await self._execute_cycle_steps(
                     request=request,
@@ -657,8 +696,60 @@ class ProfoundRAGMode(BaseRAGMode):
                     tools=tools,
                     kb_name=kb_name,
                     collection_names=collection_names,
+                    telemetry=_cycle_telemetry,
                 )
             )
+            # Drain web-search telemetry into the SSE stream so the user
+            # sees per-DB activity for this cycle. Without this, profound
+            # was a "black box" for 5+ min per cycle.
+            for _ev in _cycle_telemetry:
+                _k = _ev.get("kind")
+                if _k == "query_rephrased":
+                    yield StreamEvent.status_kind(
+                        f"Cycle {self.iterations}: rewrote search query — "
+                        f"'{_ev.get('original','')}' → '{_ev.get('rewritten','')}'",
+                        kind="query_rephrased",
+                        original=_ev.get("original", ""),
+                        rewritten=_ev.get("rewritten", ""),
+                        by=_ev.get("by", "keyword_optimizer"),
+                    )
+                elif _k == "provider_progress" and _ev.get("phase") == "start":
+                    _provs = ", ".join(
+                        p.replace("_", " ").title() for p in _ev.get("providers", [])
+                    )
+                    yield StreamEvent.status_kind(
+                        f"Cycle {self.iterations}: querying databases — {_provs}…",
+                        kind="provider_progress",
+                        phase="start",
+                        providers=_ev.get("providers", []),
+                    )
+                elif _k == "provider_progress" and _ev.get("phase") == "done":
+                    _bp = _ev.get("by_provider", {}) or {}
+                    _msg = ", ".join(
+                        f"{src.replace('_',' ').title()}: {n}"
+                        for src, n in sorted(_bp.items(), key=lambda kv: -kv[1])
+                    ) if _bp else f"Total {_ev.get('total', 0)} hits"
+                    yield StreamEvent.status_kind(
+                        f"Cycle {self.iterations}: database results — {_msg}",
+                        kind="provider_progress",
+                        phase="done",
+                        total=_ev.get("total", 0),
+                        by_provider=_bp,
+                    )
+
+            # Surface web search activity post-hoc — _execute_cycle_steps is
+            # not an async generator, so we can't yield from inside stage_3.
+            # Counting ``source == "web_search"`` documents tells the user
+            # whether the live search actually ran this cycle.
+            _web_docs = [
+                d for d in cycle_documents
+                if isinstance(d, dict) and d.get("source") == "web_search"
+            ]
+            if _web_docs:
+                yield StreamEvent.status(
+                    f"Profound RAG: Cycle {self.iterations} consulted the web "
+                    f"({len(_web_docs)} document{'s' if len(_web_docs) != 1 else ''} from live search)."
+                )
 
             # Apply recency weighting to paper-dict results for this cycle
             cycle_paper_docs = [
@@ -810,8 +901,20 @@ class ProfoundRAGMode(BaseRAGMode):
                     {"role": "user", "content": f"Context: {json.dumps(context)}"},
                 ],
                 temperature=0.3,
-                max_tokens=800,
+                # 800 was tight — the prompt asks for plan + parallel queries
+                # in JSON and was getting truncated mid-string ("Unterminated
+                # string starting at: line 2 column 18"). Bumped to 1500.
+                max_tokens=1500,
             )
+            if not response:
+                logger.warning(
+                    "profound_plan_creation_error",
+                    error="empty_response_from_llm",
+                )
+                return [
+                    PlanStep(1, "Search for general information", query),
+                    PlanStep(2, "Search for specific details", f"{query} methodology"),
+                ]
             response = response.strip()
             if response.startswith("```json"):
                 response = response.split("```json", 1)[1]
@@ -823,7 +926,17 @@ class ProfoundRAGMode(BaseRAGMode):
             if response.startswith("{") and "}" in response:
                 response = response[: response.rindex("}") + 1]
 
-            result = json.loads(response)
+            from perspicacite.rag.utils.json_salvage import clean_control_chars, salvage_truncated_array
+            response = clean_control_chars(response)
+            try:
+                result = json.loads(response)
+            except json.JSONDecodeError:
+                salvaged_plan = salvage_truncated_array(response, "plan")
+                if salvaged_plan is not None:
+                    logger.info("profound_plan_json_salvaged", recovered=len(salvaged_plan))
+                    result = {"plan": salvaged_plan, "queries": [s.get("query", "") for s in salvaged_plan if isinstance(s, dict)]}
+                else:
+                    raise
             plan_s = result.get("plan", [])
             queries_s = result.get("queries", [])
             if not plan_s or not queries_s:
@@ -1181,6 +1294,16 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                         "content": str(content),
                         "citation": str(item.get("citation") or item.get("title") or "Web search"),
                         "url": str(item.get("url") or ""),
+                        # Carry through bibliographic metadata so the
+                        # source card / references list don't render as
+                        # "Unknown, (n.d.)". These come from
+                        # WebSearchTool's JSON output.
+                        "title": str(item.get("title") or ""),
+                        "authors": item.get("authors") or "",
+                        "year": str(item.get("year") or ""),
+                        "doi": str(item.get("doi") or ""),
+                        "abstract": str(item.get("abstract") or item.get("snippet") or ""),
+                        "source_provider": str(item.get("source") or ""),
                     }
                 )
             return out
@@ -1205,18 +1328,62 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
     def _web_results_to_document_dicts(
         self, results: list[dict[str, str]], query: str
     ) -> list[dict[str, Any]]:
-        """Shapes for _analyze_documents_json (full_text) and _prepare_sources."""
-        return [
-            {
+        """Shapes for _analyze_documents_json (full_text) and _prepare_sources.
+
+        Carries full bibliographic metadata (title, authors, year, doi,
+        abstract, source) through to ``_prepare_sources`` so the final
+        citation list renders proper "Authors, Title, Year" entries
+        instead of "Unknown, (n.d.)".
+
+        Also sets ``paper_id`` (DOI when available, else SHA-256 of the
+        title) so the Retrieval panel in the GUI can register these as
+        proper retrieval events. Without paper_id the ``cycle_paper_docs``
+        filter in execute_stream drops them and the Retrieval table
+        shows up empty for any KB-less profound run.
+        """
+        import hashlib
+        out: list[dict[str, Any]] = []
+        for r in results:
+            # Prefer explicit fields when present (new parser path), fall
+            # back to the legacy ``citation`` field as title for older
+            # tool outputs.
+            title = r.get("title") or r.get("citation") or "Web search"
+            authors = r.get("authors") or ""
+            # authors can be a string ("A, B, C") or list — normalize to
+            # list of strings for downstream SourceReference.
+            if isinstance(authors, str):
+                authors_list = [a.strip() for a in authors.split(",") if a.strip()]
+            elif isinstance(authors, list):
+                authors_list = [str(a).strip() for a in authors if str(a).strip()]
+            else:
+                authors_list = []
+            year_raw = r.get("year") or ""
+            try:
+                year_val: int | None = int(str(year_raw)[:4]) if year_raw else None
+            except ValueError:
+                year_val = None
+            _doi_val = r.get("doi") or ""
+            if _doi_val:
+                paper_id = f"doi:{_doi_val}"
+            else:
+                paper_id = (
+                    "web:" + hashlib.sha256(title.encode("utf-8")).hexdigest()[:12]
+                )
+            out.append({
+                "paper_id": paper_id,
                 "source": "web_search",
-                "full_text": r["content"],
-                "title": r["citation"],
-                "url": r["url"],
-                "doi": "",
+                "full_text": r.get("content", ""),
+                "abstract": r.get("abstract") or r.get("content", ""),
+                "title": title,
+                "authors": authors_list,
+                "year": year_val,
+                "doi": _doi_val,
+                "url": r.get("url") or "",
+                "source_provider": r.get("source_provider") or "",
+                "paper_score": 0.5,  # neutral default — rerank updates this later
                 "query": query,
-            }
-            for r in results
-        ]
+            })
+        return out
 
     async def _execute_step(
         self,
@@ -1229,6 +1396,8 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         kb_name: str,
         model: str | None = None,
         collection_names: list[str] | None = None,
+        telemetry: list[dict[str, Any]] | None = None,
+        databases: list[str] | None = None,
     ) -> ResearchStep:
         """
         Execute a single research step with v1's 3-stage fallback:
@@ -1399,7 +1568,19 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             logger.debug("profound_stage_3_web_search")
             try:
                 web_tool = tools.get("web_search")
-                web_raw = await web_tool.execute(query=step_info.query, max_results=3)
+                # Pass telemetry list so the aggregator emits
+                # query_rephrased + provider_progress events back to the
+                # SSE generator — gives profound the same live DB
+                # progress display as agentic / basic / advanced.
+                web_raw = await web_tool.execute(
+                    query=step_info.query,
+                    max_results=5,
+                    telemetry=telemetry,
+                    # Honor the user's database picks so google_scholar /
+                    # europepmc etc. actually run instead of falling back
+                    # to the SciLEx-only default trio.
+                    databases=databases,
+                )
                 web_results = self._parse_web_tool_results(web_raw)
 
                 if web_results:
@@ -1487,8 +1668,14 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                     {"role": "user", "content": f"Context: {json.dumps(context)}"},
                 ],
                 temperature=0.3,
-                max_tokens=500,
+                max_tokens=1000,
             )
+            if not response:
+                logger.warning(
+                    "profound_contextual_queries_error",
+                    error="empty_response_from_llm",
+                )
+                return [original_query]
             response = response.strip()
             if response.startswith("```json"):
                 response = response.split("```json", 1)[1]
@@ -1614,7 +1801,16 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             response = response.strip()
             if response.startswith("{") and "}" in response:
                 response = response[: response.rindex("}") + 1]
-            return json.loads(response)
+            from perspicacite.rag.utils.json_salvage import clean_control_chars, salvage_truncated_array
+            cleaned = clean_control_chars(response)
+            try:
+                return json.loads(cleaned)
+            except json.JSONDecodeError as _de:
+                salvaged = salvage_truncated_array(cleaned, "analyses")
+                if salvaged is not None:
+                    logger.info("profound_analyze_json_salvaged", recovered=len(salvaged))
+                    return {"analyses": salvaged}
+                raise
         except Exception as e:
             logger.error("profound_analyze_error", error=str(e))
             return {
@@ -1675,19 +1871,38 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             return False, 0.0
 
     def _format_research_context(self, query: str, steps: list[ResearchStep]) -> str:
+        """Format the per-step research summary for the draft prompt.
+
+        Previously each step's analysis was hard-capped at 300 chars and
+        only the first 3 key findings were included — about 400 chars per
+        step. With 3-4 steps that's ~1.5 KB of context, leaving the draft
+        LLM with almost nothing to write from. The format pass downstream
+        could only re-shuffle that minimal text, producing a "few lines"
+        final report. We now include the full analysis (up to 2000 chars)
+        and all key findings, so the LLM has material to synthesize a
+        substantive deep-research report.
+        """
         research_summary = []
         for step in steps:
+            findings_block = (
+                "\n".join(f"  - {f}" for f in step.key_findings)
+                if step.key_findings else "  (no findings recorded)"
+            )
+            analysis = (step.analysis or "").strip()
+            if len(analysis) > 2000:
+                analysis = analysis[:2000] + "…"
             research_summary.append(
-                f"Step: {step.step_purpose}\n"
+                f"## Step: {step.step_purpose}\n"
                 f"Query: {step.query}\n"
                 f"Success: {step.success}\n"
-                f"Key Findings: {', '.join(step.key_findings[:3])}\n"
-                f"Analysis: {step.analysis[:300]}..."
+                f"Key Findings:\n{findings_block}\n"
+                f"Analysis:\n{analysis}"
             )
         research_text = "\n\n---\n\n".join(research_summary)
         for s in self._iteration_summaries:
             research_text += (
-                f"\n\nIteration summary findings: {s.get('findings', '')}\n"
+                f"\n\n### Iteration summary\n"
+                f"Findings: {s.get('findings', '')}\n"
                 f"Missing: {s.get('missing', [])}\n"
             )
         return research_text
@@ -1722,12 +1937,64 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         else:
             system_prompt = PROFOUND_FINAL_ANSWER_ORIGINAL_PROMPT
 
+        # Include the actual source documents (title + abstract/full_text)
+        # in the prompt. Without this, the draft LLM only sees per-step
+        # `step.analysis[:2000]` summaries — typically ~1.5 KB of meta-text
+        # with no primary content, producing a "few lines" final report
+        # even with max_tokens=2000. The format pass downstream can only
+        # re-shape whatever the draft produces, so source text MUST land
+        # in the draft prompt.
+        #
+        # Cap each doc at 1500 chars and the whole block at ~12 KB so we
+        # leave headroom under the 16-32k typical context window.
+        sources_block_lines: list[str] = []
+        _docs_total_chars = 0
+        _DOCS_BUDGET = 12000
+        _PER_DOC = 1500
+        for i, d in enumerate(documents or [], 1):
+            if isinstance(d, dict):
+                title = (d.get("title") or d.get("citation") or "Untitled").strip()
+                body = (
+                    d.get("full_text")
+                    or d.get("abstract")
+                    or d.get("chunk_text")
+                    or ""
+                )
+            elif hasattr(d, "chunk") and hasattr(d.chunk, "text"):
+                meta = getattr(d.chunk, "metadata", None)
+                title = (getattr(meta, "title", None) or "Untitled").strip()
+                body = d.chunk.text or ""
+            else:
+                continue
+            body = str(body).strip()
+            if not body:
+                continue
+            if len(body) > _PER_DOC:
+                body = body[:_PER_DOC] + "…"
+            entry = f"[{i}] {title}\n{body}"
+            if _docs_total_chars + len(entry) > _DOCS_BUDGET:
+                break
+            sources_block_lines.append(entry)
+            _docs_total_chars += len(entry)
+
+        sources_block = (
+            "\n\n".join(sources_block_lines)
+            if sources_block_lines else "(no documents retrieved)"
+        )
+
         user_content = f"""Original question: {query}
 
 Research conducted ({self.iterations} cycles):
 {research_text}
 
-Generate a final answer."""
+Source documents (full abstracts / extracted text):
+{sources_block}
+
+Generate a final answer. Synthesize across the source documents above —
+quote sparingly, cite by author/year inline (per the formatting rules),
+and produce a substantive multi-paragraph report. Cover background,
+key findings, mechanism / methodology, and open questions when the
+material supports it."""
 
         if limitations:
             user_content = f"""Original Question: {query}
@@ -1845,7 +2112,11 @@ Follow the system instructions for this situation."""
                 ],
                 "model": request.model,
                 "provider": request.provider,
-                "max_tokens": 2500,
+                # Format pass needs room to keep the entire substantive
+                # draft + inline citation footnotes. 2500 capped the
+                # output mid-section; 4500 gives ~3.5 KB of headroom over
+                # the typical draft size so nothing is truncated.
+                "max_tokens": 4500,
                 "stage": "profound.answer",
             }
             if not is_o_series:
@@ -1901,7 +2172,17 @@ Follow the system instructions for this situation."""
         """Stream format pass after v1-aligned draft (+ optional refine), matching non-UI v1 pipeline."""
 
         research_text = self._format_research_context(query, steps)
-        sources = self._prepare_sources(documents)
+        # Filter to relevant documents before citing. Without this, every
+        # paper the cycles touched was emitted as a citation — many
+        # tangentially related at best. We rerank by MiniLM (same model
+        # used elsewhere) and keep the top 10. Falls back to all docs if
+        # the rerank fails (offline / model load issue).
+        filtered_docs = await self._filter_documents_by_relevance(
+            documents=documents,
+            query=query,
+            max_keep=10,
+        )
+        sources = self._prepare_sources(filtered_docs)
         for source in sources:
             yield StreamEvent.source(source)
 
@@ -1955,14 +2236,14 @@ Follow the system instructions for this situation."""
                     messages=fmt_kw["messages"],
                     model=request.model,
                     provider=request.provider,
-                    max_tokens=2500,
+                    max_tokens=4500,
                 )
             else:
                 formatted = await llm.complete(
                     messages=fmt_kw["messages"],
                     model=request.model,
                     provider=request.provider,
-                    max_tokens=2500,
+                    max_tokens=4500,
                     temperature=0.2,
                 )
             yield StreamEvent.content(formatted)
@@ -1977,6 +2258,88 @@ Follow the system instructions for this situation."""
             mode="profound",
             iterations=self.iterations,
         )
+
+    async def _filter_documents_by_relevance(
+        self,
+        documents: list[Any],
+        query: str,
+        max_keep: int = 10,
+    ) -> list[Any]:
+        """Drop low-relevance docs before citation emission.
+
+        Profound accumulates documents across cycles + KB + web search;
+        without filtering, every doc that was *retrieved* becomes a cited
+        source even when only a few actually contributed to the answer.
+
+        Strategy:
+          1. Extract (title + abstract or content snippet) per doc.
+          2. Score with the shared MiniLM cross-encoder against the user query.
+          3. Keep top-N by score where score > 0.0 (cross-encoder positive).
+          4. Always preserve KB-sourced docs (they're pre-trusted).
+          5. Fall back to ALL docs on any rerank failure.
+        """
+        if not documents or len(documents) <= max_keep:
+            return documents
+
+        try:
+            from perspicacite.search.screening import screen_papers_rerank
+        except Exception:
+            return documents
+
+        def _extract_text(d: Any) -> str:
+            if hasattr(d, "chunk") and hasattr(d.chunk, "text"):
+                title = getattr(d.chunk.metadata, "title", "") or ""
+                return f"{title} {d.chunk.text[:600]}".strip()
+            if isinstance(d, dict):
+                title = d.get("title") or ""
+                body = (
+                    d.get("abstract")
+                    or d.get("content")
+                    or d.get("full_text")
+                    or ""
+                )
+                return f"{title} {str(body)[:600]}".strip()
+            return str(d)[:600]
+
+        # Always keep KB-sourced docs unconditionally.
+        kb_docs: list[Any] = []
+        rest: list[Any] = []
+        for d in documents:
+            is_kb = (
+                isinstance(d, dict)
+                and d.get("source")
+                and d.get("source") != "web_search"
+                and not str(d.get("source", "")).startswith("PaperSource.")
+            ) or hasattr(d, "chunk")  # KB chunks
+            if is_kb:
+                kb_docs.append(d)
+            else:
+                rest.append(d)
+
+        # If KB already saturates max_keep, no filtering needed.
+        if len(kb_docs) >= max_keep:
+            return kb_docs[:max_keep]
+
+        # Rerank the non-KB tail.
+        slots = max_keep - len(kb_docs)
+        try:
+            items = [{"_doc": d, "text": _extract_text(d)} for d in rest]
+            results = await screen_papers_rerank(
+                items, query=query, threshold=0.0,
+            )
+            # results are RerankResult with .item.text and .score
+            scored = [(r.score, r.item) for r in results]
+            scored.sort(key=lambda kv: kv[0], reverse=True)
+            kept_rest = [item["_doc"] for _, item in scored[:slots]]
+            logger.info(
+                "profound_citation_rerank",
+                in_=len(rest), kept=len(kept_rest),
+                kb_kept=len(kb_docs), max_keep=max_keep,
+            )
+            return kb_docs + kept_rest
+        except Exception as e:
+            logger.warning("profound_citation_rerank_failed", error=str(e))
+            return documents
 
     def _prepare_sources(self, documents: list[Any]) -> list[SourceReference]:
         """Prepare source references from documents with web search handling."""
@@ -2002,17 +2365,38 @@ Follow the system instructions for this situation."""
                 )
                 continue
 
-            # Web search chunks (v1 citation / v2 tool output)
+            # Web search chunks (v1 citation / v2 tool output).
+            # Carry through bibliographic metadata so references render
+            # as "Authors. Title (Year). DOI." instead of "Unknown, (n.d.)".
             if isinstance(doc, dict) and doc.get("source") == "web_search":
                 title = (
                     doc.get("title")
                     or doc.get("citation")
                     or f"Web search: {doc.get('query', 'Unknown')}"
                 )
+                if title in seen:
+                    continue
+                seen.add(title)
+                authors_raw = doc.get("authors")
+                if isinstance(authors_raw, list):
+                    authors_list = [str(a) for a in authors_raw if a]
+                elif isinstance(authors_raw, str) and authors_raw:
+                    authors_list = [a.strip() for a in authors_raw.split(",") if a.strip()]
+                else:
+                    authors_list = []
+                year_val = doc.get("year")
+                if isinstance(year_val, str) and year_val.isdigit():
+                    year_val = int(year_val[:4])
+                elif not isinstance(year_val, int):
+                    year_val = None
                 sources.append(
                     SourceReference(
                         title=str(title),
+                        authors=authors_list,
+                        year=year_val,
+                        doi=doc.get("doi") or None,
                         url=doc.get("url") or None,
+                        source=doc.get("source_provider") or None,
                         relevance_score=0.5,
                     )
                 )
