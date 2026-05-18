@@ -145,13 +145,72 @@ function parseFrame(frame: string): ChatStreamEvent[] {
     return [{ kind: "token", text: json }];
   }
 
-  // Token deltas.
+  // Token deltas — the backend uses `{"type":"token","delta":"..."}`
+  // (or `delta_b64` for Unicode-safe base64). Older / future variants
+  // may put the token directly under `token`, `chunk`, or `delta`.
   if (typeof obj.token === "string") return [{ kind: "token", text: obj.token }];
   if (typeof obj.chunk === "string") return [{ kind: "token", text: obj.chunk }];
+  if (obj.type === "token") {
+    let text = "";
+    if (typeof obj.delta === "string") text = obj.delta;
+    else if (typeof obj.delta_b64 === "string") text = decodeB64Utf8(obj.delta_b64);
+    if (text) return [{ kind: "token", text }];
+  }
   if (typeof obj.delta === "string") return [{ kind: "token", text: obj.delta }];
+
+  // Final-answer payload — some modes (basic, contradiction, profound)
+  // ship the full text in one `type:"answer"` frame instead of streaming
+  // token by token. Mark this as `done` with `answer` so ChatPanel will
+  // adopt it as the message body only when no streamed text is present.
+  if (obj.type === "answer") {
+    const text =
+      typeof obj.content === "string"
+        ? obj.content
+        : typeof obj.content_b64 === "string"
+          ? decodeB64Utf8(obj.content_b64)
+          : "";
+    if (text) {
+      return [
+        {
+          kind: "done",
+          answer: text,
+          conversation_id:
+            typeof obj.conversation_id === "string" ? obj.conversation_id : undefined,
+        },
+      ];
+    }
+  }
+
+  // papers_found events ship a richer list of papers; treat as meta.
+  if (obj.type === "papers_found" && Array.isArray(obj.papers)) {
+    return [
+      {
+        kind: "meta",
+        papers_found: obj.papers.length,
+        sources: obj.papers as ChatSource[],
+      },
+    ];
+  }
+
+  // Source events appear during streaming for some modes — collect.
+  if (obj.type === "source" && obj.source) {
+    return [
+      {
+        kind: "meta",
+        sources: [obj.source as ChatSource],
+      },
+    ];
+  }
 
   // Structured thinking-step events.
   if (obj.kind === "query_rephrased") {
+    // Backend field is `rewritten`; older variants use `rephrased` — accept both.
+    const rephrased =
+      typeof obj.rewritten === "string"
+        ? (obj.rewritten as string)
+        : typeof obj.rephrased === "string"
+          ? (obj.rephrased as string)
+          : undefined;
     return [
       {
         kind: "thinking",
@@ -161,8 +220,53 @@ function parseFrame(frame: string): ChatStreamEvent[] {
           label: "Query rephrased",
           detail: {
             original: typeof obj.original === "string" ? obj.original : undefined,
-            rephrased: typeof obj.rephrased === "string" ? obj.rephrased : undefined,
+            rephrased,
           },
+          ts: Date.now(),
+        },
+      },
+    ];
+  }
+
+  // Agentic-mode specific events. We surface intent_result and
+  // phase_transition as status steps so the reasoning trail stays
+  // intelligible even when the backend emits rich structured frames.
+  if (obj.type === "intent_result" && typeof obj.intent === "string") {
+    const reasoning =
+      typeof obj.reasoning === "string" ? ` — ${obj.reasoning}` : "";
+    return [
+      {
+        kind: "thinking",
+        step: {
+          id: nid(),
+          kind: "status",
+          label: `Intent: ${obj.intent}${reasoning}`,
+          ts: Date.now(),
+        },
+      },
+    ];
+  }
+  if (obj.type === "phase_transition" && typeof obj.phase === "string") {
+    return [
+      {
+        kind: "thinking",
+        step: {
+          id: nid(),
+          kind: "status",
+          label: `Phase → ${obj.phase}`,
+          ts: Date.now(),
+        },
+      },
+    ];
+  }
+  if (obj.type === "thinking" && typeof obj.message === "string") {
+    return [
+      {
+        kind: "thinking",
+        step: {
+          id: nid(),
+          kind: "status",
+          label: obj.message,
           ts: Date.now(),
         },
       },
@@ -274,6 +378,19 @@ export async function cancelChat(conversationId: string): Promise<void> {
     });
   } catch {
     // Best-effort.
+  }
+}
+
+// Unicode-safe base64 → string. Used for `delta_b64` / `content_b64`
+// frames the backend uses for tokens that contain multi-byte characters.
+function decodeB64Utf8(b64: string): string {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch {
+    return "";
   }
 }
 
