@@ -41,7 +41,8 @@ cp config.example.yml config.yml
 cp .env.example .env
 ```
 
-Edit `.env` and add at least one API key:
+Edit `.env` and add at least one API key (the CLI auto-loads `.env` from
+the current working directory on startup):
 
 ```bash
 # DeepSeek (default, cheapest)
@@ -53,6 +54,20 @@ ANTHROPIC_API_KEY=sk-ant-...
 # Or OpenAI
 OPENAI_API_KEY=sk-...
 ```
+
+> Shell-exported variables (e.g. `export ANTHROPIC_API_KEY=...` in `~/.zshrc`)
+> take precedence over `.env`. Either source is fine — pick whichever fits
+> your secret-management style.
+>
+> For offline / mocked-LLM development, set
+> `PERSPICACITE_ALLOW_MISSING_LLM_KEYS=1` to bypass the startup preflight.
+>
+> **Embeddings:** the default `embedding_model: text-embedding-3-small`
+> requires `OPENAI_API_KEY`. Without it, embeddings transparently fall
+> back to `all-MiniLM-L6-v2` (local sentence-transformers). For
+> full-speed embeddings, add `OPENAI_API_KEY` *in addition to* your
+> chat-provider key, or set `knowledge_base.embedding_model:
+> "all-MiniLM-L6-v2"` in `config.yml`.
 
 The minimal `config.yml` block to edit:
 
@@ -80,12 +95,12 @@ Expected output:
 
 ```
 Starting Perspicacité v2.0.0
-   Server: http://0.0.0.0:5468
-   MCP: http://0.0.0.0:5001
+   Server: http://0.0.0.0:8000
+   MCP: http://0.0.0.0:8000
 ```
 
-Open **http://localhost:5468** in your browser. The MCP server is available at
-**http://localhost:5468/mcp** (same port, `/mcp` path — the default config merges
+Open **http://localhost:8000** in your browser. The MCP server is available at
+**http://localhost:8000/mcp** (same port, `/mcp` path — the default config merges
 MCP into the main server port via the streamable-HTTP transport).
 
 Use `--no-mcp` to disable the MCP server, `--no-ui` for headless API-only mode.
@@ -106,7 +121,7 @@ PDF availability.
 
 ### Option B: from the web UI
 
-1. Open **http://localhost:5468**
+1. Open **http://localhost:8000**
 2. Click **"+ Create new KB"** in the left sidebar
 3. Enter a name and optional description
 4. Drag and drop a `.bib` file, then click **"Create from BibTeX"**
@@ -120,7 +135,7 @@ uv run perspicacite -c config.yml create-kb my-kb --description "Diamond sensors
 Then add papers:
 
 ```bash
-curl -X POST http://localhost:5468/api/kb/my-kb/dois/async \
+curl -X POST http://localhost:8000/api/kb/my-kb/dois/async \
   -H "Content-Type: application/json" \
   -d '{"dois": ["10.1038/s41586-023-06924-6", "10.1103/PhysRevLett.131.013001"]}'
 ```
@@ -128,7 +143,7 @@ curl -X POST http://localhost:5468/api/kb/my-kb/dois/async \
 Poll job progress:
 
 ```bash
-curl -sN http://localhost:5468/api/jobs/<job_id>/events
+curl -sN http://localhost:8000/api/jobs/<job_id>/events
 ```
 
 ---
@@ -151,7 +166,7 @@ uv run perspicacite -c config.yml query "what methods are used to detect magneto
 ### REST API
 
 ```bash
-curl -sN -X POST http://localhost:5468/api/chat \
+curl -sN -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{"query": "what methods are used?", "kb_name": "my-kb", "mode": "basic", "stream": true}'
 ```

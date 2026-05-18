@@ -1827,7 +1827,24 @@ def version() -> None:
 
 
 def main() -> None:
-    """Entry point."""
+    """Entry point.
+
+    Loads `.env` from the current working directory (and walks parents)
+    before invoking the click group. Shell-exported variables still win:
+    `load_dotenv` defaults to `override=False`, so a key in `.env` cannot
+    silently shadow what the user already has in their shell. This makes
+    the README/getting-started promise ("Edit `.env` and add at least one
+    API key") actually work — without it, the preflight in
+    `perspicacite.web.state._preflight_llm_keys` raises even when `.env`
+    has the right key.
+    """
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()  # CWD/.env first, then walk parents
+    except ImportError:
+        pass  # python-dotenv is a transitive dep (pydantic-settings, litellm);
+        # if it's missing for some reason, fall back to shell env only.
     cli()
 
 

@@ -49,7 +49,7 @@ Exact interface specifications: flags, endpoints, tool signatures, config keys.
 |------|---------------|
 | [reference/cli.md](reference/cli.md) | All `perspicacite <subcommand>` calls and their flags |
 | [reference/rest-api.md](reference/rest-api.md) | REST endpoints, request/response shapes |
-| [reference/mcp-tools.md](reference/mcp-tools.md) | The 23 MCP tools |
+| [reference/mcp-tools.md](reference/mcp-tools.md) | The 32 MCP tools |
 | [reference/config.md](reference/config.md) | `config.yml` schema with all fields and defaults |
 | [reference/paper-source-enum.md](reference/paper-source-enum.md) | All `PaperSource` values and when each is used |
 

@@ -73,7 +73,7 @@ All three must pass before a PR can be merged (enforced by CI).
 src/perspicacite/
   cli.py                     # all CLI subcommands
   config/schema.py           # Pydantic configuration model
-  mcp/server.py              # MCP server with 23 tools
+  mcp/server.py              # MCP server with 32 tools
   models/papers.py           # Paper, PaperSource, Author models
   models/kb.py               # KnowledgeBase model
   pipeline/

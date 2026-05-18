@@ -84,8 +84,13 @@ packages_to_use/
 *.sqlite
 *.sqlite3
 
-# Claude AI sessions
-.claude/
+# Claude AI sessions — ignore everything except the project-scoped slash
+# commands + skills that make `/setup` etc. work for any agent in this repo.
+.claude/*
+!.claude/commands/
+!.claude/commands/**
+!.claude/skills/
+!.claude/skills/**
 
 # Ruff cache
 .ruff_cache/
@@ -94,6 +99,9 @@ packages_to_use/
 *.md
 !README.md
 !CONTRIBUTING.md
+!INSTALL_AGENT.md
+!.claude/commands/*.md
+!.claude/skills/**/*.md
 !LICENSE
 !NOTICE
 !perspicacite_skills.md
