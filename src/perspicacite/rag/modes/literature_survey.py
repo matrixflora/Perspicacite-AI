@@ -638,6 +638,8 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                         for _s in (p.metadata or {}).get("sources") or []:
                             if _s not in _kept_srcs:
                                 _kept_srcs.append(_s)
+                            if _s not in kept.discovery_sources:
+                                kept.discovery_sources.append(_s)
                         kept.metadata["sources"] = _kept_srcs
                         continue
                     seen_doi[_doi] = p

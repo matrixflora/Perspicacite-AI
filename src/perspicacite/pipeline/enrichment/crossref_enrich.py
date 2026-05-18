@@ -278,5 +278,8 @@ async def enrich_papers(papers: list, *, concurrency: int | None = None) -> list
                 if src not in existing:
                     existing.append(src)
             p.metadata["enrichment_sources"] = existing
+            for src in c["enrichment_sources"]:
+                if src not in p.enrichment_sources:
+                    p.enrichment_sources.append(src)
 
     return papers
