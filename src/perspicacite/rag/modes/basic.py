@@ -399,6 +399,15 @@ async def _run_web_aggregator_search(
             allowed_provider_names.add("scilex")
 
     # --- query optimization ---
+    # Fall back to the global web app_state when no explicit one was passed.
+    # This covers the GUI chat path where app_state is threaded from chat.py.
+    if app_state is None:
+        try:
+            from perspicacite.web.state import app_state as _global_app_state
+            app_state = _global_app_state
+        except Exception:
+            pass
+
     effective_query = keyword_query
     if app_state is not None and getattr(app_state, "config", None) is not None:
         import perspicacite.search.query_optimizer as _qo_mod
@@ -624,6 +633,7 @@ class BasicRAGMode(BaseRAGMode):
                 max_docs=cap,
                 config=getattr(self, "config", None),
                 app_state=getattr(request, "app_state", None),
+                context=getattr(request, "_resolved_context", None),
             )
             web_fallback_used = True
 

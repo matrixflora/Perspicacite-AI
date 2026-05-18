@@ -606,6 +606,16 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
         provider=default_provider,
         model=default_model,
     )
+    # Thread app_state and grounding context onto the RAGRequest so that
+    # BasicRAGMode.execute() can pass them to the optimizer.
+    try:
+        object.__setattr__(rag_request, "app_state", app_state)
+        object.__setattr__(
+            rag_request, "_resolved_context",
+            getattr(request, "_resolved_context", None),
+        )
+    except Exception:
+        pass
     # Execute using RAGEngine streaming
     full_answer = ""
     sources = []
@@ -715,6 +725,13 @@ async def _invoke_basic_rag(
     sources: list = []
     papers_list: list = []
     answer_tokens: list[str] = []
+
+    # Propagate the resolved grounding context so _stream_rag_mode can
+    # thread it onto the RAGRequest for BasicRAGMode.execute to consume.
+    try:
+        object.__setattr__(request, "_resolved_context", context)
+    except Exception:
+        pass
 
     async for event in _stream_rag_mode(request, conversation_id):
         if not event.startswith("data:"):
