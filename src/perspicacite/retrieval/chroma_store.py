@@ -233,7 +233,9 @@ class ChromaVectorStore:
         try:
             coll = self.client.get_collection(name=collection)
         except Exception as e:
-            logger.error(
+            # Benign on first-run / no-KB queries — callers fall back to web
+            # search. Emit at WARNING so it doesn't pollute error dashboards.
+            logger.warning(
                 "collection_not_found",
                 collection=collection,
                 error=str(e),

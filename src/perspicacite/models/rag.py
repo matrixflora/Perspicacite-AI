@@ -50,12 +50,28 @@ class SourceReference(BaseModel):
     # SciLEx doesn't expose per-paper provenance so we can only say which
     # APIs were called, not which one returned this specific paper.
     source_apis: list[str] | None = None
+    # Metadata enrichment provenance — which secondary sources contributed
+    # to *enriching* this record after the initial search hit. Common
+    # values: "crossref" (canonical bibliographic patch), "openalex"
+    # (abstract / OA URL fill-in), "unpaywall" (PDF availability + OA
+    # status). Distinct from ``discovery_sources`` (which databases RETURNED
+    # the paper) vs ``enrichment_sources`` (which databases CLEANED IT UP).
+    # Renders as a separate chip group with a subtle visual treatment.
+    enrichment_sources: list[str] | None = None
     relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
     chunk_text: str | None = None
+    # Full abstract text, used by the paper-detail side panel for
+    # Google-Scholar / web-fallback papers without a DOI (the side
+    # panel can't fall back to a /api/paper lookup in that case). Kept
+    # separate from ``chunk_text`` which is sometimes a truncated chunk
+    # rather than a full abstract.
+    abstract: str | None = None
     kb_name: str | None = None
-    # Renamed: sources_all → discovery_sources (matches Paper.discovery_sources).
-    # The old name lives on as a Pydantic alias so existing JSON payloads
-    # (and the JS reading src.sources_all) keep working until UI catches up.
+    # All upstream providers that returned THIS specific paper (deduped).
+    # Renamed from legacy ``sources_all`` → ``discovery_sources`` (matches
+    # Paper.discovery_sources). The old name lives on as a Pydantic alias
+    # so existing JSON payloads (and JS reading src.sources_all when
+    # dumped with by_alias=True) keep working until UI catches up.
     discovery_sources: list[str] | None = Field(
         default=None,
         alias="sources_all",
@@ -253,6 +269,29 @@ class StreamEvent(BaseModel):
         import json
 
         return cls(event="status", data=json.dumps({"message": message}))
+
+    @classmethod
+    def status_kind(cls, message: str, kind: str, **extra: Any) -> "StreamEvent":
+        """Create a structured status event with a discriminator ``kind``.
+
+        The chat router forwards status events as-is (status_data is spread
+        into the SSE payload), so adding fields here lets the frontend
+        render rich cards (query rephrasing, provider progress, batch
+        progress) without expanding the StreamEvent literal type.
+
+        Conventions:
+        - ``kind="query_rephrased"`` → extras: ``original``, ``rewritten``,
+          ``by`` ("conversation_history" | "keyword_optimizer")
+        - ``kind="provider_progress"`` → extras: ``phase`` ("start"|"done"),
+          ``provider``, optional ``count``
+        - ``kind="batch_progress"`` → extras: ``current``, ``total``,
+          ``stage``
+        """
+        import json
+
+        payload: dict[str, Any] = {"message": message, "kind": kind}
+        payload.update(extra)
+        return cls(event="status", data=json.dumps(payload))
 
     @classmethod
     def content(cls, delta: str) -> "StreamEvent":

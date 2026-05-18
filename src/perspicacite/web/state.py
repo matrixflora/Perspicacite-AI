@@ -126,7 +126,16 @@ class AppState:
 
         # Initialize tool registry (LOTUS deactivated for now)
         tool_registry = ToolRegistry()
-        logger.info("Tool registry initialized (LOTUS deactivated)")
+        # Register the live web-search tool so Profound (and other modes that
+        # check ``"web_search" in tools.list_tools()``) actually find it. The
+        # tool reads ``self`` (AppState) to reach the aggregator config.
+        try:
+            from perspicacite.rag.tools import WebSearchTool
+            tool_registry.register(WebSearchTool(app_state=self))
+            logger.info("Tool registry initialized (web_search registered, LOTUS deactivated)")
+        except Exception as exc:  # pragma: no cover - best-effort
+            logger.warning("web_search_tool_register_failed", error=str(exc))
+            logger.info("Tool registry initialized (LOTUS deactivated)")
 
         # Create LLM adapter for agentic components
         llm_adapter = LLMAdapter(

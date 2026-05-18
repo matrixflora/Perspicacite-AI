@@ -34,6 +34,11 @@ logger = get_logger("perspicacite.search.google_scholar_playwright")
 
 _SCHOLAR_BASE = "https://scholar.google.com/scholar"
 _DOI_RE = re.compile(r"https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[^\s\"'>]+)")
+# Generic DOI pattern that catches DOIs embedded in publisher landing-page
+# URLs (Wiley, Springer, ACS, RSC, etc.) — e.g.
+# https://onlinelibrary.wiley.com/doi/abs/10.1002/anie.202012345
+# https://pubs.acs.org/doi/10.1021/acs.jnatprod.3c00468
+_DOI_ANY_RE = re.compile(r"(10\.\d{4,9}/[^\s\"'<>?#]+)")
 _YEAR_RE = re.compile(r"\b(19[5-9]\d|20[0-2]\d)\b")
 _CITED_BY_RE = re.compile(r"^Cited by\s+(\d+)", re.IGNORECASE)
 
@@ -93,11 +98,30 @@ def _parse_meta_line(meta: str) -> tuple[str, str, int | None]:
 
 
 def _extract_doi_from_url(url: str) -> str | None:
-    """Extract a bare DOI from a doi.org URL. Returns None for other URLs."""
+    """Extract a bare DOI from a doi.org URL or publisher landing page.
+
+    Tries doi.org URLs first (cleanest extraction), then falls back to
+    any embedded DOI pattern in the URL path. This recovers DOIs from
+    publisher links Google Scholar surfaces directly (Wiley, ACS, RSC,
+    Springer, Frontiers, MDPI, …) without needing a separate Crossref
+    title-search round-trip, which means more GS hits can be enriched
+    by Crossref (the path that fills missing abstracts / journals).
+    """
     if not url:
         return None
     m = _DOI_RE.match(url)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    # Fallback: scan the whole URL for an embedded DOI. We do a sanity
+    # check on the captured suffix to avoid grabbing random query-string
+    # junk that happens to look DOI-like.
+    m = _DOI_ANY_RE.search(url)
+    if m:
+        doi = m.group(1)
+        # Trim trailing punctuation that's clearly not part of a DOI.
+        doi = doi.rstrip(").,;")
+        return doi
+    return None
 
 
 async def _render_and_extract_cards(
@@ -242,6 +266,36 @@ class GoogleScholarPlaywrightProvider:
         year_max: int | None = None,
         **_: Any,
     ) -> list[Paper]:
+        # Preference order: OpenRouter Exa-style academic web search first
+        # (when configured) — Google Scholar reliably CAPTCHA's headless
+        # Chromium, so trying Playwright first usually wastes a slow
+        # round-trip. We still fall through to Playwright if OpenRouter
+        # returns nothing or isn't enabled, so behaviour stays "Scholar
+        # answers something" rather than "OpenRouter failed, give up".
+        if self._openrouter_enabled and self._openrouter_api_key:
+            try:
+                from perspicacite.search.openrouter_fallback import (
+                    openrouter_academic_search,
+                )
+                papers = await openrouter_academic_search(
+                    query,
+                    api_key=self._openrouter_api_key,
+                    model=self._openrouter_model,
+                    max_results=max_results,
+                    allowed_domains=self._openrouter_domains,
+                )
+                if papers:
+                    logger.info(
+                        "google_scholar_openrouter_primary_success",
+                        count=len(papers),
+                    )
+                    return papers
+                logger.info("google_scholar_openrouter_primary_empty")
+            except Exception as exc:
+                logger.warning(
+                    "google_scholar_openrouter_primary_error", error=str(exc)
+                )
+
         url = _build_scholar_url(query, year_min=year_min, year_max=year_max)
         try:
             cards = await _render_and_extract_cards(
@@ -254,24 +308,13 @@ class GoogleScholarPlaywrightProvider:
             logger.warning("google_scholar_search_error", error=str(exc))
             return []
 
-        # CAPTCHA detected — fall back to OpenRouter web search if configured
+        # CAPTCHA detected — already tried OpenRouter above (if enabled),
+        # so the only remaining option is to give up on this provider.
         if cards is _CAPTCHA_SENTINEL:
-            if self._openrouter_enabled:
-                try:
-                    from perspicacite.search.openrouter_fallback import (
-                        openrouter_academic_search,
-                    )
-                    return await openrouter_academic_search(
-                        query,
-                        api_key=self._openrouter_api_key,
-                        model=self._openrouter_model,
-                        max_results=max_results,
-                        allowed_domains=self._openrouter_domains,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "google_scholar_openrouter_fallback_error", error=str(exc)
-                    )
+            logger.warning(
+                "google_scholar_captcha_and_no_fallback",
+                openrouter_enabled=self._openrouter_enabled,
+            )
             return []
 
         papers: list[Paper] = []

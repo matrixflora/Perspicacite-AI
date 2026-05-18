@@ -95,6 +95,7 @@ async def run_web_aggregator_search(
                 )
                 await _emit_telemetry(telemetry, {
                     "kind": "query_rephrased",
+                    "by": "keyword_optimizer",
                     "original": keyword_query,
                     "rewritten": effective_query,
                 })
@@ -132,6 +133,17 @@ async def run_web_aggregator_search(
             # ``apis`` here is the SciLEx fan-out list — only the SciLEx
             # provider reads it; standalone providers ignore it and run
             # against their own endpoints regardless.
+            _provider_names = [
+                (getattr(p, "name", None) or type(p).__name__).lower()
+                for p in getattr(aggregator, "_providers", [])
+            ]
+            if telemetry is not None and _provider_names:
+                telemetry.append({
+                    "kind": "provider_progress",
+                    "phase": "start",
+                    "providers": _provider_names,
+                    "scilex_apis": list(scilex_apis or _apis),
+                })
             web_papers = await aggregator.search(
                 query=effective_query,
                 max_results=max_docs * 6,
@@ -139,12 +151,42 @@ async def run_web_aggregator_search(
             )
             logger.info(
                 "web_aggregator_search_done",
-                providers=[
-                    getattr(p, "name", type(p).__name__)
-                    for p in getattr(aggregator, "_providers", [])
-                ],
+                providers=_provider_names,
                 returned=len(web_papers),
             )
+            if telemetry is not None:
+                # Per-provider counts from the returned papers' metadata
+                # sources. SciLEx-wrapped papers tag both "scilex" and the
+                # underlying API; we collapse "scilex" out so counts reflect
+                # the real upstream APIs.
+                from collections import Counter as _Counter
+
+                _per_source: _Counter = _Counter()
+                for _p in web_papers:
+                    _ms = (getattr(_p, "metadata", None) or {}).get("sources") or []
+                    if isinstance(_ms, list):
+                        # Count this paper under EVERY upstream API that
+                        # returned it (a multi-DB hit). Previously a stray
+                        # ``break`` counted only the first one, undercounting
+                        # cross-DB matches in the Retrieval panel.
+                        for _s in _ms:
+                            _sl = str(_s).lower()
+                            if _sl and _sl != "scilex":
+                                _per_source[_sl] += 1
+                    else:
+                        _src_obj = getattr(_p, "source", None)
+                        _val = getattr(_src_obj, "value", None) or (
+                            str(_src_obj).replace("PaperSource.", "").lower()
+                            if _src_obj else ""
+                        )
+                        if _val and _val != "scilex":
+                            _per_source[_val] += 1
+                telemetry.append({
+                    "kind": "provider_progress",
+                    "phase": "done",
+                    "total": len(web_papers),
+                    "by_provider": dict(_per_source),
+                })
         else:
             from perspicacite.search.scilex_adapter import SciLExAdapter
 

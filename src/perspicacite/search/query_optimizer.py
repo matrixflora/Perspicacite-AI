@@ -142,7 +142,7 @@ async def optimize_query(
                 model=model,
                 provider=provider,
                 temperature=0.2,
-                max_tokens=120,
+                max_tokens=400,
                 stage="search_optimize",
             ),
             timeout=qo_cfg.timeout_s,
