@@ -7,6 +7,26 @@ from perspicacite.logging import get_logger
 logger = get_logger("perspicacite.rag.web_search")
 
 
+async def _emit_telemetry(sink: Any, event: dict) -> None:
+    """Dispatch one event to a sink, supporting both list-style and
+    callback-style sinks. Plain ``list``s only get .append() (sync); a
+    ``CallbackTelemetrySink`` gets on_event_async (live notification).
+    """
+    if sink is None:
+        return
+    if hasattr(sink, "on_event_async"):
+        try:
+            await sink.on_event_async(event)
+            return
+        except Exception:
+            return
+    # Fallback for plain list (legacy).
+    try:
+        sink.append(event)
+    except Exception:
+        pass
+
+
 async def run_web_aggregator_search(
     *,
     keyword_query: str,
@@ -18,6 +38,7 @@ async def run_web_aggregator_search(
     scilex_apis: list[str] | None = None,
     allowed_provider_names: set[str] | None = None,
     app_state: Any,
+    telemetry: Any = None,
 ) -> list[Any]:
     """Run the shared web aggregator search with query optimization.
 
@@ -78,6 +99,11 @@ async def run_web_aggregator_search(
                     original=keyword_query,
                     rewritten=effective_query,
                 )
+                await _emit_telemetry(telemetry, {
+                    "kind": "query_rephrased",
+                    "original": keyword_query,
+                    "rewritten": effective_query,
+                })
         except Exception as _opt_exc:
             logger.warning(
                 "web_aggregator_optimizer_failed",
