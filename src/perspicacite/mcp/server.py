@@ -357,6 +357,7 @@ async def search_literature(
     exclude_kb: str | None = None,
     context: str | None = None,
     optimize_query: bool | None = None,
+    enrich: bool = True,
 ) -> str:
     """
     Search academic databases for scientific papers matching a query.
@@ -404,6 +405,9 @@ async def search_literature(
             scientific phrasing; on any failure (timeout, LLM error,
             unparseable output) we silently fall back to the verbatim
             query and surface ``fallback_reason`` in the response.
+        enrich: When True (default), enrich returned papers via Crossref
+            (fills missing abstracts, canonicalises author lists). Set
+            False for raw provider data.
 
     Returns:
         JSON with list of papers including title, authors, year, doi, abstract.
@@ -443,6 +447,35 @@ async def search_literature(
             apis=databases or ["semantic_scholar", "openalex", "pubmed"],
             article_type=article_type,
         )
+
+        # Collect structured warnings from SciLEx (e.g. unknown APIs dropped).
+        mcp_warnings: list[dict] = []
+        try:
+            from perspicacite.search.scilex_adapter import SciLExAdapter
+            for _prov in getattr(aggregator, "_providers", []):
+                if isinstance(_prov, SciLExAdapter):
+                    if _prov._last_dropped_apis:
+                        mcp_warnings.append({
+                            "kind": "unknown_apis_dropped",
+                            "apis": list(_prov._last_dropped_apis),
+                            "advice": (
+                                "Use the web_search MCP tool for non-SciLEx providers "
+                                "(google_scholar, europepmc, etc.)."
+                            ),
+                        })
+                    if _prov._last_quota_warning is not None:
+                        mcp_warnings.append(_prov._last_quota_warning)
+                    break
+        except Exception:
+            pass
+
+        # Crossref-enrich the returned papers (fills missing abstracts etc.).
+        if enrich and papers:
+            from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
+            try:
+                papers = await enrich_papers(papers)
+            except Exception as _ee:
+                logger.warning("mcp_search_literature_enrich_failed", error=str(_ee))
 
         # ── Dedup against existing KB (optional) ───────────────────────
         if exclude_kb:
@@ -553,6 +586,7 @@ async def search_literature(
 
         payload: dict[str, Any] = {
             "query": query, "total_results": len(results), "papers": results,
+            "warnings": mcp_warnings,
             "errors_by_database": errors_full,
             "original_query": query,
             "searched_query": opt.searched_query,
