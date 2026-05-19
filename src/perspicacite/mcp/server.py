@@ -4102,12 +4102,143 @@ async def cancel_task(task_id: str) -> str:
     })
 
 
+# =============================================================================
+# Tool: search_by_passage
+# =============================================================================
+
+
+@mcp.tool()
+async def search_by_passage(
+    text: str,
+    kb_name: str = "default",
+    kb_names: list[str] | None = None,
+    k: int = 5,
+    min_score: float | None = None,
+) -> str:
+    """
+    Retrieve KB passages similar to an arbitrary input text (sentence / paragraph).
+
+    Differs from ``search_knowledge_base`` in that the response surfaces
+    ``license_id`` and a structured ``source`` record per match — designed for
+    consumers that need to make citation decisions on the returned chunks.
+
+    Args:
+        text: Free-form input text (sentence, paragraph, claim). 1–4000 chars.
+        kb_name: Single-KB scope (used when ``kb_names`` is None or 1 entry).
+        kb_names: Optional list of KBs to query together. All must share the
+            same embedding model.
+        k: Top-k matches to return (max 50).
+        min_score: Optional similarity floor; matches below are dropped.
+
+    Returns:
+        JSON {"ok": True, "results": [...]} or {"ok": False, "error": "..."}.
+    """
+    def _ok(results: list[dict[str, Any]]) -> str:
+        return json.dumps({"ok": True, "results": results}, default=str)
+
+    def _err(message: str) -> str:
+        return json.dumps({"ok": False, "error": message}, default=str)
+
+    state = _require_state()
+    if isinstance(state, str):
+        # ``_require_state`` returns a ``_json_error`` string (shape:
+        # {"success": False, ...}) — translate to the ``ok``-shape contract
+        # this tool advertises.
+        try:
+            inner = json.loads(state)
+            return _err(inner.get("error", "MCP server not initialized"))
+        except Exception:
+            return _err("MCP server not initialized")
+
+    try:
+        from perspicacite.retrieval.passage_search import search_passages
+
+        # Multi-KB path
+        if kb_names and len(kb_names) > 1:
+            from perspicacite.retrieval.multi_kb import (
+                MultiKBRetriever,
+                check_embedding_compat,
+            )
+
+            metas = [
+                await state.session_store.get_kb_metadata(n) for n in kb_names
+            ]
+            for i, meta in enumerate(metas):
+                if meta is None:
+                    return _err(f"Knowledge base not found: {kb_names[i]}")
+            compat_msg = check_embedding_compat(metas)
+            if compat_msg:
+                return _err(compat_msg)
+
+            retriever = MultiKBRetriever(
+                vector_store=state.vector_store,
+                embedding_service=state.embedding_provider,
+                kb_metas=metas,
+            )
+        else:
+            from perspicacite.models.kb import chroma_collection_name_for_kb
+            from perspicacite.rag.dynamic_kb import (
+                DynamicKnowledgeBase,
+                KnowledgeBaseConfig,
+            )
+
+            effective_kb = (
+                kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
+            )
+            kb_meta = await state.session_store.get_kb_metadata(effective_kb)
+            if not kb_meta:
+                return _err(f"Knowledge base '{effective_kb}' not found")
+            retriever = DynamicKnowledgeBase(
+                state.vector_store,
+                state.embedding_provider,
+                config=KnowledgeBaseConfig(
+                    vector_size=state.embedding_provider.dimension,
+                ),
+            )
+            retriever.collection_name = chroma_collection_name_for_kb(
+                effective_kb
+            )
+            retriever._initialized = True
+
+        matches = await search_passages(
+            retriever, text=text, k=k, min_score=min_score
+        )
+
+        return _ok(
+            [
+                {
+                    "chunk_id": m.chunk_id,
+                    "chunk_text": m.chunk_text,
+                    "score": m.score,
+                    "source": {
+                        "doi": m.source.doi,
+                        "title": m.source.title,
+                        "authors": m.source.authors,
+                        "year": m.source.year,
+                        "bibkey": m.source.bibkey,
+                        "source_url": m.source.source_url,
+                        "license_id": m.source.license_id,
+                    },
+                    "kb_name": m.kb_name,
+                }
+                for m in matches
+            ]
+        )
+
+    except ValueError as e:
+        return _err(str(e))
+    except Exception as e:
+        logger.error("mcp_search_by_passage_error", error=str(e))
+        return _err(f"search_by_passage failed: {e}")
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
     "get_paper_references",
     "list_knowledge_bases",
     "search_knowledge_base",
+    "search_by_passage",
     "create_knowledge_base",
     "add_papers_to_kb",
     "generate_report",
