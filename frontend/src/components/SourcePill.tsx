@@ -38,9 +38,17 @@ export function SourcePill({
       : source.authors[0]
     : undefined;
 
+  // Backend emits two scoring conventions through the same field:
+  //   • Retrieval blends (MiniLM + citations + BM25): 0–1 fraction
+  //   • Agentic LLM scorer: integer 1–5
+  // Map both to a percent so the UI shows a consistent unit.
   const relevancePct =
     typeof source.relevance_score === "number"
-      ? Math.round(source.relevance_score * (source.relevance_score <= 1 ? 100 : 1))
+      ? source.relevance_score <= 1
+        ? Math.round(source.relevance_score * 100)
+        : source.relevance_score <= 5
+          ? Math.round(source.relevance_score * 20)
+          : Math.round(source.relevance_score)
       : null;
 
   const providers = Array.from(

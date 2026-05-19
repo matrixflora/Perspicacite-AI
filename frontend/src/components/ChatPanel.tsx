@@ -247,17 +247,23 @@ export function ChatPanel({
                 if (t.id !== asstTurn.id) return t;
                 let nextSources = t.sources;
                 if (ev.sources && ev.sources.length > 0) {
+                  // Use `||` rather than `??` so empty-string fields fall
+                  // through. The backend can emit `doi: ""` for papers
+                  // without a registered DOI; `??` would treat "" as a real
+                  // key and collapse every empty-DOI paper into one pill.
+                  const keyOf = (s: ChatSource) =>
+                    s.doi || s.paper_id || s.url || s.title || "";
                   const existing = t.sources ?? [];
                   const seen = new Set(
-                    existing.map(
-                      (s) => s.doi ?? s.paper_id ?? s.url ?? s.title ?? "",
-                    ),
+                    existing.map(keyOf).filter((k) => k),
                   );
                   const merged = [...existing];
                   for (const s of ev.sources) {
-                    const key = s.doi ?? s.paper_id ?? s.url ?? s.title ?? "";
-                    if (!seen.has(key)) {
-                      seen.add(key);
+                    const key = keyOf(s);
+                    // Empty key → no identifying field at all; keep the
+                    // paper rather than silently collapsing it.
+                    if (!key || !seen.has(key)) {
+                      if (key) seen.add(key);
                       merged.push(s);
                     }
                   }

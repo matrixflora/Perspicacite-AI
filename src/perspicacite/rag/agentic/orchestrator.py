@@ -2911,6 +2911,25 @@ Generate your answer:"""
             except Exception as _ee:
                 logger.warning("agentic_enrich_failed", error=str(_ee))
 
+            # arXiv DataCite-DOI fallback: any preprint that Crossref couldn't
+            # match by title still has a real citable identifier — arXiv's
+            # DataCite DOI 10.48550/arxiv.<id>. Populating it here gives the
+            # references section a clickable DOI and prevents downstream dedup
+            # collisions in consumers that key by DOI.
+            try:
+                from perspicacite.pipeline.download.arxiv import get_arxiv_id_from_url
+                for _p in papers:
+                    if (_p.doi or "").strip():
+                        continue
+                    _aid = (
+                        get_arxiv_id_from_url(_p.pdf_url or "")
+                        or get_arxiv_id_from_url(_p.url or "")
+                    )
+                    if _aid:
+                        _p.doi = f"10.48550/arxiv.{_aid.split('v')[0]}"
+            except Exception as _ae:
+                logger.warning("agentic_arxiv_doi_fallback_failed", error=str(_ae))
+
             if papers:
                 paper_dicts = []
                 for p in papers:
@@ -3251,30 +3270,54 @@ Generate your answer:"""
             Enriched paper dict with 'full_text' and 'pdf_downloaded' fields
         """
         from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.pipeline.download.arxiv import get_arxiv_id_from_url
         from perspicacite.pipeline.parsers.pdf import PDFParser
 
-        doi = paper.get("doi", "")
-        if not doi:
+        doi = (paper.get("doi") or "").strip()
+        # Defensive: some adapters historically emitted the literal "NA" string
+        # for missing DOIs; treat that as no-DOI to avoid 404-spam downstream.
+        if doi.lower() == "na":
+            doi = ""
+
+        # Build a download chain: try the Crossref-mapped DOI first (preserves
+        # metadata fidelity — the IEEE/Springer/etc. published version is often
+        # what we want to cite), then fall back to the arXiv preprint when the
+        # publisher version is paywalled. The original paper["doi"] is never
+        # overwritten so downstream citations keep the canonical reference.
+        arxiv_id = get_arxiv_id_from_url(paper.get("pdf_url") or paper.get("url") or "")
+        arxiv_doi = ""
+        if arxiv_id:
+            bare = arxiv_id.split("v")[0]
+            arxiv_doi = f"10.48550/arxiv.{bare}"
+
+        attempts: list[str] = []
+        for candidate in (doi, arxiv_doi):
+            if candidate and candidate not in attempts:
+                attempts.append(candidate)
+
+        if not attempts:
             paper["pdf_downloaded"] = False
             return paper
 
         parser = PDFParser()
+        result = None
+        for attempt_doi in attempts:
+            try:
+                result = await retrieve_paper_content(
+                    doi=attempt_doi,
+                    pdf_parser=parser,
+                    unpaywall_email="perspicacite@example.com",
+                )
+                if result.success and result.full_text:
+                    break
+            except Exception as e:
+                logger.warning("agentic_download_failed", doi=attempt_doi, error=str(e))
+                result = None
 
-        try:
-            result = await retrieve_paper_content(
-                doi=doi,
-                pdf_parser=parser,
-                unpaywall_email="perspicacite@example.com",
-            )
-
-            if result.success and result.full_text:
-                paper["full_text"] = result.full_text
-                paper["pdf_downloaded"] = True
-            else:
-                paper["pdf_downloaded"] = False
-
-        except Exception as e:
-            logger.warning("agentic_download_failed", doi=doi, error=str(e))
+        if result and result.success and result.full_text:
+            paper["full_text"] = result.full_text
+            paper["pdf_downloaded"] = True
+        else:
             paper["pdf_downloaded"] = False
 
         return paper

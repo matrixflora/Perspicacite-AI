@@ -628,11 +628,19 @@ class SciLExAdapter:
         from perspicacite.models.papers import Author
 
         def safe_str(value, default=""):
+            # SciLEx writes the literal string "NA" (see scilex/constants.py
+            # MISSING_VALUE = "NA") whenever an upstream API returns no value.
+            # Treat it as missing so downstream truthiness checks behave.
             if value is None:
                 return default
             if isinstance(value, float) and pd.isna(value):
                 return default
-            return str(value) if value else default
+            if not value:
+                return default
+            s = str(value)
+            if s.strip().lower() == "na":
+                return default
+            return s
 
         # Extract fields from Zotero format
         title = safe_str(row.get("title"), "Untitled")
