@@ -151,6 +151,10 @@ class AgenticRAGMode(BaseRAGMode):
                 kb_name=request.kb_name,
                 stream=False,  # We collect everything
                 task_id=getattr(request, "task_id", None),
+                max_papers_to_download=getattr(
+                    request, "max_papers_to_download", None
+                ),
+                databases=getattr(request, "databases", None),
             ):
                 event_type = event.get("type", "")
 
@@ -232,6 +236,10 @@ class AgenticRAGMode(BaseRAGMode):
                 kb_name=request.kb_name,
                 stream=True,
                 task_id=getattr(request, "task_id", None),
+                max_papers_to_download=getattr(
+                    request, "max_papers_to_download", None
+                ),
+                databases=getattr(request, "databases", None),
             ):
                 event_type = event.get("type", "")
 
