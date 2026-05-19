@@ -142,9 +142,13 @@ class RAGRequest(BaseModel):
     # v1: optional evaluator LLM (same client; different model/provider per call)
     evaluator_provider: str | None = None
     evaluator_model: str | None = None
-    databases: list[str] = Field(
-        default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
-        description="List of databases to search",
+    databases: list[str] | None = Field(
+        default=None,
+        description=(
+            "List of databases to search. None means the legacy default "
+            "(semantic_scholar, openalex, pubmed) — every call site already "
+            "guards with ``request.databases or [...]``."
+        ),
     )
     conversation_history: list[dict[str, str]] | None = Field(
         default=None,
@@ -185,6 +189,23 @@ class RAGRequest(BaseModel):
     crossref_concurrency: int | None = Field(
         default=None, ge=1, le=10,
         description="Overrides Crossref enrichment concurrency (1-10)",
+    )
+
+    # === Per-call screening / download knobs ===
+    # Each is None by default; modes that perform screening fall back to
+    # their existing config defaults. Clamping happens at the MCP boundary
+    # (single source of truth) so internal callers are trusted.
+    screen_method: str | None = Field(
+        default=None,
+        description='Screening method: "bm25" | "rerank" | "llm". None = mode default.',
+    )
+    screen_threshold: float | None = Field(
+        default=None, ge=0.0, le=1.0,
+        description="Relevance threshold in [0, 1]. None = mode default.",
+    )
+    max_papers_to_download: int | None = Field(
+        default=None, ge=1, le=50,
+        description="Hard cap on papers downloaded for full-text analysis (1-50).",
     )
     # max_iterations already exists; existing validator stays.
 
