@@ -210,15 +210,17 @@ export default function SettingsPage() {
             </Field>
 
             <Field label={`Min relevance · ${prefs.minRelevance.toFixed(2)}`}>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={prefs.minRelevance}
-                onChange={(e) => update("minRelevance", Number(e.target.value))}
-                className="w-full accent-[var(--cnrs-blue)]"
-              />
+              <div className="flex h-[38px] items-center">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={prefs.minRelevance}
+                  onChange={(e) => update("minRelevance", Number(e.target.value))}
+                  className="w-full accent-[var(--cnrs-blue)]"
+                />
+              </div>
             </Field>
 
             <Field
@@ -236,17 +238,19 @@ export default function SettingsPage() {
             </Field>
 
             <Field label={`Screen threshold · ${prefs.screenThreshold.toFixed(2)}`}>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={prefs.screenThreshold}
-                onChange={(e) =>
-                  update("screenThreshold", Number(e.target.value))
-                }
-                className="w-full accent-[var(--cnrs-blue)]"
-              />
+              <div className="flex h-[38px] items-center">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={prefs.screenThreshold}
+                  onChange={(e) =>
+                    update("screenThreshold", Number(e.target.value))
+                  }
+                  className="w-full accent-[var(--cnrs-blue)]"
+                />
+              </div>
             </Field>
           </Grid>
         </Card>
@@ -264,17 +268,25 @@ export default function SettingsPage() {
                 <option value="dark">Dark</option>
               </Select>
             </Field>
-            <Toggle
-              label="Show reasoning trail by default"
-              checked={prefs.showThinkingByDefault}
-              onChange={(v) => update("showThinkingByDefault", v)}
-            />
-            <Toggle
-              label="Estimate tokens while typing"
-              checked={prefs.estimateTokensWhileTyping}
-              onChange={(v) => update("estimateTokensWhileTyping", v)}
-            />
           </Grid>
+
+          <div className="mt-4 border-t border-[var(--border)] pt-4">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              Chat behavior
+            </p>
+            <Grid>
+              <Toggle
+                label="Show reasoning trail by default"
+                checked={prefs.showThinkingByDefault}
+                onChange={(v) => update("showThinkingByDefault", v)}
+              />
+              <Toggle
+                label="Estimate tokens while typing"
+                checked={prefs.estimateTokensWhileTyping}
+                onChange={(v) => update("estimateTokensWhileTyping", v)}
+              />
+            </Grid>
+          </div>
         </Card>
 
         {/* API keys (read-only — security) */}
@@ -355,7 +367,7 @@ function Card({
 
 function Grid({ children }: { children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+    <div className="grid grid-cols-1 items-start gap-x-6 gap-y-4 sm:grid-cols-2">
       {children}
     </div>
   );
