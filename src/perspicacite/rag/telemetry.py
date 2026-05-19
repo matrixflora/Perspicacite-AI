@@ -190,3 +190,80 @@ class NullTelemetrySink:
 
     def __bool__(self) -> bool:
         return False
+
+
+class ResponseMetadataCollector:
+    """Accumulates response-level metadata from telemetry events.
+
+    Conforms to the .append(event) sink protocol so it can be passed
+    alongside other sinks (e.g. fan-out a request.telemetry_sink to
+    [MCPProgressAdapter sink, ResponseMetadataCollector]).
+
+    Call ``.as_response_extras()`` after the RAG run to get a dict
+    that can be merged into the final JSON response.
+    """
+
+    def __init__(self) -> None:
+        self._attempts: list[dict] = []
+        self._query_rephrasings: list[dict] = []
+        self._usage_tokens_in: int = 0
+        self._usage_tokens_out: int = 0
+        self._usage_cost_usd: float = 0.0
+        self._usage_model: str | None = None
+
+    def append(self, event: Any) -> None:
+        """Sink-protocol entry. Tolerates non-dict and unknown-kind input."""
+        if not isinstance(event, dict):
+            return
+        kind = event.get("kind")
+        if kind == "provider_progress" and event.get("phase") == "done":
+            self._attempts.append(
+                {
+                    "query": event.get("query"),
+                    "provider_counts": dict(event.get("by_provider") or {}),
+                    "hit_count": int(event.get("total", 0)),
+                }
+            )
+        elif kind == "query_rephrased":
+            self._query_rephrasings.append(
+                {
+                    "original": event.get("original"),
+                    "refined": event.get("rewritten") or event.get("refined"),
+                    "reason": event.get("reason"),
+                }
+            )
+        elif kind == "tokens":
+            try:
+                self._usage_tokens_in += int(event.get("in") or 0)
+                self._usage_tokens_out += int(event.get("out") or 0)
+            except (TypeError, ValueError):
+                pass
+        elif kind == "cost_estimate":
+            try:
+                self._usage_cost_usd += float(event.get("usd") or 0.0)
+                self._usage_model = event.get("model") or self._usage_model
+            except (TypeError, ValueError):
+                pass
+
+    async def on_event_async(self, event: Any) -> None:
+        """Async sink-protocol entry (delegates to .append)."""
+        self.append(event)
+
+    def as_response_extras(self) -> dict:
+        out: dict = {}
+        if self._attempts:
+            out["attempts"] = list(self._attempts)
+        if self._query_rephrasings:
+            out["query_rephrasings"] = list(self._query_rephrasings)
+        if (
+            self._usage_tokens_in
+            or self._usage_tokens_out
+            or self._usage_cost_usd
+        ):
+            out["usage"] = {
+                "tokens_in": self._usage_tokens_in,
+                "tokens_out": self._usage_tokens_out,
+                "model": self._usage_model,
+                "cost_usd_estimate": round(self._usage_cost_usd, 6),
+            }
+        return out
