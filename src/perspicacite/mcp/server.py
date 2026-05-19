@@ -4221,6 +4221,169 @@ async def search_by_passage(
         return _json_error(f"search_by_passage failed: {e}")
 
 
+# =============================================================================
+# Tool: get_relevant_passages (with adaptive retry)
+# =============================================================================
+
+
+async def _rephrase_query(query: str, *, context: str | None = None) -> str | None:
+    """Wrap the search.query_optimizer for one-shot rephrasing.
+
+    Returns None when the optimizer can't suggest a rewrite (we then bail
+    on adaptive retry rather than loop). Internal helper; patched in tests.
+
+    Note: the underlying ``optimize_query`` takes an ``app_state`` kwarg and
+    returns an ``OptimizationResult``. We pass ``mcp_state`` (which exposes
+    the same ``config`` / ``llm_client`` attributes the optimizer needs) and
+    map the result back to a plain string (or ``None`` when no rewrite was
+    applied).
+    """
+    try:
+        from perspicacite.search.query_optimizer import optimize_query
+
+        if not mcp_state.initialized or mcp_state.config is None:
+            return None
+
+        result = await optimize_query(
+            query=query,
+            context=context,
+            app_state=mcp_state,
+            optimize_enabled=True,
+        )
+        if not result or not result.applied:
+            return None
+        refined = (result.searched_query or "").strip()
+        if not refined or refined == query.strip():
+            return None
+        return refined
+    except Exception as e:
+        logger.warning("query_rephrase_failed", error=str(e), query=query)
+        return None
+
+
+@mcp.tool()
+async def get_relevant_passages(
+    query: str,
+    kb_name: str = "default",
+    kb_names: list[str] | None = None,
+    k: int = 10,
+    paper_doi: str | None = None,
+    adaptive: bool = False,
+) -> str:
+    """
+    Keyword-style passage retrieval with optional adaptive re-query on empty.
+
+    Like ``search_by_passage`` but treats the input as a search query rather
+    than a piece of source text. When ``adaptive=True`` and the first call
+    returns zero passages, the server invokes the query optimizer once and
+    retries. The response always includes ``attempts`` (1 or 2 entries) and,
+    when adaptive fired, ``refined_query``.
+
+    Args:
+        query: Search query (keywords / short prompt).
+        kb_name: Single KB scope.
+        kb_names: Optional multi-KB list (same embedding model required).
+        k: Top-k passages per attempt (max 50).
+        paper_doi: Optional DOI scope-filter (reserved; not yet enforced).
+        adaptive: When True, retry once with a rephrased query on empty.
+
+    Returns:
+        JSON {"success": True, "passages": [...], "attempts": [...], "refined_query": "..."?}
+        or {"success": False, "error": "..."}.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    try:
+        from perspicacite.retrieval.passage_search import search_passages
+
+        # Build retriever (same pattern as search_by_passage).
+        if kb_names and len(kb_names) > 1:
+            from perspicacite.retrieval.multi_kb import (
+                MultiKBRetriever,
+                check_embedding_compat,
+            )
+
+            metas = [
+                await state.session_store.get_kb_metadata(n) for n in kb_names
+            ]
+            for i, meta in enumerate(metas):
+                if meta is None:
+                    return _json_error(
+                        f"Knowledge base not found: {kb_names[i]}"
+                    )
+            compat_msg = check_embedding_compat(metas)
+            if compat_msg:
+                return _json_error(compat_msg)
+            retriever = MultiKBRetriever(
+                vector_store=state.vector_store,
+                embedding_service=state.embedding_provider,
+                kb_metas=metas,
+            )
+        else:
+            from perspicacite.models.kb import chroma_collection_name_for_kb
+            from perspicacite.rag.dynamic_kb import (
+                DynamicKnowledgeBase,
+                KnowledgeBaseConfig,
+            )
+
+            effective_kb = (
+                kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
+            )
+            kb_meta = await state.session_store.get_kb_metadata(effective_kb)
+            if not kb_meta:
+                return _json_error(
+                    f"Knowledge base '{effective_kb}' not found"
+                )
+            retriever = DynamicKnowledgeBase(
+                state.vector_store,
+                state.embedding_provider,
+                config=KnowledgeBaseConfig(
+                    vector_size=state.embedding_provider.dimension,
+                ),
+            )
+            retriever.collection_name = chroma_collection_name_for_kb(
+                effective_kb
+            )
+            retriever._initialized = True
+
+        attempts: list[dict] = []
+        matches = await search_passages(retriever, text=query, k=k)
+        attempts.append({"query": query, "hit_count": len(matches)})
+        refined: str | None = None
+
+        if adaptive and not matches:
+            refined = await _rephrase_query(query)
+            if refined:
+                matches = await search_passages(retriever, text=refined, k=k)
+                attempts.append({"query": refined, "hit_count": len(matches)})
+
+        return _json_ok(
+            {
+                "passages": [
+                    {
+                        "text": m.chunk_text,
+                        "source_doi": m.source.doi,
+                        "source_url": m.source.source_url,
+                        "license_id": m.source.license_id,
+                        "score": m.score,
+                        "kb_name": m.kb_name,
+                    }
+                    for m in matches
+                ],
+                "attempts": attempts,
+                "refined_query": refined,
+            }
+        )
+
+    except ValueError as e:
+        return _json_error(str(e))
+    except Exception as e:
+        logger.error("mcp_get_relevant_passages_error", error=str(e))
+        return _json_error(f"get_relevant_passages failed: {e}")
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
@@ -4228,6 +4391,7 @@ _TOOL_NAMES: list[str] = [
     "list_knowledge_bases",
     "search_knowledge_base",
     "search_by_passage",
+    "get_relevant_passages",
     "create_knowledge_base",
     "add_papers_to_kb",
     "generate_report",
