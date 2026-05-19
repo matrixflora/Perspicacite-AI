@@ -7,6 +7,7 @@ This module is the shared core behind two MCP tools — ``search_by_passage``
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -65,7 +66,10 @@ def _to_match(raw: dict[str, Any]) -> PassageMatch:
     meta = _coerce_metadata(raw.get("metadata"))
     paper_id = raw.get("paper_id") or meta.get("paper_id") or meta.get("doi") or ""
     kb = raw.get("kb_name") or meta.get("kb_name")
-    chunk_id = raw.get("chunk_id") or f"{kb}:{paper_id}:{hash(raw.get('text', '')) & 0xFFFF}"
+    text_hash = hashlib.blake2b(
+        (raw.get("text") or "").encode("utf-8"), digest_size=8
+    ).hexdigest()
+    chunk_id = raw.get("chunk_id") or f"{kb}:{paper_id}:{text_hash}"
     source = PassageSource(
         doi=meta.get("doi"),
         title=meta.get("title"),
@@ -96,6 +100,10 @@ async def search_passages(
     The retriever knows which KB(s) to query and how. This function only
     handles input validation, k-clamping, response normalisation, and the
     optional min_score filter.
+
+    Note: when ``min_score`` is supplied, the returned list may contain
+    fewer than ``k`` entries (or be empty) because the filter is applied
+    after retrieval.
     """
     _validate_text(text)
     capped_k = min(max(k, 1), MAX_K)

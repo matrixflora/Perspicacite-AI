@@ -86,3 +86,40 @@ async def test_search_passages_clamps_k_to_max():
     retriever = _FakeRetriever([])
     await search_passages(retriever, text="x", k=999)
     assert retriever.calls[0][1] == 50  # MAX_K
+
+
+async def test_search_passages_synthesized_chunk_id_is_stable():
+    """When the source dict lacks chunk_id, the synthesized one must be
+    deterministic across runs so downstream dedupe / cache stays consistent."""
+    retriever = _FakeRetriever(
+        results=[
+            {
+                "text": "stable content",
+                "score": 0.5,
+                "paper_id": "10.1/x",
+                "metadata": {},
+                "kb_name": "kb",
+            }
+        ],
+    )
+    first = (await search_passages(retriever, text="q", k=1))[0]
+    second = (await search_passages(retriever, text="q", k=1))[0]
+    assert first.chunk_id == second.chunk_id
+    assert first.chunk_id.startswith("kb:10.1/x:")
+
+
+async def test_search_passages_passthrough_chunk_id():
+    retriever = _FakeRetriever(
+        results=[
+            {
+                "chunk_id": "explicit-id-123",
+                "text": "x",
+                "score": 0.5,
+                "paper_id": "p",
+                "metadata": {},
+                "kb_name": "kb",
+            }
+        ],
+    )
+    out = await search_passages(retriever, text="q", k=1)
+    assert out[0].chunk_id == "explicit-id-123"
