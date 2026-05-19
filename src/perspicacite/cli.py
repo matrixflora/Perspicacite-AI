@@ -518,7 +518,7 @@ def _start_mcp_and_web(config, app) -> None:
     # Initialize MCP state
     from perspicacite.mcp.server import mcp, mcp_state
 
-    asyncio.get_event_loop().run_until_complete(mcp_state.initialize(config))
+    asyncio.run(mcp_state.initialize(config))
 
     # Get MCP ASGI app
     mcp_app = mcp.http_app()

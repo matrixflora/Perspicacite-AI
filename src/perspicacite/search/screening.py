@@ -222,7 +222,7 @@ async def screen_papers_rerank(
     import asyncio
     import math
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     model = await loop.run_in_executor(None, lambda: CrossEncoder(model_name))
 
     pairs = [

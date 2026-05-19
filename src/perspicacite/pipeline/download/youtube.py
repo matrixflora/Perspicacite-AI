@@ -282,7 +282,7 @@ async def fetch_youtube_transcript(
         # youtube-transcript-api is synchronous + thread-blocking;
         # offload to a thread so we don't stall the event loop.
         import asyncio
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             fetched = await loop.run_in_executor(
                 None,

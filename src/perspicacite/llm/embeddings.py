@@ -202,7 +202,7 @@ class SentenceTransformerEmbeddingProvider:
             model = self._get_model()
 
             # Run in thread pool since sentence-transformers is CPU-bound
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             embeddings = await loop.run_in_executor(
                 None,
                 lambda: model.encode(
