@@ -4131,24 +4131,11 @@ async def search_by_passage(
         min_score: Optional similarity floor; matches below are dropped.
 
     Returns:
-        JSON {"ok": True, "results": [...]} or {"ok": False, "error": "..."}.
+        JSON {"success": True, "results": [...]} or {"success": False, "error": "..."}.
     """
-    def _ok(results: list[dict[str, Any]]) -> str:
-        return json.dumps({"ok": True, "results": results}, default=str)
-
-    def _err(message: str) -> str:
-        return json.dumps({"ok": False, "error": message}, default=str)
-
     state = _require_state()
     if isinstance(state, str):
-        # ``_require_state`` returns a ``_json_error`` string (shape:
-        # {"success": False, ...}) — translate to the ``ok``-shape contract
-        # this tool advertises.
-        try:
-            inner = json.loads(state)
-            return _err(inner.get("error", "MCP server not initialized"))
-        except Exception:
-            return _err("MCP server not initialized")
+        return state
 
     try:
         from perspicacite.retrieval.passage_search import search_passages
@@ -4165,10 +4152,10 @@ async def search_by_passage(
             ]
             for i, meta in enumerate(metas):
                 if meta is None:
-                    return _err(f"Knowledge base not found: {kb_names[i]}")
+                    return _json_error(f"Knowledge base not found: {kb_names[i]}")
             compat_msg = check_embedding_compat(metas)
             if compat_msg:
-                return _err(compat_msg)
+                return _json_error(compat_msg)
 
             retriever = MultiKBRetriever(
                 vector_store=state.vector_store,
@@ -4187,7 +4174,7 @@ async def search_by_passage(
             )
             kb_meta = await state.session_store.get_kb_metadata(effective_kb)
             if not kb_meta:
-                return _err(f"Knowledge base '{effective_kb}' not found")
+                return _json_error(f"Knowledge base '{effective_kb}' not found")
             retriever = DynamicKnowledgeBase(
                 state.vector_store,
                 state.embedding_provider,
@@ -4204,32 +4191,34 @@ async def search_by_passage(
             retriever, text=text, k=k, min_score=min_score
         )
 
-        return _ok(
-            [
-                {
-                    "chunk_id": m.chunk_id,
-                    "chunk_text": m.chunk_text,
-                    "score": m.score,
-                    "source": {
-                        "doi": m.source.doi,
-                        "title": m.source.title,
-                        "authors": m.source.authors,
-                        "year": m.source.year,
-                        "bibkey": m.source.bibkey,
-                        "source_url": m.source.source_url,
-                        "license_id": m.source.license_id,
-                    },
-                    "kb_name": m.kb_name,
-                }
-                for m in matches
-            ]
+        return _json_ok(
+            {
+                "results": [
+                    {
+                        "chunk_id": m.chunk_id,
+                        "chunk_text": m.chunk_text,
+                        "score": m.score,
+                        "source": {
+                            "doi": m.source.doi,
+                            "title": m.source.title,
+                            "authors": m.source.authors,
+                            "year": m.source.year,
+                            "bibkey": m.source.bibkey,
+                            "source_url": m.source.source_url,
+                            "license_id": m.source.license_id,
+                        },
+                        "kb_name": m.kb_name,
+                    }
+                    for m in matches
+                ]
+            }
         )
 
     except ValueError as e:
-        return _err(str(e))
+        return _json_error(str(e))
     except Exception as e:
         logger.error("mcp_search_by_passage_error", error=str(e))
-        return _err(f"search_by_passage failed: {e}")
+        return _json_error(f"search_by_passage failed: {e}")
 
 
 _TOOL_NAMES: list[str] = [

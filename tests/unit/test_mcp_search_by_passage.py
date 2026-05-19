@@ -47,7 +47,7 @@ async def test_search_by_passage_returns_matches(mock_state):
             )
 
     payload = json.loads(raw)
-    assert payload["ok"] is True
+    assert payload["success"] is True
     results = payload["results"]
     assert len(results) == 1
     assert results[0]["chunk_text"].startswith("Temperature affects")
@@ -59,7 +59,7 @@ async def test_search_by_passage_rejects_empty(mock_state):
     with patch.object(mcp_server, "_require_state", return_value=mock_state):
         raw = await mcp_server.search_by_passage(text="", kb_name="kb_a")
     payload = json.loads(raw)
-    assert payload["ok"] is False
+    assert payload["success"] is False
     assert "empty" in payload["error"].lower()
 
 
@@ -68,5 +68,5 @@ async def test_search_by_passage_unknown_kb_returns_error(mock_state):
     with patch.object(mcp_server, "_require_state", return_value=mock_state):
         raw = await mcp_server.search_by_passage(text="hi", kb_name="ghost")
     payload = json.loads(raw)
-    assert payload["ok"] is False
+    assert payload["success"] is False
     assert "ghost" in payload["error"]
