@@ -135,13 +135,29 @@ class DomainAwareAggregator:
         year_min: int | None = None,
         year_max: int | None = None,
         apis: list[str] | None = None,
+        databases: list[str] | None = None,
         **kwargs: Any,
     ) -> list[Paper]:
         """Search all domain-appropriate providers and merge results.
 
-        ``apis`` is forwarded to the SciLEx provider only (backward compat
-        with mcp/server.py and search_to_kb.py call sites).
+        ``apis`` and ``databases`` are aliases: the MCP surface uses
+        ``databases`` as the user-facing name, while ``apis`` is the
+        legacy name retained for backward compat with search_to_kb.py.
+        When provided, the aggregator restricts its provider fan-out to
+        the named entries (matched against ``provider.name``), and
+        forwards the filter down to SciLEx so it can restrict its own
+        sub-providers too.
         """
+        # ``databases`` and ``apis`` are aliases; databases wins when both
+        # are set, otherwise fall back to whichever is provided.
+        selected_names: list[str] | None
+        if databases is not None:
+            selected_names = list(databases)
+        elif apis is not None:
+            selected_names = list(apis)
+        else:
+            selected_names = None
+
         domains = self._classifier.classify(query)
         providers = self._select_providers(domains)
 
@@ -149,11 +165,38 @@ class DomainAwareAggregator:
             logger.warning("no_providers_selected", query=query[:80], domains=domains)
             return []
 
+        # When a databases filter is supplied, narrow the provider fan-out
+        # to providers whose ``name`` is in the requested set. SciLEx is
+        # always retained when any name in the filter is a SciLEx
+        # sub-provider, since SciLEx itself dispatches to those.
+        if selected_names:
+            requested = set(selected_names)
+            # Sub-provider names that SciLEx routes to internally.
+            scilex_sub_names = {
+                "arxiv", "crossref", "pubmed", "semantic_scholar", "openalex",
+            }
+            wants_scilex_sub = bool(requested & scilex_sub_names)
+            filtered_providers = []
+            for p in providers:
+                name = getattr(p, "name", "")
+                if name in requested:
+                    filtered_providers.append(p)
+                elif name == "scilex" and wants_scilex_sub:
+                    filtered_providers.append(p)
+            if filtered_providers:
+                providers = filtered_providers
+
         tasks = []
         for p in providers:
             extra: dict[str, Any] = {}
-            if apis and getattr(p, "name", "") == "scilex":
-                extra["apis"] = apis
+            if selected_names and getattr(p, "name", "") == "scilex":
+                # Forward only the names SciLEx itself dispatches to.
+                scilex_sub_names = {
+                    "arxiv", "crossref", "pubmed", "semantic_scholar", "openalex",
+                }
+                sx_apis = [n for n in selected_names if n in scilex_sub_names]
+                if sx_apis:
+                    extra["apis"] = sx_apis
             tasks.append(
                 self._call_provider(
                     p,

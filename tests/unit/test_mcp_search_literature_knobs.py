@@ -1,4 +1,11 @@
-"""Tests for the new ``databases`` kwarg on search_literature MCP tool."""
+"""Tests for the ``databases`` kwarg on the search_literature MCP tool.
+
+The MCP layer plumbs the ``databases`` filter through the
+``DomainAwareAggregator`` so the multi-provider fan-out (europepmc, ads,
+pubchem, inspire, google_scholar, scilex, ...) is preserved. These tests
+patch the aggregator's ``search`` method to capture what the MCP layer
+forwards.
+"""
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,16 +21,29 @@ def _state():
     return s
 
 
-async def test_databases_kwarg_restricts_providers():
-    captured = {}
-
+def _stub_aggregator(capture: dict) -> MagicMock:
+    """Return an aggregator stub whose ``search`` records its kwargs."""
     async def _fake_search(*args, **kwargs):
-        captured["databases"] = kwargs.get("databases")
-        return [], {"errors_by_database": {}}
+        capture["databases"] = kwargs.get("databases")
+        capture["apis"] = kwargs.get("apis")
+        return []
+
+    agg = MagicMock()
+    agg.available = True
+    agg.search = AsyncMock(side_effect=_fake_search)
+    agg.last_errors_by_database = {}
+    agg._providers = []
+    return agg
+
+
+@pytest.mark.asyncio
+async def test_databases_kwarg_restricts_providers():
+    captured: dict = {}
+    agg = _stub_aggregator(captured)
 
     with patch.object(mcp_server, "_require_state", return_value=_state()), patch(
-        "perspicacite.search.scilex_adapter.SciLExAdapter.search_with_warnings",
-        new=_fake_search,
+        "perspicacite.search.domain_aggregator.build_aggregator",
+        return_value=agg,
     ):
         raw = await mcp_server.search_literature(
             query="x", max_results=5, databases=["arxiv", "crossref"]
@@ -35,16 +55,14 @@ async def test_databases_kwarg_restricts_providers():
     assert payload.get("success", True) is not False
 
 
+@pytest.mark.asyncio
 async def test_databases_unknown_entries_dropped():
-    captured = {}
-
-    async def _fake_search(*args, **kwargs):
-        captured["databases"] = kwargs.get("databases")
-        return [], {"errors_by_database": {}}
+    captured: dict = {}
+    agg = _stub_aggregator(captured)
 
     with patch.object(mcp_server, "_require_state", return_value=_state()), patch(
-        "perspicacite.search.scilex_adapter.SciLExAdapter.search_with_warnings",
-        new=_fake_search,
+        "perspicacite.search.domain_aggregator.build_aggregator",
+        return_value=agg,
     ):
         await mcp_server.search_literature(
             query="x", max_results=5,
@@ -57,37 +75,33 @@ async def test_databases_unknown_entries_dropped():
     assert "nonsense_db" not in captured["databases"]
 
 
+@pytest.mark.asyncio
 async def test_databases_default_passes_none():
-    captured = {"db": "sentinel"}
-
-    async def _fake_search(*args, **kwargs):
-        captured["db"] = kwargs.get("databases")
-        return [], {"errors_by_database": {}}
+    captured: dict = {"databases": "sentinel"}
+    agg = _stub_aggregator(captured)
 
     with patch.object(mcp_server, "_require_state", return_value=_state()), patch(
-        "perspicacite.search.scilex_adapter.SciLExAdapter.search_with_warnings",
-        new=_fake_search,
+        "perspicacite.search.domain_aggregator.build_aggregator",
+        return_value=agg,
     ):
         await mcp_server.search_literature(query="x", max_results=5)
 
-    assert captured["db"] is None
+    assert captured["databases"] is None
 
 
+@pytest.mark.asyncio
 async def test_databases_empty_after_filter_falls_back_to_default():
-    captured = {}
-
-    async def _fake_search(*args, **kwargs):
-        captured["databases"] = kwargs.get("databases")
-        return [], {"errors_by_database": {}}
+    captured: dict = {}
+    agg = _stub_aggregator(captured)
 
     with patch.object(mcp_server, "_require_state", return_value=_state()), patch(
-        "perspicacite.search.scilex_adapter.SciLExAdapter.search_with_warnings",
-        new=_fake_search,
+        "perspicacite.search.domain_aggregator.build_aggregator",
+        return_value=agg,
     ):
         await mcp_server.search_literature(
             query="x", max_results=5,
             databases=["all_unknown_1", "all_unknown_2"],
         )
 
-    # All entries dropped → falls back to None (server defaults)
+    # All entries dropped → falls back to None (server defaults).
     assert captured["databases"] is None

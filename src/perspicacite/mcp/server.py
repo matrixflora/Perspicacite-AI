@@ -434,30 +434,8 @@ async def search_literature(
             filtered_databases = None  # fall back to defaults
 
     try:
-        from perspicacite.search.domain_aggregator import DomainAwareAggregator
-        from perspicacite.search.scilex_adapter import SciLExAdapter
-
         aggregator = build_aggregator(state.config)
-        # Locate the SciLExAdapter the aggregator wired up (if any) so we
-        # can call ``search_with_warnings`` directly — this gives us the
-        # structured warnings (dropped APIs, quota notes) without
-        # re-running the whole search. The fallback to constructing a
-        # fresh adapter only kicks in when we hold a *real* aggregator —
-        # otherwise we'd bypass test stubs that mock the aggregator
-        # wholesale.
-        scilex_adapter: SciLExAdapter | None = None
-        is_real_aggregator = isinstance(aggregator, DomainAwareAggregator)
-        if is_real_aggregator:
-            for _prov in getattr(aggregator, "_providers", []) or []:
-                if isinstance(_prov, SciLExAdapter):
-                    scilex_adapter = _prov
-                    break
-            if scilex_adapter is None:
-                try:
-                    scilex_adapter = SciLExAdapter.from_config(state.config)
-                except Exception:
-                    scilex_adapter = None
-        if not aggregator.available and scilex_adapter is None:
+        if not aggregator.available:
             return _json_error(
                 "No search providers are available. Install SciLEx with: "
                 "`uv pip install -e \".[scilex]\"` from the Perspicacité repo, "
@@ -488,36 +466,20 @@ async def search_literature(
         # quality hits. Capped at SciLEx's per-DB ceiling.
         fetch_n = min(max_results * 3, 100) if min_relevance > 0 else max_results
 
-        # Primary path: call SciLEx via ``search_with_warnings`` so we get
-        # structured warnings (dropped APIs, quota notes) in one round
-        # trip. The ``databases`` kwarg is the user-facing alias the MCP
-        # surface accepts. When the adapter is unavailable we fall back
-        # to the multi-provider aggregator path.
-        if scilex_adapter is not None:
-            sx_result = await scilex_adapter.search_with_warnings(
-                query=opt.searched_query,
-                max_results=fetch_n,
-                year_min=year_min,
-                year_max=year_max,
-                article_type=article_type,
-                databases=filtered_databases,
-            )
-            # ``search_with_warnings`` historically returns a
-            # SciLExSearchResult; tests may patch it to return a
-            # ``(papers, info)`` tuple. Tolerate both shapes.
-            if isinstance(sx_result, tuple):
-                papers = list(sx_result[0]) if sx_result else []
-            else:
-                papers = list(getattr(sx_result, "papers", []) or [])
-        else:
-            papers = await aggregator.search(
-                query=opt.searched_query,
-                max_results=fetch_n,
-                year_min=year_min,
-                year_max=year_max,
-                apis=filtered_databases or ["semantic_scholar", "openalex", "pubmed"],
-                article_type=article_type,
-            )
+        # Dispatch to the multi-provider aggregator. The ``databases``
+        # filter is plumbed through so the aggregator can restrict its
+        # fan-out and SciLEx can restrict its sub-providers — without
+        # bypassing non-SciLEx providers (europepmc, ads, pubchem,
+        # inspire, google_scholar, ...).
+        papers = await aggregator.search(
+            query=opt.searched_query,
+            max_results=fetch_n,
+            year_min=year_min,
+            year_max=year_max,
+            apis=filtered_databases,
+            databases=filtered_databases,
+            article_type=article_type,
+        )
 
         # Collect structured warnings from SciLEx (e.g. unknown APIs dropped).
         mcp_warnings: list[dict] = []
@@ -643,7 +605,9 @@ async def search_literature(
         # F-19: surface per-database failures so external agents can tell
         # "no matches" from "the upstream DB was down".
         errors_by_db = dict(getattr(aggregator, "last_errors_by_database", {}))
-        databases_queried = databases or ["semantic_scholar", "openalex", "pubmed"]
+        databases_queried = (
+            filtered_databases or ["semantic_scholar", "openalex", "pubmed"]
+        )
         all_dbs_failed = (
             bool(errors_by_db)
             and len(errors_by_db) >= len(databases_queried)
