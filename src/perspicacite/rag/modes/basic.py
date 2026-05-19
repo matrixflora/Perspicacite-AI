@@ -73,6 +73,7 @@ async def _web_fallback_papers(
     optimize_query: bool | None = None,
     app_state: Any = None,
     telemetry: list[dict[str, Any]] | None = None,
+    min_relevance: float = 0.0,
 ) -> list[dict[str, Any]]:
     # Live literature search used when the KB returns nothing. Routes
     # through the unified resolve_papers_pipeline (aggregator → Crossref

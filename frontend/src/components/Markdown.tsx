@@ -12,48 +12,41 @@ import rehypeSanitize from "rehype-sanitize";
 // renders from streamed model output.
 
 const components: Components = {
-  // Headings — IBM Plex Sans, CNRS-Blue, slightly tighter tracking.
   h1: ({ children }) => (
-    <h1 className="mt-6 mb-3 text-2xl font-semibold tracking-tight text-[var(--cnrs-blue)]">
+    <h1 className="mt-6 mb-3 text-2xl font-semibold tracking-tight text-[var(--accent-fg)]">
       {children}
     </h1>
   ),
   h2: ({ children }) => (
-    <h2 className="mt-5 mb-2 text-xl font-semibold tracking-tight text-[var(--cnrs-blue)]">
+    <h2 className="mt-5 mb-2 text-xl font-semibold tracking-tight text-[var(--accent-fg)]">
       {children}
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 className="mt-4 mb-1.5 text-base font-semibold text-[var(--cnrs-blue)]">
+    <h3 className="mt-4 mb-1.5 text-base font-semibold text-[var(--accent-fg)]">
       {children}
     </h3>
   ),
   h4: ({ children }) => (
-    <h4 className="mt-3 mb-1 text-sm font-semibold text-[var(--cnrs-blue)]">
+    <h4 className="mt-3 mb-1 text-sm font-semibold text-[var(--accent-fg)]">
       {children}
     </h4>
   ),
-
-  // Paragraphs with comfortable reading width.
   p: ({ children }) => (
     <p className="my-3 text-[15px] leading-relaxed text-[var(--text-body)]">
       {children}
     </p>
   ),
-
-  // Links open in a new tab; CNRS-blue underline on hover.
   a: ({ href, children }) => (
     <a
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      className="font-medium text-[var(--cnrs-blue)] underline decoration-[var(--cnrs-yellow)] decoration-2 underline-offset-2 transition hover:decoration-[var(--cnrs-blue)]"
+      className="font-medium text-[var(--accent-fg)] underline decoration-[var(--cnrs-yellow)] decoration-2 underline-offset-2 transition hover:decoration-[var(--accent-fg)]"
     >
       {children}
     </a>
   ),
-
-  // Lists — bullet and ordered.
   ul: ({ children }) => (
     <ul className="my-3 ml-5 list-disc space-y-1 text-[15px] leading-relaxed text-[var(--text-body)] marker:text-[var(--cnrs-yellow)]">
       {children}
@@ -65,15 +58,11 @@ const components: Components = {
     </ol>
   ),
   li: ({ children }) => <li className="pl-1">{children}</li>,
-
-  // Blockquote — CNRS Yellow left bar.
   blockquote: ({ children }) => (
     <blockquote className="my-3 border-l-4 border-[var(--cnrs-yellow)] bg-[var(--bg-soft)] px-4 py-2 text-[14px] italic text-[var(--text-body)]">
       {children}
     </blockquote>
   ),
-
-  // Inline code vs fenced blocks.
   code: (props) => {
     const { children, className } = props as {
       children?: React.ReactNode;
@@ -98,8 +87,6 @@ const components: Components = {
       {children}
     </pre>
   ),
-
-  // Tables — GFM.
   table: ({ children }) => (
     <div className="my-3 overflow-x-auto rounded-[var(--radius-md)] border border-[var(--border)]">
       <table className="w-full text-sm">{children}</table>
@@ -120,12 +107,7 @@ const components: Components = {
       {children}
     </td>
   ),
-
   hr: () => <hr className="my-5 border-[var(--border)]" />,
-
-  // Numeric citation markers like [1], [2] get an inline pill style
-  // when they appear bare in the text. (The default `text` renderer
-  // gets the string; we let it pass through.)
 };
 
 export function Markdown({

@@ -107,10 +107,6 @@ function AboutModal({ onClose }: { onClose: () => void }) {
             <dd className="font-mono text-[var(--text-body)]">
               {h?.llm?.default_model ?? "—"}
             </dd>
-            <dt className="font-medium text-[var(--text-muted)]">Affiliations</dt>
-            <dd className="text-[var(--text-body)]">
-              CNRS · UniCA · 3iA · ICN UMR 7272
-            </dd>
           </dl>
 
           <div className="mt-5 flex flex-wrap items-center gap-2">

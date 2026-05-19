@@ -23,16 +23,23 @@ export type DatabaseDescriptor = {
   homepage?: string;
   // Tailwind class tokens for the brand chip.
   tone: "blue" | "yellow" | "violet" | "green" | "orange" | "grey" | "blue-pale";
+  // The six "priority" providers are shown in the always-visible row of
+  // the database picker; the rest live behind a "More databases" expander.
+  // Order in this array is the on-screen order.
+  priority?: boolean;
 };
 
+// Order here drives both the picker layout and the "More databases" expander.
+// Priority providers (the six the user asked for) come first.
 export const DATABASES: DatabaseDescriptor[] = [
   {
     id: "semantic_scholar",
     label: "Semantic Scholar",
-    short: "SS",
+    short: "S²",
     blurb: "broad CS + biomed",
     homepage: "https://www.semanticscholar.org",
     tone: "blue",
+    priority: true,
   },
   {
     id: "openalex",
@@ -41,6 +48,7 @@ export const DATABASES: DatabaseDescriptor[] = [
     blurb: "open scholarly graph",
     homepage: "https://openalex.org",
     tone: "violet",
+    priority: true,
   },
   {
     id: "pubmed",
@@ -49,6 +57,7 @@ export const DATABASES: DatabaseDescriptor[] = [
     blurb: "biomedical literature",
     homepage: "https://pubmed.ncbi.nlm.nih.gov",
     tone: "green",
+    priority: true,
   },
   {
     id: "arxiv",
@@ -57,6 +66,7 @@ export const DATABASES: DatabaseDescriptor[] = [
     blurb: "preprints, physics + CS",
     homepage: "https://arxiv.org",
     tone: "orange",
+    priority: true,
   },
   {
     id: "europepmc",
@@ -65,11 +75,21 @@ export const DATABASES: DatabaseDescriptor[] = [
     blurb: "life sciences",
     homepage: "https://europepmc.org",
     tone: "green",
+    priority: true,
+  },
+  {
+    id: "google_scholar",
+    label: "Google Scholar",
+    short: "GS",
+    blurb: "broad coverage (scraped)",
+    homepage: "https://scholar.google.com",
+    tone: "yellow",
+    priority: true,
   },
   {
     id: "core",
     label: "CORE",
-    short: "C",
+    short: "Co",
     blurb: "open-access aggregator",
     homepage: "https://core.ac.uk",
     tone: "blue-pale",
@@ -99,14 +119,6 @@ export const DATABASES: DatabaseDescriptor[] = [
     tone: "grey",
   },
   {
-    id: "google_scholar",
-    label: "Google Scholar",
-    short: "GS",
-    blurb: "broad coverage (scraped)",
-    homepage: "https://scholar.google.com",
-    tone: "yellow",
-  },
-  {
     id: "ieee",
     label: "IEEE",
     short: "iE",
@@ -123,6 +135,13 @@ export const DATABASES: DatabaseDescriptor[] = [
     tone: "orange",
   },
 ];
+
+export const PRIORITY_DATABASES: DatabaseDescriptor[] = DATABASES.filter(
+  (d) => d.priority,
+);
+export const OTHER_DATABASES: DatabaseDescriptor[] = DATABASES.filter(
+  (d) => !d.priority,
+);
 
 const BY_ID = new Map<string, DatabaseDescriptor>(
   DATABASES.map((d) => [d.id, d]),
@@ -156,5 +175,6 @@ export function providerToneClasses(
   }
 }
 
-// Defaults match the original GUI selection.
-export const DEFAULT_DATABASES: DatabaseId[] = ["pubmed", "google_scholar"];
+// Defaults: the six priority providers — gives reasonable breadth out of
+// the box without overloading every query with the slower scrapers.
+export const DEFAULT_DATABASES: DatabaseId[] = PRIORITY_DATABASES.map((d) => d.id);

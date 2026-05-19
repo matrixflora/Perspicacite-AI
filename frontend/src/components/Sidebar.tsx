@@ -6,14 +6,19 @@ import { usePathname, useRouter } from "next/navigation";
 import Image from "next/image";
 import { ThemeToggle } from "./ThemeToggle";
 import { AboutButton } from "./AboutModal";
+import { PhaseGlyph, type PhaseGlyphKey } from "./PhaseGlyph";
 import { conversations as convApi, type Conversation } from "@/lib/api";
 import { groupByRecency } from "@/lib/groupByRecency";
 
-const SECTION_LINKS = [
-  { href: "/kb", label: "Knowledge bases", icon: "📚" },
-  { href: "/survey", label: "Literature survey", icon: "📊" },
-  { href: "/settings", label: "Settings", icon: "⚙" },
-] as const;
+const SECTION_LINKS: ReadonlyArray<{
+  href: string;
+  label: string;
+  glyph: PhaseGlyphKey;
+}> = [
+  { href: "/kb", label: "Knowledge bases", glyph: "kb" },
+  { href: "/survey", label: "Literature survey", glyph: "survey" },
+  { href: "/settings", label: "Settings", glyph: "settings" },
+];
 
 const HISTORY_VISIBLE_LIMIT = 12;
 
@@ -63,7 +68,16 @@ export function Sidebar() {
     : null;
 
   const newChat = () => {
-    router.push("/");
+    // We use `window.history.replaceState` after a successful turn
+    // to update the URL without re-running Next's load effect. Side
+    // effect: Next's internal router state can fall out of sync with
+    // the visible URL, so `router.push("/")` sometimes thinks it's a
+    // no-op. A hard navigation is the only reliable reset.
+    if (typeof window !== "undefined") {
+      window.location.href = "/";
+    } else {
+      router.push("/");
+    }
   };
 
   return (
@@ -77,7 +91,7 @@ export function Sidebar() {
             aria-hidden
           />
           <div className="leading-tight">
-            <p className="text-[13px] font-semibold text-[var(--cnrs-blue)]">
+            <p className="text-[13px] font-semibold text-[var(--accent-fg)]">
               Perspicacité
             </p>
             <p className="text-[10px] text-[var(--text-muted)]">v2 · POC</p>
@@ -190,8 +204,15 @@ export function Sidebar() {
               ].join(" ")}
               aria-current={active ? "page" : undefined}
             >
-              <span aria-hidden className="text-base leading-none">
-                {item.icon}
+              <span
+                aria-hidden
+                className={
+                  active
+                    ? "text-[var(--cnrs-blue)]"
+                    : "text-[var(--text-muted)]"
+                }
+              >
+                <PhaseGlyph glyph={item.glyph} size={16} />
               </span>
               <span>{item.label}</span>
             </Link>
@@ -207,7 +228,7 @@ export function Sidebar() {
           </div>
           <AboutButton />
         </div>
-        <div className="mt-3 flex items-center gap-2 opacity-80">
+        <div className="mt-3 flex flex-wrap items-center gap-2 opacity-80">
           <Image
             src="/brand/logos/LOGO_CNRS_BLEU.png"
             alt="CNRS"
@@ -222,10 +243,32 @@ export function Sidebar() {
             height={22}
             className="h-5 w-auto"
           />
+          <Image
+            src="/brand/logos/3ia_logo_transparent.png"
+            alt="3iA Côte d'Azur"
+            width={40}
+            height={22}
+            className="h-5 w-auto"
+          />
         </div>
-        <p className="mt-1.5 text-[9px] leading-tight text-[var(--text-muted)]">
-          ICN UMR 7272 · 3iA Côte d&apos;Azur
-        </p>
+        <a
+          href="https://github.com/HolobiomicsLab/Perspicacite-AI"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="mt-2 inline-flex items-center gap-1 text-[10px] leading-tight text-[var(--text-muted)] hover:text-[var(--cnrs-blue)]"
+          title="Perspicacité on GitHub"
+        >
+          <svg
+            aria-hidden
+            viewBox="0 0 24 24"
+            width="12"
+            height="12"
+            fill="currentColor"
+          >
+            <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.52-1.32-1.27-1.68-1.27-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.7 1.25 3.36.96.1-.74.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.78 0c2.2-1.49 3.17-1.18 3.17-1.18.62 1.58.23 2.75.11 3.04.73.81 1.18 1.84 1.18 3.1 0 4.43-2.69 5.41-5.26 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5Z" />
+          </svg>
+          <span>github.com/HolobiomicsLab/Perspicacite-AI</span>
+        </a>
       </div>
     </aside>
   );

@@ -1,7 +1,7 @@
 // User-tunable preferences. Persisted to localStorage so they survive
 // reloads. Loaded by ChatPanel + reader pages.
 
-import type { DatabaseId } from "./databases";
+import { DEFAULT_DATABASES, type DatabaseId } from "./databases";
 import type { RAGMode } from "./modes";
 
 export type RelevanceMethod = "bm25" | "rerank" | "llm";
@@ -32,7 +32,7 @@ export const DEFAULT_PREFS: Preferences = {
   defaultMode: "basic",
   maxPapers: 5,
   maxPapersToDownload: 10,
-  defaultDatabases: ["pubmed", "google_scholar"],
+  defaultDatabases: DEFAULT_DATABASES,
   defaultKbName: null,
 
   relevanceMethod: "rerank",

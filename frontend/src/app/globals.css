@@ -8,6 +8,12 @@
   --cnrs-blue: #00284b;          /* Bleu CNRS — Pantone 2965 C / 2975 C */
   --cnrs-yellow: #ffeb6e;        /* Jaune CNRS — Pantone 106 C */
 
+  /* Accent foreground — used for text that sits on the page
+     background (titles, brand text, running-step labels, etc.).
+     Flips to a light tone in dark mode where Bleu CNRS == bg. */
+  --accent-fg: #00284b;
+  --accent-fg-soft: #4a5b75;
+
   /* Complementary palette */
   --cnrs-violet: #6941eb;
   --cnrs-grey: #8296a5;
@@ -73,6 +79,11 @@ html:not(.theme-light) {
     --text-muted: #8296a5;
     --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.4);
     --shadow-elev: 0 16px 48px rgba(0, 0, 0, 0.5);
+    /* In dark mode, "CNRS-blue accent text" disappears against the
+       blue background; flip it to the warm yellow that's already in
+       the brand palette for high contrast. */
+    --accent-fg: #ffeb6e;
+    --accent-fg-soft: #c9d4df;
   }
 }
 
@@ -86,6 +97,8 @@ html.theme-dark {
   --text-muted: #8296a5;
   --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.4);
   --shadow-elev: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --accent-fg: #ffeb6e;
+  --accent-fg-soft: #c9d4df;
 }
 
 /* Manual light override — for users who want to force light even
@@ -162,6 +175,125 @@ html, body {
   animation: pulse-dot 1.2s ease-in-out infinite;
 }
 
+/* The three dots of "Working…" travel forward and back, like a reassuring
+   heartbeat companion to the yellow sun. Each dot is offset so the wave
+   reads as motion across the row. */
+@keyframes typing-dot-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+  40%           { transform: translateY(-2px); opacity: 1; }
+}
+
+.cnrs-typing-dots {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+.cnrs-typing-dots > span {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: typing-dot-bounce 1.1s ease-in-out infinite;
+}
+.cnrs-typing-dots > span:nth-child(2) { animation-delay: 0.18s; }
+.cnrs-typing-dots > span:nth-child(3) { animation-delay: 0.36s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cnrs-typing-dots > span { animation: none; opacity: 0.6; }
+}
+
+/* Vertical spine for the reasoning trail — evokes the indented gutter
+   of a Python function: a soft CNRS-grey line down the left, with a
+   small node disc per step. The spine is faint until hovered. */
+.cnrs-step-spine {
+  position: relative;
+}
+.cnrs-step-spine::before {
+  content: "";
+  position: absolute;
+  left: 7px;          /* aligns with the centre of the 14px node */
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--border) 8%,
+    var(--border) 92%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+/* Shimmer used to suggest token-by-token streaming when the underlying
+   backend hands back a single answer frame (so the counter only ticks
+   once). Subtle — a moving highlight, not a marquee. */
+@keyframes cnrs-shimmer {
+  0%   { background-position: -150% 0; }
+  100% { background-position: 150% 0; }
+}
+.cnrs-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 235, 110, 0.35) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: cnrs-shimmer 1.8s linear infinite;
+}
+
+/* Staggered fade-in for reasoning-trail steps and source cards.
+   When the backend dumps many events in a single React frame, the
+   raw DOM update is instant — but with this animation each child
+   appears with a small per-index delay so the user sees motion.
+   The parent sets --i on each child via inline style. */
+@keyframes cnrs-stagger-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: none; }
+}
+.cnrs-stagger > * {
+  animation: cnrs-stagger-in 240ms ease-out backwards;
+  animation-delay: calc(var(--i, 0) * 50ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cnrs-stagger > * { animation: none; }
+}
+
+/* Soft blinking caret right after the typewriter cursor, so the
+   user knows generation is in progress even between bursts. */
+@keyframes cnrs-caret-blink {
+  0%, 60%   { opacity: 1; }
+  61%, 100% { opacity: 0; }
+}
+.cnrs-caret {
+  display: inline-block;
+  width: 0.55ch;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--cnrs-blue);
+  animation: cnrs-caret-blink 1s steps(2, start) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cnrs-caret { animation: none; opacity: 0.6; }
+}
+
+/* A tiny opacity blink used to mark the ongoing phase in the agentic
+   trail — calmer than the sun-pulse (which we reserve for the
+   heartbeat). Pairs nicely with the static phase glyph. */
+@keyframes cnrs-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+.cnrs-blink {
+  animation: cnrs-blink 1.1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cnrs-blink { animation: none; opacity: 0.8; }
+}
+
 /* The "yellow sun" heartbeat used in the live status bar.
    A small ring around a solid CNRS-Yellow disc with concentric rays
    that breathe outward — louder than a dot, quieter than a spinner. */
@@ -187,6 +319,12 @@ html, body {
   border-radius: 50%;
   background: var(--cnrs-yellow);
   animation: cnrs-sun-pulse 1.6s ease-in-out infinite;
+  /* The box-shadow halo grows ~8 px past the edge during the pulse,
+     so we add visual margin to keep it from being clipped by tight
+     flex parents. The size is conservative so adjacent text doesn't
+     hop. */
+  margin: 4px;
+  flex-shrink: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

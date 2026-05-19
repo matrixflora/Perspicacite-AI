@@ -23,6 +23,7 @@ export type ChatSource = {
   year?: number;
   doi?: string;
   url?: string;
+  journal?: string;
   abstract?: string;
   relevance_score?: number;
   citation_count?: number;
