@@ -26,6 +26,7 @@ from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference, StreamEvent
 from perspicacite.rag.agentic.context import agentic_request_overrides
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.telemetry import emit_phase
 
 logger = get_logger("perspicacite.rag.modes.agentic")
 
@@ -215,7 +216,10 @@ class AgenticRAGMode(BaseRAGMode):
 
         logger.info("AgenticRAGMode streaming via AgenticOrchestrator", query=request.query)
 
+        _phase_sink = getattr(request, "telemetry_sink", None)
+        emit_phase(_phase_sink, phase="plan", state="running")
         yield StreamEvent.status("Initializing agentic research...")
+        _current_phase = "plan"
 
         with agentic_request_overrides(
             recency_weight=getattr(request, "recency_weight", None),
@@ -235,6 +239,10 @@ class AgenticRAGMode(BaseRAGMode):
                     yield StreamEvent.status(event.get("message", ""))
 
                 elif event_type == "tool_call":
+                    if _current_phase != "tools":
+                        emit_phase(_phase_sink, phase=_current_phase, state="done")
+                        emit_phase(_phase_sink, phase="tools", state="running")
+                        _current_phase = "tools"
                     yield StreamEvent.status(
                         f"Executing: {event.get('description', event.get('tool', 'tool'))}"
                     )
@@ -244,6 +252,10 @@ class AgenticRAGMode(BaseRAGMode):
                     pass
 
                 elif event_type == "answer":
+                    if _current_phase != "synthesize":
+                        emit_phase(_phase_sink, phase=_current_phase, state="done")
+                        emit_phase(_phase_sink, phase="synthesize", state="running")
+                        _current_phase = "synthesize"
                     content = event.get("content", "")
                     # Stream the answer in chunks
                     chunk_size = 100
@@ -255,6 +267,7 @@ class AgenticRAGMode(BaseRAGMode):
                     papers = event.get("papers", [])
                     yield StreamEvent.status(f"Found {len(papers)} relevant papers")
 
+        emit_phase(_phase_sink, phase=_current_phase, state="done")
         yield StreamEvent.done()
 
 
