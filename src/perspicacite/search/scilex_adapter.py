@@ -23,6 +23,27 @@ from perspicacite.models.papers import Paper, PaperSource
 logger = get_logger("perspicacite.search.scilex")
 
 
+# Authoritative list of database/provider names callers can request. The
+# names mirror the SciLEx dispatch table inside ``_scilex_search_sync`` plus
+# the additional non-SciLEx providers wired into the domain aggregator
+# (europepmc, ads, pubchem, inspire, google_scholar). The MCP layer filters
+# user-supplied ``databases`` against this set before forwarding, so an
+# unrecognised name is silently dropped rather than reaching providers.
+KNOWN_DATABASES: frozenset[str] = frozenset({
+    "arxiv",
+    "crossref",
+    "pubmed",
+    "semantic_scholar",
+    "openalex",
+    "europepmc",
+    "ads",
+    "pubchem",
+    "inspire",
+    "dblp",
+    "google_scholar",
+})
+
+
 # F-33: cache the per-key validation result so we only hit SS once per
 # adapter init (and not once per query).
 _SS_KEY_CACHE: dict[str, bool] = {}
@@ -742,6 +763,7 @@ class SciLExAdapter:
         year_max: int | None = None,
         article_type: str | None = None,
         apis: list[str] | None = None,
+        databases: list[str] | None = None,
     ) -> SciLExSearchResult:
         """Same as ``search`` but returns a structured result with warnings.
 
@@ -749,7 +771,14 @@ class SciLExAdapter:
         from knowing their api list was partially dropped. The plain
         ``search()`` method is unchanged for legacy callers that only
         want ``list[Paper]``.
+
+        ``databases`` is the user-facing alias for ``apis`` used by the
+        MCP surface; when both are passed, ``databases`` wins. Either is
+        passed through to ``search`` which then filters to providers
+        SciLEx actually dispatches to.
         """
+        if databases is not None:
+            apis = databases
         self._last_dropped_apis = []
         self._last_quota_warning = None
         papers = await self.search(
