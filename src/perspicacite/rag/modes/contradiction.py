@@ -30,6 +30,7 @@ from perspicacite.models.rag import (
 )
 from perspicacite.rag import prompts as _prompts
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
 
 logger = get_logger("perspicacite.rag.modes.contradiction")
@@ -342,9 +343,12 @@ class ContradictionRAGMode(BaseRAGMode):
         tools: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Execute contradiction-detection RAG with streaming."""
+        _phase_sink = getattr(request, "telemetry_sink", None)
         try:
+            emit_phase(_phase_sink, phase="search", state="running")
             yield StreamEvent.status("Contradiction analysis: retrieving documents...")
             chunks = await self._retrieve(request, vector_store, embedding_provider)
+            emit_phase(_phase_sink, phase="search", state="done")
             _c = get_collector()
             if _c is not None:
                 _c.add_trace("retrieve", detail={"kb_name": request.kb_name, "count": len(chunks)})
@@ -543,12 +547,15 @@ class ContradictionRAGMode(BaseRAGMode):
                 )
                 return
 
+            emit_phase(_phase_sink, phase="group_by_stance", state="running")
             yield StreamEvent.status(
                 f"Contradiction analysis: comparing claims across {n} papers..."
             )
             cap = getattr(self.settings, "map_reduce_max_papers", 8)
             paper_summaries = await self._summarize_claims(by_paper, request.query, llm, cap)
             clusters = await self._cluster_claims(request.query, paper_summaries, llm)
+            emit_phase(_phase_sink, phase="group_by_stance", state="done")
+            emit_phase(_phase_sink, phase="contrast", state="running")
             if _c is not None:
                 _c.add_trace("cluster", detail={
                     "agreement": len(clusters.get("agreement", [])),
@@ -558,6 +565,8 @@ class ContradictionRAGMode(BaseRAGMode):
             if _c is not None:
                 _c.add_trace("synthesize")
 
+            emit_phase(_phase_sink, phase="contrast", state="done")
+            emit_phase(_phase_sink, phase="synthesize", state="running")
             async for ev in self._synthesize_stream(
                 request=request,
                 query=request.query,
@@ -572,6 +581,7 @@ class ContradictionRAGMode(BaseRAGMode):
             for source in sources:
                 yield StreamEvent.source(source)
 
+            emit_phase(_phase_sink, phase="synthesize", state="done")
             yield StreamEvent.done(
                 conversation_id="",
                 tokens_used=0,
