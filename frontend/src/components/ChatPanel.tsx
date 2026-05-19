@@ -460,7 +460,11 @@ export function ChatPanel({
                 }
               }}
               placeholder="Ask the literature…  (Enter to send · Shift+Enter for newline)"
-              className="w-full resize-none bg-transparent px-4 pt-3 pb-5 text-[15px] leading-relaxed outline-none placeholder:text-[var(--text-muted)]"
+              // The parent <form> already shows a CNRS-blue focus-within
+              // border around the composer; the global yellow focus-visible
+              // outline (globals.css) would double-up and sit misaligned
+              // with the rounded form, so suppress it for this textarea.
+              className="w-full resize-none bg-transparent px-4 pt-3 pb-5 text-[15px] leading-relaxed outline-none focus-visible:[outline:none] placeholder:text-[var(--text-muted)]"
               disabled={streaming}
               autoFocus
             />
@@ -516,7 +520,28 @@ export function ChatPanel({
             </div>
           </div>
           {showDbPicker && (
-            <div className="border-t border-[var(--border)] p-3">
+            <div className="relative border-t border-[var(--border)] p-3">
+              <button
+                type="button"
+                onClick={() => setShowDbPicker(false)}
+                title="Close database panel"
+                aria-label="Close database panel"
+                className="absolute right-2 top-2 grid h-6 w-6 place-items-center rounded text-[var(--text-muted)] opacity-60 transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)] hover:opacity-100"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="12"
+                  height="12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
               <DatabasePicker
                 value={databases}
                 onChange={setDatabases}

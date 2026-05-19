@@ -334,9 +334,16 @@ html, body {
   }
 }
 
-/* Focus rings — accessibility first. */
-:where(button, a, input, textarea, select):focus-visible {
-  outline: 2px solid var(--cnrs-yellow);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm);
+/* Focus rings — accessibility first.
+   Wrapped in @layer base so per-component Tailwind utilities
+   (which sit in @layer utilities) can override this rule by
+   layer order, e.g. focus-visible:[outline:none] on the chat
+   composer textarea — its parent form provides its own blue
+   focus-within border so the yellow ring would double up. */
+@layer base {
+  :where(button, a, input, textarea, select):focus-visible {
+    outline: 2px solid var(--cnrs-yellow);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
 }
