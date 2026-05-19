@@ -1275,6 +1275,10 @@ async def generate_report(
     max_total_seconds: float | None = None,
     batch_size: int | None = None,
     crossref_concurrency: int | None = None,
+    screen_method: str | None = None,
+    screen_threshold: float | None = None,
+    max_papers_to_download: int | None = None,
+    databases: list[str] | None = None,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1300,6 +1304,17 @@ async def generate_report(
             (1–100 papers per batch). None uses the config-file default (20).
         crossref_concurrency: Override Crossref enrichment concurrency (1–10). None uses
             the default (2 without mailto env var, 6 with).
+        screen_method: Optional relevance screening method used by modes that
+            perform a screening step. One of "bm25", "rerank", "llm". Unknown
+            values are dropped (mode falls back to its config default).
+        screen_threshold: Optional screening threshold in [0, 1]. Values outside
+            the range are clamped. None means the mode's config default applies.
+        max_papers_to_download: Optional hard cap on the number of full-text
+            papers downloaded during the report (1–50). Out-of-range values are
+            clamped. None means the mode's default applies.
+        databases: Optional list of search databases (e.g. ["arxiv", "pubmed"]).
+            Unknown names are dropped with a warning. None means the mode's
+            default fan-out (semantic_scholar, openalex, pubmed) applies.
 
     Returns:
         JSON with the report text, cited sources, and metadata.
@@ -1398,6 +1413,35 @@ async def generate_report(
             default_provider = cfg_llm.llm.default_provider or default_provider
             default_model = cfg_llm.llm.default_model or default_model
 
+        # Clamp / validate the new knobs at the MCP boundary so that
+        # internal callers (and RAGRequest itself) can trust the values.
+        if screen_threshold is not None:
+            screen_threshold = max(0.0, min(1.0, float(screen_threshold)))
+        if max_papers_to_download is not None:
+            max_papers_to_download = max(1, min(50, int(max_papers_to_download)))
+        if screen_method is not None and screen_method not in (
+            "bm25", "rerank", "llm"
+        ):
+            logger.warning(
+                "mcp_generate_report_unknown_screen_method",
+                method=screen_method,
+            )
+            screen_method = None
+
+        filtered_databases: list[str] | None = None
+        if databases is not None:
+            from perspicacite.search.scilex_adapter import KNOWN_DATABASES
+
+            filtered_databases = [d for d in databases if d in KNOWN_DATABASES]
+            dropped = sorted(set(databases) - set(KNOWN_DATABASES))
+            if dropped:
+                logger.warning(
+                    "mcp_generate_report_unknown_db",
+                    dropped=dropped,
+                )
+            if not filtered_databases:
+                filtered_databases = None
+
         rag_request = RAGRequest(
             query=query,
             kb_name=effective_kb_name,
@@ -1410,6 +1454,10 @@ async def generate_report(
             max_total_seconds=max_total_seconds,
             batch_size=batch_size,
             crossref_concurrency=crossref_concurrency,
+            screen_method=screen_method,
+            screen_threshold=screen_threshold,
+            max_papers_to_download=max_papers_to_download,
+            databases=filtered_databases,
         )
 
         # Build telemetry sink and attach to the request so each RAG mode
