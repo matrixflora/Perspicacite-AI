@@ -89,6 +89,87 @@ class CallbackTelemetrySink:
             pass  # never let telemetry errors break the RAG pipeline
 
 
+def emit_phase(
+    sink: Any,
+    phase: str,
+    state: str,
+    **extra: Any,
+) -> None:
+    """Append a ``phase_progress`` event to a telemetry sink.
+
+    ``sink`` may be ``None``, a plain ``list``, or any object exposing
+    an ``append`` method (ListTelemetrySink, CallbackTelemetrySink).
+    Designed for use from inside RAG modes:
+
+        emit_phase(_telemetry, phase="retrieve", state="running")
+        ... do work ...
+        emit_phase(_telemetry, phase="retrieve", state="done")
+
+    The MCP progress adapter recognises ``kind="phase_progress"`` and
+    forwards a "Phase <name>: <state>" message to clients.
+    """
+    if sink is None:
+        return
+    event = {"kind": "phase_progress", "phase": phase, "state": state}
+    event.update(extra)
+    try:
+        sink.append(event)
+    except AttributeError:
+        # Sink is some other mapping/callable — drop silently rather
+        # than crashing the pipeline.
+        pass
+
+
+def emit_tokens(
+    sink: Any,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cumulative_in: int | None = None,
+    cumulative_out: int | None = None,
+    **extra: Any,
+) -> None:
+    """Append a ``tokens`` event to a telemetry sink."""
+    if sink is None:
+        return
+    event: dict[str, Any] = {
+        "kind": "tokens",
+        "in": int(input_tokens or 0),
+        "out": int(output_tokens or 0),
+    }
+    if cumulative_in is not None:
+        event["cumulative_in"] = int(cumulative_in)
+    if cumulative_out is not None:
+        event["cumulative_out"] = int(cumulative_out)
+    event.update(extra)
+    try:
+        sink.append(event)
+    except AttributeError:
+        pass
+
+
+def emit_cost(
+    sink: Any,
+    *,
+    usd: float,
+    model: str,
+    **extra: Any,
+) -> None:
+    """Append a ``cost_estimate`` event to a telemetry sink."""
+    if sink is None:
+        return
+    event: dict[str, Any] = {
+        "kind": "cost_estimate",
+        "usd": float(usd or 0.0),
+        "model": model,
+    }
+    event.update(extra)
+    try:
+        sink.append(event)
+    except AttributeError:
+        pass
+
+
 class NullTelemetrySink:
     """Drops every event. Useful in tests / batch scripts."""
 
