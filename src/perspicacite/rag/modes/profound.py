@@ -27,6 +27,7 @@ from perspicacite.provenance.context import get_collector
 from perspicacite.rag.code_excerpts import collect_code_excerpts
 from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.rag.prompts import (
     ASSESS_DOCUMENT_QUALITY_PROMPT,
@@ -644,6 +645,8 @@ class ProfoundRAGMode(BaseRAGMode):
     ) -> AsyncIterator[StreamEvent]:
         """Execute Profound RAG with streaming output."""
 
+        _phase_sink = getattr(request, "telemetry_sink", None)
+        emit_phase(_phase_sink, phase="rewrite", state="running")
         yield StreamEvent.status("Profound RAG: Initializing deep research...")
 
         # Reset state
@@ -683,6 +686,8 @@ class ProfoundRAGMode(BaseRAGMode):
         except Exception as _qe:
             logger.debug("profound_upfront_optimizer_failed", error=str(_qe))
 
+        emit_phase(_phase_sink, phase="rewrite", state="done")
+        emit_phase(_phase_sink, phase="retrieve", state="running")
         for cycle in range(self.max_cycles):
             from perspicacite.rag.cancellation import is_cancelled
             _tid = getattr(request, "task_id", None)
@@ -815,6 +820,9 @@ class ProfoundRAGMode(BaseRAGMode):
             all_documents.extend(cycle_documents)
 
             if early_exit:
+                emit_phase(_phase_sink, phase="retrieve", state="done")
+                emit_phase(_phase_sink, phase="reason", state="done")
+                emit_phase(_phase_sink, phase="synthesize", state="running")
                 yield StreamEvent.status("Profound RAG: Early exit — synthesizing final answer...")
                 async for event in self._stream_final_response(
                     query=request.query,
@@ -826,6 +834,7 @@ class ProfoundRAGMode(BaseRAGMode):
                     completion_reason="question_answered",
                 ):
                     yield event
+                emit_phase(_phase_sink, phase="synthesize", state="done")
                 return
 
             if plan_limit_reason:
@@ -893,6 +902,9 @@ class ProfoundRAGMode(BaseRAGMode):
             else:
                 self.consecutive_failures = 0
 
+        emit_phase(_phase_sink, phase="retrieve", state="done")
+        emit_phase(_phase_sink, phase="reason", state="done")
+        emit_phase(_phase_sink, phase="synthesize", state="running")
         yield StreamEvent.status("Profound RAG: Synthesizing final answer...")
         async for event in self._stream_final_response(
             query=request.query,
@@ -904,6 +916,7 @@ class ProfoundRAGMode(BaseRAGMode):
             completion_reason=completion_reason,
         ):
             yield event
+        emit_phase(_phase_sink, phase="synthesize", state="done")
 
     async def _create_plan(
         self,
