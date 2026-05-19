@@ -183,3 +183,108 @@ async def test_unknown_screen_method_resets_to_none() -> None:
     req = captured[0]
     # Unknown methods are reset to None (fall-back to server default).
     assert req.screen_method is None
+
+
+def _install_telemetry_emitting_engine(captured: list[Any]):
+    """Capturing engine that also drives the request's telemetry_sink.
+
+    Used to verify that ResponseMetadataCollector aggregates events emitted
+    during the RAG run and merges them into the final JSON response.
+    """
+
+    class _EmittingRAGEngine(RAGEngine):
+        async def query_stream(
+            self, req, *, message_id=None, conversation_id=None
+        ) -> "AsyncIterator[StreamEvent]":
+            captured.append(req)
+            sink = getattr(req, "telemetry_sink", None)
+            if sink is not None:
+                sink.append({"kind": "tokens", "in": 100, "out": 50})
+                sink.append(
+                    {
+                        "kind": "cost_estimate",
+                        "usd": 0.01,
+                        "model": "deepseek/deepseek-chat",
+                    }
+                )
+                sink.append(
+                    {
+                        "kind": "query_rephrased",
+                        "original": "x",
+                        "rewritten": "x refined",
+                        "reason": "expansion",
+                    }
+                )
+                sink.append(
+                    {
+                        "kind": "provider_progress",
+                        "phase": "done",
+                        "query": "x refined",
+                        "by_provider": {"arxiv": 3},
+                        "total": 3,
+                    }
+                )
+            yield StreamEvent(event="content", data='{"delta": "ok"}')
+            yield StreamEvent(event="done", data="{}")
+
+    import perspicacite.rag.engine as _engine_mod
+
+    original_cls = _engine_mod.RAGEngine
+    _engine_mod.RAGEngine = _EmittingRAGEngine  # type: ignore[assignment]
+
+    def _cleanup() -> None:
+        _engine_mod.RAGEngine = original_cls
+
+    return _cleanup
+
+
+@pytest.mark.asyncio
+async def test_generate_report_embeds_usage_in_response() -> None:
+    """End-to-end: telemetry events surface as response extras."""
+    import json as _json
+
+    state = _make_state()
+    captured: list[Any] = []
+    cleanup = _install_telemetry_emitting_engine(captured)
+    try:
+        with patch.object(mcp_server, "mcp_state", state):
+            raw = await generate_report(query="x", kb_name="kb")
+    finally:
+        cleanup()
+
+    payload = _json.loads(raw)
+    assert payload.get("success") is True
+    # Usage aggregated from tokens + cost_estimate events.
+    assert payload.get("usage", {}).get("tokens_in") == 100
+    assert payload["usage"]["tokens_out"] == 50
+    assert payload["usage"]["model"] == "deepseek/deepseek-chat"
+    assert payload["usage"]["cost_usd_estimate"] == pytest.approx(0.01, rel=1e-3)
+    # Query rephrasing surfaced.
+    assert payload.get("query_rephrasings") == [
+        {"original": "x", "refined": "x refined", "reason": "expansion"}
+    ]
+    # Attempts surfaced.
+    assert payload.get("attempts") == [
+        {"query": "x refined", "provider_counts": {"arxiv": 3}, "hit_count": 3}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_report_omits_extras_when_no_telemetry() -> None:
+    """No telemetry events → no spurious keys in response."""
+    import json as _json
+
+    state = _make_state()
+    captured: list[Any] = []
+    cleanup = _install_capturing_engine(captured)
+    try:
+        with patch.object(mcp_server, "mcp_state", state):
+            raw = await generate_report(query="x", kb_name="kb")
+    finally:
+        cleanup()
+
+    payload = _json.loads(raw)
+    assert payload.get("success") is True
+    assert "usage" not in payload
+    assert "attempts" not in payload
+    assert "query_rephrasings" not in payload

@@ -418,6 +418,14 @@ async def search_literature(
 
     from perspicacite.search.domain_aggregator import build_aggregator
     from perspicacite.search.scilex_adapter import KNOWN_DATABASES
+    from perspicacite.rag.telemetry import ResponseMetadataCollector
+
+    # Response-level metadata collector. Mirrors the wiring in generate_report:
+    # any telemetry events emitted during this call (tokens / cost from the
+    # optimizer LLM, provider_progress / query_rephrased from the aggregator)
+    # are aggregated and embedded in the final JSON response — useful for
+    # callers that drop MCP progress notifications.
+    _response_collector = ResponseMetadataCollector()
 
     # Filter caller-supplied database list against the authoritative set.
     # Unknown names are dropped silently (the frontend can pass anything);
@@ -632,6 +640,10 @@ async def search_literature(
                 "fallback_reason": opt.fallback_reason,
             },
         }
+        # Merge response-level metadata extras (attempts / query_rephrasings /
+        # usage). When no telemetry events flowed (current default for
+        # search_literature, since the aggregator doesn't emit), this is a no-op.
+        payload.update(_response_collector.as_response_extras())
         if all_dbs_failed:
             payload["success"] = False
             payload["error"] = (
@@ -1464,13 +1476,53 @@ async def generate_report(
         # can read it via getattr(request, "telemetry_sink", None).
         # The SSE chat path never sets this field, so legacy code hits
         # the `or []` fallback and behaves identically to before.
+        #
+        # The ResponseMetadataCollector always runs (regardless of ctx) so
+        # the final JSON response carries attempts/query_rephrasings/usage
+        # even when MCP progress notifications get dropped.
+        from perspicacite.rag.telemetry import ResponseMetadataCollector
+        _response_collector = ResponseMetadataCollector()
+
         if ctx is not None:
             from perspicacite.mcp.progress_adapter import MCPProgressAdapter
             from perspicacite.rag.telemetry import CallbackTelemetrySink
             _progress_adapter = MCPProgressAdapter(ctx)
-            rag_request.telemetry_sink = CallbackTelemetrySink(  # type: ignore[attr-defined]
-                _progress_adapter.on_event
+            _progress_sink = CallbackTelemetrySink(_progress_adapter.on_event)
+
+            class _FanOutSink:
+                """Fan-out wrapper: forwards each event to multiple sinks."""
+
+                def __init__(self, *sinks: Any) -> None:
+                    self._sinks = sinks
+                    # Mirror events into a buffer so legacy code that reads
+                    # ``sink.events`` keeps working.
+                    self.events: list[dict] = []
+
+                def append(self, event: dict) -> None:
+                    self.events.append(event)
+                    for s in self._sinks:
+                        try:
+                            s.append(event)
+                        except Exception:
+                            pass
+
+                async def on_event_async(self, event: dict) -> None:
+                    self.events.append(event)
+                    for s in self._sinks:
+                        try:
+                            fn = getattr(s, "on_event_async", None)
+                            if fn is not None:
+                                await fn(event)
+                            else:
+                                s.append(event)
+                        except Exception:
+                            pass
+
+            rag_request.telemetry_sink = _FanOutSink(  # type: ignore[attr-defined]
+                _progress_sink, _response_collector
             )
+        else:
+            rag_request.telemetry_sink = _response_collector  # type: ignore[attr-defined]
 
         cancelled_reason: str | None = None
         async for event in engine.query_stream(rag_request, message_id=message_id):
@@ -1514,35 +1566,35 @@ async def generate_report(
                 task_id=task_id,
                 partial_chars=len(report_text),
             )
-            return _json_ok(
-                {
-                    "query": query,
-                    "kb_name": effective_kb_name,
-                    "kb_names": effective_kb_names,
-                    "mode": mode,
-                    "report": report_text,  # partial, may be empty
-                    "sources": sources,
-                    "papers_used": len(sources),
-                    "message_id": message_id,
-                    "cancelled": True,
-                    "task_id": task_id,
-                }
-            )
-
-        logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
-
-        return _json_ok(
-            {
+            _cancelled_payload = {
                 "query": query,
                 "kb_name": effective_kb_name,
                 "kb_names": effective_kb_names,
                 "mode": mode,
-                "report": report_text,
+                "report": report_text,  # partial, may be empty
                 "sources": sources,
                 "papers_used": len(sources),
                 "message_id": message_id,
+                "cancelled": True,
+                "task_id": task_id,
             }
-        )
+            _cancelled_payload.update(_response_collector.as_response_extras())
+            return _json_ok(_cancelled_payload)
+
+        logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
+
+        _final_payload = {
+            "query": query,
+            "kb_name": effective_kb_name,
+            "kb_names": effective_kb_names,
+            "mode": mode,
+            "report": report_text,
+            "sources": sources,
+            "papers_used": len(sources),
+            "message_id": message_id,
+        }
+        _final_payload.update(_response_collector.as_response_extras())
+        return _json_ok(_final_payload)
 
     except Exception as e:
         logger.error("mcp_generate_report_error", query=query, error=str(e))
