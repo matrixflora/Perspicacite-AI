@@ -4384,6 +4384,196 @@ async def get_relevant_passages(
         return _json_error(f"get_relevant_passages failed: {e}")
 
 
+# =============================================================================
+# Tool: extract_parameters_from_passages
+# =============================================================================
+
+_PARAM_EXTRACTION_PROMPT = """\
+You are extracting numeric experimental or methodological parameters from
+scientific passages. Return a JSON array of objects with keys:
+  name, type ("numeric"|"categorical"), typical, units, min, max,
+  source_doi, source_quote, confidence (0..1)
+
+Only include parameters explicitly stated in the passages. If a value is
+absent, omit that key. Skip parameters not relevant to {context}.
+"""
+
+
+@mcp.tool()
+async def extract_parameters_from_passages(
+    passages: list[dict],
+    context: str | None = None,
+    parameter_families: list[str] | None = None,
+    model: str | None = None,
+) -> str:
+    """
+    Extract structured numeric parameters (thresholds, concentrations, ranges)
+    from a list of passages using an LLM with JSON-schema-style output.
+
+    Args:
+        passages: list of {text, source_doi, license_id?, source_url?}
+        context: Optional domain/skill hint to guide extraction.
+        parameter_families: Optional list of family names to bias the LLM
+            (e.g., ["threshold","concentration","pH","temperature"]).
+        model: Optional model override (LiteLLM-style "provider/model").
+
+    Returns:
+        JSON {"success": True, "parameters": [...]} or {"success": False, "error": "..."}.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    try:
+        from perspicacite.pipeline.extraction import (
+            Passage,
+            extract_structured,
+            handle_quote_for_license,
+        )
+
+        passage_objs = [
+            Passage(
+                text=str(p.get("text", "")),
+                source_doi=str(p.get("source_doi", "")),
+                license_id=p.get("license_id"),
+                source_url=p.get("source_url"),
+            )
+            for p in passages
+            if p.get("text")
+        ]
+
+        families = parameter_families or [
+            "threshold", "concentration", "pH",
+            "temperature", "time", "rate",
+        ]
+        prompt = _PARAM_EXTRACTION_PROMPT.format(context=context or "general")
+        prompt += f"\nFocus on these families when relevant: {', '.join(families)}."
+
+        records = await extract_structured(
+            llm_client=state.llm_client,
+            passages=passage_objs,
+            prompt_template=prompt,
+            schema={},
+            what="parameters",
+            context=context,
+            dedup_key=lambda r: (r.get("name"), r.get("units")),
+            model=model,
+        )
+
+        # Apply license-tier policy to source_quote on each record.
+        doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
+        cleaned: list[dict] = []
+        for r in records:
+            quote = r.get("source_quote")
+            if quote:
+                tier_quote = handle_quote_for_license(
+                    str(quote),
+                    license_id=doi_to_license.get(r.get("source_doi", "")),
+                    paraphraser=None,  # MVP: drop when paraphraser is unavailable
+                )
+                if tier_quote is None:
+                    r = {k: v for k, v in r.items() if k != "source_quote"}
+                else:
+                    r = {**r, "source_quote": tier_quote}
+            cleaned.append(r)
+
+        return _json_ok({"parameters": cleaned})
+
+    except Exception as e:
+        logger.error("mcp_extract_parameters_error", error=str(e))
+        return _json_error(f"extract_parameters_from_passages failed: {e}")
+
+
+# =============================================================================
+# Tool: extract_failure_modes_from_passages
+# =============================================================================
+
+_FAILURE_EXTRACTION_PROMPT = """\
+You are extracting failure modes, limitations, caveats, and pitfalls from
+scientific passages. Return a JSON array of objects with keys:
+  symptom (one sentence), root_cause, mitigation, source_doi,
+  source_quote, confidence (0..1)
+
+Only include failure modes explicitly stated. Skip generic disclaimers.
+Domain context: {context}.
+"""
+
+
+@mcp.tool()
+async def extract_failure_modes_from_passages(
+    passages: list[dict],
+    context: str | None = None,
+    model: str | None = None,
+) -> str:
+    """
+    Extract structured failure modes from a list of passages using an LLM.
+
+    Args:
+        passages: list of {text, source_doi, license_id?, source_url?}
+        context: Optional domain/skill hint.
+        model: Optional model override.
+
+    Returns:
+        JSON {"success": True, "failure_modes": [...]} or {"success": False, "error": "..."}.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    try:
+        from perspicacite.pipeline.extraction import (
+            Passage,
+            extract_structured,
+            handle_quote_for_license,
+        )
+
+        passage_objs = [
+            Passage(
+                text=str(p.get("text", "")),
+                source_doi=str(p.get("source_doi", "")),
+                license_id=p.get("license_id"),
+                source_url=p.get("source_url"),
+            )
+            for p in passages
+            if p.get("text")
+        ]
+
+        prompt = _FAILURE_EXTRACTION_PROMPT.format(context=context or "general")
+
+        records = await extract_structured(
+            llm_client=state.llm_client,
+            passages=passage_objs,
+            prompt_template=prompt,
+            schema={},
+            what="failure_modes",
+            context=context,
+            dedup_key=lambda r: (str(r.get("symptom", "")).strip().lower(),),
+            model=model,
+        )
+
+        doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
+        cleaned: list[dict] = []
+        for r in records:
+            quote = r.get("source_quote")
+            if quote:
+                tier_quote = handle_quote_for_license(
+                    str(quote),
+                    license_id=doi_to_license.get(r.get("source_doi", "")),
+                    paraphraser=None,
+                )
+                if tier_quote is None:
+                    r = {k: v for k, v in r.items() if k != "source_quote"}
+                else:
+                    r = {**r, "source_quote": tier_quote}
+            cleaned.append(r)
+
+        return _json_ok({"failure_modes": cleaned})
+
+    except Exception as e:
+        logger.error("mcp_extract_failure_modes_error", error=str(e))
+        return _json_error(f"extract_failure_modes_from_passages failed: {e}")
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
@@ -4392,6 +4582,8 @@ _TOOL_NAMES: list[str] = [
     "search_knowledge_base",
     "search_by_passage",
     "get_relevant_passages",
+    "extract_parameters_from_passages",
+    "extract_failure_modes_from_passages",
     "create_knowledge_base",
     "add_papers_to_kb",
     "generate_report",
