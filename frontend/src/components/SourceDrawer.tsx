@@ -262,7 +262,13 @@ export function SourceDrawer({
               className="ml-auto inline-flex items-center gap-1 rounded-full border border-[var(--cnrs-yellow)] bg-[var(--cnrs-yellow)]/40 px-2 py-0.5 text-[10px] font-mono text-[var(--cnrs-blue)]"
               title="Blended relevance: 60% MiniLM + 25% log citations + 15% BM25"
             >
-              ★ {Math.round(source.relevance_score * (source.relevance_score <= 1 ? 100 : 1))}%
+              ★ {
+                source.relevance_score <= 1
+                  ? Math.round(source.relevance_score * 100)
+                  : source.relevance_score <= 5
+                    ? Math.round(source.relevance_score * 20)
+                    : Math.round(source.relevance_score)
+              }%
             </span>
           )}
         </footer>
