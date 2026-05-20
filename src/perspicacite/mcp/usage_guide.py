@@ -110,7 +110,7 @@ _TOOL_ENTRIES: list[dict] = [
     },
     {
         "name": "generate_report",
-        "purpose": "Run a full RAG report over a KB (basic/advanced/profound/agentic/contradiction).",
+        "purpose": "Run a full RAG report over a KB (basic/advanced/profound/agentic/literature_survey/contradiction).",
         "when_to_use": "Synthesise an answer with citations from KB content.",
         "key_knobs": ["mode", "kb_names", "max_papers", "recency_weight", "screen_method", "screen_threshold", "databases"],
     },
