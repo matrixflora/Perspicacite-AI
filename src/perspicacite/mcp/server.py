@@ -4710,6 +4710,44 @@ async def extract_failure_modes_from_passages(
         return _json_error(f"extract_failure_modes_from_passages failed: {e}")
 
 
+@mcp.tool()
+async def suggest_databases(query: str, hints: list[str] | None = None) -> str:
+    """
+    Recommend which literature databases to search for a given query.
+
+    Use this BEFORE ``search_literature`` or ``generate_report`` when you are
+    unsure which databases to pass: it returns a topic-relevant shortlist so a
+    search hits the right sources instead of a blind broad sweep.
+
+    Deterministic: the recommendation comes from a keyword topic heuristic over
+    the query (plus optional ``hints``); no LLM is involved, so the same input
+    always yields the same output. Examples: biomedical → pubmed/europepmc;
+    machine learning / physics → arxiv; high-energy physics → inspire;
+    chemistry → pubchem. A broad default (semantic_scholar, openalex, crossref)
+    is always included so a recommendation is never empty.
+
+    Args:
+        query: The research question or topic to search for.
+        hints: Optional extra terms (e.g. ["chemistry"]) to steer the topic match.
+
+    Returns:
+        JSON {"success": True, "recommended": [...], "reasoning": "...",
+        "all_known": [...]} where ``all_known`` is the sorted set of every
+        database name accepted by ``search_literature``.
+    """
+    from perspicacite.search.database_advisor import suggest_databases_for_query
+    from perspicacite.search.scilex_adapter import KNOWN_DATABASES
+
+    suggestion = suggest_databases_for_query(query, hints=hints)
+    return _json_ok(
+        {
+            "recommended": suggestion.databases,
+            "reasoning": suggestion.reasoning,
+            "all_known": sorted(KNOWN_DATABASES),
+        }
+    )
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
@@ -4746,6 +4784,7 @@ _TOOL_NAMES: list[str] = [
     "ingest_skill_bundle",
     "web_search",
     "cancel_task",
+    "suggest_databases",
 ]
 
 
