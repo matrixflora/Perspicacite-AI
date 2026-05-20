@@ -128,7 +128,12 @@ class SciLExAdapter:
         "(Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP)"
     )
     domains: list[str] = ["general", "biomedical", "cs"]
-    tier: str = "reliable"
+    # SciLEx is itself a multi-API fan-out (4+ databases × every year in the
+    # span, with per-API rate-limit retries), so it legitimately needs far
+    # more than the 20s "reliable" budget — the aggregator was killing it
+    # mid-collection (~24s) and returning zero results. "flaky" gives it
+    # 2.25× (≈45s).
+    tier: str = "flaky"
     retry: int = 0
 
     def __init__(self, api_config: dict[str, Any] | None = None):
@@ -278,16 +283,28 @@ class SciLExAdapter:
             logger.info("scilex_no_supported_apis_selected", filtered=_unknown)
             return []
 
-        # Use year range if provided; default to last 3 years
+        # Build the list of years to query. SciLEx's queryCompositor treats
+        # this as DISCRETE years (one query per element, via product()), NOT a
+        # [min, max] range — so we must expand to EVERY year in the span.
+        # Otherwise [2023, 2026] queries only 2023 and 2026, silently skipping
+        # 2024-2025 (and collapsing to 2023 since the current year is sparse).
+        current_year = datetime.now().year
         if year_min and year_max:
-            years = [year_min, year_max]
+            _lo, _hi = year_min, year_max
         elif year_max:
-            years = [year_max, year_max]
+            _lo, _hi = year_max, year_max
         elif year_min:
-            years = [year_min, year_min]
+            _lo, _hi = year_min, year_min
         else:
-            current_year = datetime.now().year
-            years = [current_year - 3, current_year]
+            _lo, _hi = current_year - 3, current_year  # default: last ~3 years
+        if _lo > _hi:
+            _lo, _hi = _hi, _lo
+        # Cap the span (keep the most recent years) so a very wide range
+        # doesn't explode into one query per year × per API.
+        _MAX_YEARS = 8
+        if _hi - _lo + 1 > _MAX_YEARS:
+            _lo = _hi - _MAX_YEARS + 1
+        years = list(range(_lo, _hi + 1))
         capitalized_apis = [api_name_map.get(a, a) for a in apis]
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -438,6 +455,25 @@ class SciLExAdapter:
                 except Exception as e:
                     logger.debug(f"Deduplication error: {e}")
                     df_deduped = df
+
+                # Rank the deduped pool by SciLEx's composite relevance score
+                # (keywords 45% + quality 25% + itemtype 20% + citations 10%),
+                # globally across databases AND years. SciLEx collects
+                # year-by-year and our manual aggregation kept collection
+                # order, so a plain head(max_results) returned only the
+                # earliest year's block. Sorting by relevance here lets the
+                # most on-topic papers (any year) survive the later truncation.
+                try:
+                    from scilex.aggregate_collect import _apply_relevance_ranking
+                    df_deduped = _apply_relevance_ranking(
+                        df_deduped,
+                        keyword_groups=main_config["keywords"],
+                        top_n=None,  # truncation happens after post-filters below
+                        has_citations=True,
+                        config=main_config,
+                    )
+                except Exception as e:
+                    logger.debug(f"Relevance ranking skipped: {e}")
 
                 # Convert to Paper models
                 papers = self._map_dataframe_to_papers(df_deduped)
