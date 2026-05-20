@@ -457,6 +457,7 @@ async def search_literature(
                 context=context,
                 app_state=state,
                 optimize_enabled=optimize_query,
+                sink=_response_collector,
             )
         except Exception as _qo_exc:
             # The optimizer fails closed: any unexpected error (bad config,

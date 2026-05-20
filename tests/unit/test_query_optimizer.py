@@ -165,6 +165,22 @@ async def test_optimize_empty_context_does_not_set_context_used():
 
 
 @pytest.mark.asyncio
+async def test_optimize_forwards_sink_to_llm_complete():
+    """The telemetry sink must be plumbed into the LLM call so token/cost
+    events emitted by the client land in the response metadata collector."""
+    state = _state()
+    sink: list = []
+    await optimize_query(
+        query="heart attack biomarkers",
+        context=None,
+        app_state=state,
+        sink=sink,
+    )
+    state.llm_client.complete.assert_called_once()
+    assert state.llm_client.complete.call_args.kwargs.get("sink") is sink
+
+
+@pytest.mark.asyncio
 async def test_optimize_strips_json_code_fence():
     state = _state()
     state.llm_client.complete = AsyncMock(

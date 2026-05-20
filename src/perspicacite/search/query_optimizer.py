@@ -95,6 +95,7 @@ async def optimize_query(
     context: str | None,
     app_state: Any,
     optimize_enabled: bool | None = None,
+    sink: Any = None,
 ) -> OptimizationResult:
     """Rewrite ``query`` into a clean scientific phrasing via one Haiku call.
 
@@ -144,6 +145,7 @@ async def optimize_query(
                 temperature=0.2,
                 max_tokens=400,
                 stage="search_optimize",
+                sink=sink,
             ),
             timeout=qo_cfg.timeout_s,
         )
