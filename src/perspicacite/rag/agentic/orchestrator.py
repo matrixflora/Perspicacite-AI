@@ -932,6 +932,14 @@ class AgenticOrchestrator:
                     }
                 batch_for_eval = to_run
 
+            # Surface any search notices (e.g. "arXiv rate-limited, drew from
+            # OpenAlex instead") so the trail explains unexpected sources.
+            _notices = getattr(session, "search_notices", None)
+            if _notices:
+                for _n in _notices:
+                    yield {"type": "thinking", "message": _n}
+                session.search_notices = []  # type: ignore[attr-defined]
+
             trigger_eval = any(
                 s.type
                 in (
@@ -2849,6 +2857,74 @@ Generate your answer:"""
             return result_str[:100] + "..."
         return result_str
 
+    async def _rerank_papers_by_relevance(
+        self, query: str, papers: list, top_k: int
+    ) -> list:
+        """Semantically rerank a candidate paper pool by query relevance.
+
+        SciLEx returns papers in arbitrary collection order. When several
+        databases are searched, a noisy source (e.g. OpenAlex/PubMed for an AI
+        query) floods the pool and pushes genuinely-relevant papers past the
+        top-N cut before they ever reach the LLM relevance scorer. A cross-
+        encoder rerank here keeps the most on-topic papers regardless of
+        source. Lexical ranking is insufficient — "Evaluation of
+        Chemotherapeutic Agents" matches the words "agent"/"evaluation" — so we
+        use a semantic query-document model. Falls back to the original order
+        on any failure (missing model, etc.) so search never hard-breaks.
+        """
+        if len(papers) <= top_k:
+            return papers
+        try:
+            from perspicacite.retrieval.reranker import CrossEncoderReranker
+            if getattr(self, "_relevance_reranker", None) is None:
+                self._relevance_reranker = CrossEncoderReranker()
+            texts = [
+                f"{p.title or ''}. {(p.abstract or '')[:1000]}" for p in papers
+            ]
+            scores = await self._relevance_reranker.score_texts(query, texts)
+            # Sort by index to avoid comparing Paper objects on score ties.
+            order = sorted(range(len(papers)), key=lambda i: scores[i], reverse=True)
+            logger.info(
+                "agentic_scilex_reranked", pool=len(papers), kept=top_k
+            )
+            return [papers[i] for i in order[:top_k]]
+        except Exception as e:
+            logger.warning("agentic_scilex_rerank_failed", error=str(e))
+            return papers[:top_k]
+
+    def _note_search_fallback(
+        self, session: AgentSession | None, apis: list[str]
+    ) -> None:
+        """Stash a user-facing notice when SciLEx yields nothing and we fall
+        back to OpenAlex — usually because a selected source rate-limited.
+
+        Drained as a ``thinking`` event by the ``chat()`` loop so a user who
+        picked e.g. arXiv-only isn't surprised to see OpenAlex results.
+        """
+        if session is None:
+            return
+        errs = getattr(self.scilex_adapter, "last_errors_by_database", None) or {}
+        failed = [db for db in apis if db in errs]
+        if failed:
+            parts = [
+                f"{db} ({'rate-limited' if '429' in errs[db] else 'unavailable'})"
+                for db in failed
+            ]
+            msg = (
+                f"Note: {', '.join(parts)} returned nothing right now, "
+                "so results were drawn from OpenAlex instead."
+            )
+        else:
+            msg = (
+                "Note: your selected source(s) returned nothing, "
+                "so results were drawn from OpenAlex instead."
+            )
+        notices = getattr(session, "search_notices", None)
+        if notices is None:
+            notices = []
+            session.search_notices = notices  # type: ignore[attr-defined]
+        notices.append(msg)
+
     async def _scilex_search(
         self,
         query: str,
@@ -2895,10 +2971,51 @@ Generate your answer:"""
         )
         _apis = _selected_dbs or ["semantic_scholar", "openalex", "pubmed"]
         try:
-            papers = await self.scilex_adapter.search(
-                query=effective_query,
-                max_results=max_results,
-                apis=_apis,
+            # Over-fetch a wider candidate pool than we ultimately keep. The
+            # adapter truncates by arbitrary collection order, so when several
+            # databases are searched the relevant papers can sit deep in the
+            # pool (measured as far as position ~36 for a multi-DB AI query).
+            # We fetch wide, then semantically rerank down to ``max_results``.
+            _overfetch = max(max_results * 4, 40)
+
+            # Prefer the domain aggregator so user-selected non-SciLEx
+            # providers (Google Scholar via SerpApi, EuropePMC, CORE, ...) are
+            # actually queried — not just SciLEx's built-in APIs. It honours
+            # the same ``databases`` selection and forwards SciLEx sub-provider
+            # names down to SciLEx. Falls back to the raw SciLEx adapter when
+            # no config/aggregator is available (e.g. unit tests).
+            papers = None
+            _cfg = getattr(self, "config", None) or getattr(
+                getattr(self, "app_state", None), "config", None
+            )
+            if _cfg is not None:
+                try:
+                    from perspicacite.search.domain_aggregator import build_aggregator
+                    if getattr(self, "_aggregator", None) is None:
+                        self._aggregator = build_aggregator(_cfg)
+                    if self._aggregator.available:
+                        papers = await self._aggregator.search(
+                            query=effective_query,
+                            max_results=_overfetch,
+                            databases=_selected_dbs,
+                        )
+                except Exception as _agg_exc:
+                    logger.warning("agentic_aggregator_failed", error=str(_agg_exc))
+                    papers = None
+            if papers is None:
+                papers = await self.scilex_adapter.search(
+                    query=effective_query,
+                    max_results=_overfetch,
+                    apis=_apis,
+                )
+
+            # Rerank the (possibly noisy, multi-source) pool by semantic
+            # relevance to the user's query, then keep only the top
+            # ``max_results``, so relevant papers aren't buried by a flooding
+            # database before the LLM scorer sees them. Uses the original
+            # query (intent), not the search-optimized rewrite.
+            papers = await self._rerank_papers_by_relevance(
+                query, papers, top_k=max_results
             )
 
             # Crossref-enrich: fills missing abstracts (Google Scholar /
@@ -2910,6 +3027,25 @@ Generate your answer:"""
                 papers = await enrich_papers(papers)
             except Exception as _ee:
                 logger.warning("agentic_enrich_failed", error=str(_ee))
+
+            # arXiv DataCite-DOI fallback: any preprint that Crossref couldn't
+            # match by title still has a real citable identifier — arXiv's
+            # DataCite DOI 10.48550/arxiv.<id>. Populating it here gives the
+            # references section a clickable DOI and prevents downstream dedup
+            # collisions in consumers that key by DOI.
+            try:
+                from perspicacite.pipeline.download.arxiv import get_arxiv_id_from_url
+                for _p in papers:
+                    if (_p.doi or "").strip():
+                        continue
+                    _aid = (
+                        get_arxiv_id_from_url(_p.pdf_url or "")
+                        or get_arxiv_id_from_url(_p.url or "")
+                    )
+                    if _aid:
+                        _p.doi = f"10.48550/arxiv.{_aid.split('v')[0]}"
+            except Exception as _ae:
+                logger.warning("agentic_arxiv_doi_fallback_failed", error=str(_ae))
 
             if papers:
                 paper_dicts = []
@@ -2937,12 +3073,14 @@ Generate your answer:"""
                 return self._format_paper_list(paper_dicts)
             else:
                 logger.warning("agentic_scilex_search_no_results")
+                self._note_search_fallback(session, _apis)
                 return await self._fallback_openalex_search(
                     effective_query, max_results, step_id=step_id, session=session
                 )
 
         except Exception as e:
             logger.error("agentic_scilex_search_failed", error=str(e))
+            self._note_search_fallback(session, _apis)
             return await self._fallback_openalex_search(
                 effective_query, max_results, step_id=step_id, session=session
             )
@@ -3251,30 +3389,54 @@ Generate your answer:"""
             Enriched paper dict with 'full_text' and 'pdf_downloaded' fields
         """
         from perspicacite.pipeline.download import retrieve_paper_content
+        from perspicacite.pipeline.download.arxiv import get_arxiv_id_from_url
         from perspicacite.pipeline.parsers.pdf import PDFParser
 
-        doi = paper.get("doi", "")
-        if not doi:
+        doi = (paper.get("doi") or "").strip()
+        # Defensive: some adapters historically emitted the literal "NA" string
+        # for missing DOIs; treat that as no-DOI to avoid 404-spam downstream.
+        if doi.lower() == "na":
+            doi = ""
+
+        # Build a download chain: try the Crossref-mapped DOI first (preserves
+        # metadata fidelity — the IEEE/Springer/etc. published version is often
+        # what we want to cite), then fall back to the arXiv preprint when the
+        # publisher version is paywalled. The original paper["doi"] is never
+        # overwritten so downstream citations keep the canonical reference.
+        arxiv_id = get_arxiv_id_from_url(paper.get("pdf_url") or paper.get("url") or "")
+        arxiv_doi = ""
+        if arxiv_id:
+            bare = arxiv_id.split("v")[0]
+            arxiv_doi = f"10.48550/arxiv.{bare}"
+
+        attempts: list[str] = []
+        for candidate in (doi, arxiv_doi):
+            if candidate and candidate not in attempts:
+                attempts.append(candidate)
+
+        if not attempts:
             paper["pdf_downloaded"] = False
             return paper
 
         parser = PDFParser()
+        result = None
+        for attempt_doi in attempts:
+            try:
+                result = await retrieve_paper_content(
+                    doi=attempt_doi,
+                    pdf_parser=parser,
+                    unpaywall_email="perspicacite@example.com",
+                )
+                if result.success and result.full_text:
+                    break
+            except Exception as e:
+                logger.warning("agentic_download_failed", doi=attempt_doi, error=str(e))
+                result = None
 
-        try:
-            result = await retrieve_paper_content(
-                doi=doi,
-                pdf_parser=parser,
-                unpaywall_email="perspicacite@example.com",
-            )
-
-            if result.success and result.full_text:
-                paper["full_text"] = result.full_text
-                paper["pdf_downloaded"] = True
-            else:
-                paper["pdf_downloaded"] = False
-
-        except Exception as e:
-            logger.warning("agentic_download_failed", doi=doi, error=str(e))
+        if result and result.success and result.full_text:
+            paper["full_text"] = result.full_text
+            paper["pdf_downloaded"] = True
+        else:
             paper["pdf_downloaded"] = False
 
         return paper

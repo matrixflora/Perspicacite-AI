@@ -23,6 +23,27 @@ from perspicacite.models.papers import Paper, PaperSource
 logger = get_logger("perspicacite.search.scilex")
 
 
+# Authoritative list of database/provider names callers can request. The
+# names mirror the SciLEx dispatch table inside ``_scilex_search_sync`` plus
+# the additional non-SciLEx providers wired into the domain aggregator
+# (europepmc, ads, pubchem, inspire, google_scholar). The MCP layer filters
+# user-supplied ``databases`` against this set before forwarding, so an
+# unrecognised name is silently dropped rather than reaching providers.
+KNOWN_DATABASES: frozenset[str] = frozenset({
+    "arxiv",
+    "crossref",
+    "pubmed",
+    "semantic_scholar",
+    "openalex",
+    "europepmc",
+    "ads",
+    "pubchem",
+    "inspire",
+    "dblp",
+    "google_scholar",
+})
+
+
 # F-33: cache the per-key validation result so we only hit SS once per
 # adapter init (and not once per query).
 _SS_KEY_CACHE: dict[str, bool] = {}
@@ -107,7 +128,12 @@ class SciLExAdapter:
         "(Semantic Scholar, OpenAlex, PubMed, arXiv, HAL, DBLP)"
     )
     domains: list[str] = ["general", "biomedical", "cs"]
-    tier: str = "reliable"
+    # SciLEx is itself a multi-API fan-out (4+ databases × every year in the
+    # span, with per-API rate-limit retries), so it legitimately needs far
+    # more than the 20s "reliable" budget — the aggregator was killing it
+    # mid-collection (~24s) and returning zero results. "flaky" gives it
+    # 2.25× (≈45s).
+    tier: str = "flaky"
     retry: int = 0
 
     def __init__(self, api_config: dict[str, Any] | None = None):
@@ -257,16 +283,28 @@ class SciLExAdapter:
             logger.info("scilex_no_supported_apis_selected", filtered=_unknown)
             return []
 
-        # Use year range if provided; default to last 3 years
+        # Build the list of years to query. SciLEx's queryCompositor treats
+        # this as DISCRETE years (one query per element, via product()), NOT a
+        # [min, max] range — so we must expand to EVERY year in the span.
+        # Otherwise [2023, 2026] queries only 2023 and 2026, silently skipping
+        # 2024-2025 (and collapsing to 2023 since the current year is sparse).
+        current_year = datetime.now().year
         if year_min and year_max:
-            years = [year_min, year_max]
+            _lo, _hi = year_min, year_max
         elif year_max:
-            years = [year_max, year_max]
+            _lo, _hi = year_max, year_max
         elif year_min:
-            years = [year_min, year_min]
+            _lo, _hi = year_min, year_min
         else:
-            current_year = datetime.now().year
-            years = [current_year - 3, current_year]
+            _lo, _hi = current_year - 3, current_year  # default: last ~3 years
+        if _lo > _hi:
+            _lo, _hi = _hi, _lo
+        # Cap the span (keep the most recent years) so a very wide range
+        # doesn't explode into one query per year × per API.
+        _MAX_YEARS = 8
+        if _hi - _lo + 1 > _MAX_YEARS:
+            _lo = _hi - _MAX_YEARS + 1
+        years = list(range(_lo, _hi + 1))
         capitalized_apis = [api_name_map.get(a, a) for a in apis]
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -417,6 +455,25 @@ class SciLExAdapter:
                 except Exception as e:
                     logger.debug(f"Deduplication error: {e}")
                     df_deduped = df
+
+                # Rank the deduped pool by SciLEx's composite relevance score
+                # (keywords 45% + quality 25% + itemtype 20% + citations 10%),
+                # globally across databases AND years. SciLEx collects
+                # year-by-year and our manual aggregation kept collection
+                # order, so a plain head(max_results) returned only the
+                # earliest year's block. Sorting by relevance here lets the
+                # most on-topic papers (any year) survive the later truncation.
+                try:
+                    from scilex.aggregate_collect import _apply_relevance_ranking
+                    df_deduped = _apply_relevance_ranking(
+                        df_deduped,
+                        keyword_groups=main_config["keywords"],
+                        top_n=None,  # truncation happens after post-filters below
+                        has_citations=True,
+                        config=main_config,
+                    )
+                except Exception as e:
+                    logger.debug(f"Relevance ranking skipped: {e}")
 
                 # Convert to Paper models
                 papers = self._map_dataframe_to_papers(df_deduped)
@@ -628,11 +685,19 @@ class SciLExAdapter:
         from perspicacite.models.papers import Author
 
         def safe_str(value, default=""):
+            # SciLEx writes the literal string "NA" (see scilex/constants.py
+            # MISSING_VALUE = "NA") whenever an upstream API returns no value.
+            # Treat it as missing so downstream truthiness checks behave.
             if value is None:
                 return default
             if isinstance(value, float) and pd.isna(value):
                 return default
-            return str(value) if value else default
+            if not value:
+                return default
+            s = str(value)
+            if s.strip().lower() == "na":
+                return default
+            return s
 
         # Extract fields from Zotero format
         title = safe_str(row.get("title"), "Untitled")
@@ -742,6 +807,7 @@ class SciLExAdapter:
         year_max: int | None = None,
         article_type: str | None = None,
         apis: list[str] | None = None,
+        databases: list[str] | None = None,
     ) -> SciLExSearchResult:
         """Same as ``search`` but returns a structured result with warnings.
 
@@ -749,7 +815,14 @@ class SciLExAdapter:
         from knowing their api list was partially dropped. The plain
         ``search()`` method is unchanged for legacy callers that only
         want ``list[Paper]``.
+
+        ``databases`` is the user-facing alias for ``apis`` used by the
+        MCP surface; when both are passed, ``databases`` wins. Either is
+        passed through to ``search`` which then filters to providers
+        SciLEx actually dispatches to.
         """
+        if databases is not None:
+            apis = databases
         self._last_dropped_apis = []
         self._last_quota_warning = None
         papers = await self.search(

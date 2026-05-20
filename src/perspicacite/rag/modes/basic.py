@@ -24,6 +24,7 @@ from perspicacite.rag.conversation_helpers import (
 )
 from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.rag.query_scope import resolve_paper_scope_for_query
 from perspicacite.rag.utils import (
@@ -73,6 +74,7 @@ async def _web_fallback_papers(
     optimize_query: bool | None = None,
     app_state: Any = None,
     telemetry: list[dict[str, Any]] | None = None,
+    min_relevance: float = 0.0,
 ) -> list[dict[str, Any]]:
     # Live literature search used when the KB returns nothing. Routes
     # through the unified resolve_papers_pipeline (aggregator → Crossref
@@ -428,6 +430,8 @@ class BasicRAGMode(BaseRAGMode):
         tools: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Execute Basic RAG with true streaming output."""
+        _phase_sink = getattr(request, "telemetry_sink", None)
+        emit_phase(_phase_sink, phase="retrieve", state="running")
         yield StreamEvent.status("Basic RAG: Retrieving documents...")
 
         dkb = self._build_kb_retriever(request, vector_store, embedding_provider)
@@ -668,6 +672,7 @@ class BasicRAGMode(BaseRAGMode):
                 else "No relevant documents found to answer your question."
             )
             yield StreamEvent.content(msg)
+            emit_phase(_phase_sink, phase="retrieve", state="done")
             yield StreamEvent.done(
                 conversation_id="",
                 tokens_used=0,
@@ -676,6 +681,8 @@ class BasicRAGMode(BaseRAGMode):
             )
             return
 
+        emit_phase(_phase_sink, phase="retrieve", state="done")
+        emit_phase(_phase_sink, phase="synthesize", state="running")
         yield StreamEvent.status("Basic RAG: Generating response...")
 
         context = format_paper_results_for_prompt(paper_results, max_chars_per_paper=4000)
@@ -742,6 +749,7 @@ class BasicRAGMode(BaseRAGMode):
             references = format_references(sources)
             yield StreamEvent.content("\n\n" + references)
 
+        emit_phase(_phase_sink, phase="synthesize", state="done")
         yield StreamEvent.done(
             conversation_id="",
             tokens_used=0,

@@ -23,6 +23,7 @@ from perspicacite.logging import get_logger
 from perspicacite.models.rag import RAGMode, RAGRequest, RAGResponse, SourceReference
 from perspicacite.provenance.context import get_collector
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.telemetry import emit_phase
 from perspicacite.retrieval.recency import apply_recency_weighting
 from perspicacite.search.scilex_adapter import SciLExAdapter
 
@@ -304,9 +305,11 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             request, vector_store, embedding_provider
         )
 
+        _phase_sink = getattr(request, "telemetry_sink", None)
         yield StreamEvent.status("Literature Survey: Initializing...")
 
         # Phase 1: Search
+        emit_phase(_phase_sink, phase="collect", state="running")
         yield StreamEvent.status("Literature Survey: Searching across academic databases...")
         _bs_telemetry = getattr(request, "telemetry_sink", None) or []
         papers = await self._broad_search(
@@ -354,6 +357,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         papers = self._filter_known_papers(papers, known_paper_ids)
 
         if not papers:
+            emit_phase(_phase_sink, phase="collect", state="done")
             yield StreamEvent.status("Literature Survey: No papers found")
             yield StreamEvent.content("No papers found for this topic. Try broadening your search terms.")
             yield StreamEvent.done(
@@ -365,6 +369,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             return
 
         session.papers = self._convert_to_candidates(papers)
+        emit_phase(_phase_sink, phase="collect", state="done")
         yield StreamEvent.status(f"Literature Survey: Found {len(session.papers)} papers")
 
         # Provenance: record broad search
@@ -403,6 +408,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
             return
 
+        emit_phase(_phase_sink, phase="extract_themes", state="running")
         yield StreamEvent.status("Literature Survey: Analyzing abstracts in batches...")
 
         analysis_task = asyncio.create_task(
@@ -441,6 +447,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             )
 
         session.themes = await analysis_task
+        emit_phase(_phase_sink, phase="extract_themes", state="done")
         yield StreamEvent.status(
             f"Literature Survey: Identified {len(session.themes)} research themes"
         )
@@ -468,9 +475,11 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 )
             _c.add_trace("cluster", detail={"themes": len(session.themes)})
 
-        # Phase 3: Recommendations
+        # Phase 3: Recommendations (deepen)
+        emit_phase(_phase_sink, phase="deepen", state="running")
         yield StreamEvent.status("Literature Survey: Generating recommendations...")
         await self._generate_recommendations(session.papers, session.themes, llm)
+        emit_phase(_phase_sink, phase="deepen", state="done")
 
         # Provenance: record recommendations stage
         if _c is not None:

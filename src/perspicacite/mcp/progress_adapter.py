@@ -13,6 +13,7 @@ spacing to avoid spamming slow clients (per spec Risks & Mitigations).
 """
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -60,9 +61,34 @@ class MCPProgressAdapter:
             provider = event.get("provider", "?")
             remaining = event.get("remaining", "?")
             msg = f"Rate limit low for {provider}: {remaining} reqs remaining"
+        elif kind == "phase_progress":
+            phase = event.get("phase", "?")
+            state = event.get("state", "?")
+            msg = f"Phase {phase}: {state}"
+        elif kind == "tokens":
+            inp = int(event.get("in", 0))
+            out = int(event.get("out", 0))
+            cum_in = int(event.get("cumulative_in", 0))
+            cum_out = int(event.get("cumulative_out", 0))
+            msg = (
+                f"Tokens this turn: in={inp} out={out}; "
+                f"cumulative: in={cum_in} out={cum_out}"
+            )
+        elif kind == "cost_estimate":
+            usd = float(event.get("usd", 0.0))
+            model = event.get("model", "?")
+            msg = f"Cost estimate ${usd:.4f} ({model})"
 
         if msg is None:
             return
+
+        if kind in {"phase_progress", "tokens", "cost_estimate",
+                    "query_rephrased", "provider_progress"}:
+            try:
+                meta_json = json.dumps(event, default=str)
+                msg = f"{msg}\nMETA:{meta_json}"
+            except (TypeError, ValueError):
+                pass  # never let META serialization break the event
 
         # Throttle: do not fire notifications more than once per second.
         now = time.monotonic()

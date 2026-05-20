@@ -17,6 +17,58 @@ from perspicacite.logging import get_logger
 
 logger = get_logger("perspicacite.llm")
 
+
+def _safe_completion_cost(response: Any, model: str) -> float:
+    """Best-effort cost lookup via ``litellm.completion_cost``.
+
+    Returns 0.0 on any failure (unknown model, missing usage, lookup
+    table mismatch) and logs a warning so operators can spot mis-priced
+    models. Never raises — token telemetry must keep flowing even when
+    pricing data is stale.
+    """
+    try:
+        import litellm as _litellm
+        return float(_litellm.completion_cost(completion_response=response) or 0.0)
+    except Exception as exc:  # pragma: no cover — depends on litellm tables
+        logger.warning(
+            "llm_cost_lookup_failed",
+            model=model,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return 0.0
+
+
+def _emit_usage_telemetry(
+    sink: Any,
+    *,
+    provider: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cost_usd: float,
+) -> None:
+    """Forward token + cost events to a telemetry sink (best-effort).
+
+    Imported lazily so the LLM client has no hard dependency on
+    perspicacite.rag.telemetry import order. Swallows every error —
+    telemetry must never break the pipeline.
+    """
+    if sink is None:
+        return
+    try:
+        from perspicacite.rag.telemetry import emit_tokens, emit_cost
+        emit_tokens(
+            sink,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            model=model,
+            provider=provider,
+        )
+        emit_cost(sink, usd=cost_usd, model=model, provider=provider)
+    except Exception:
+        pass
+
 # F9 (audit 2026-05-15): LiteLLM prints a "Give Feedback / Get Help"
 # banner to stderr on every error, plus an "If you need to debug…" info
 # line. These pollute our structured logs and operator terminals. Silence
@@ -471,6 +523,10 @@ class AsyncLLMClient:
             model = self.config.default_model
 
         stage_label = kwargs.pop("stage", "llm")
+        # Optional telemetry sink — RAG modes / MCP adapter pass one in
+        # so token + cost events reach external observers. Pop so it's
+        # not forwarded to LiteLLM as a request kwarg.
+        sink = kwargs.pop("sink", None)
 
         # ---- disk cache lookup (Wave 2.1) -----------------------------
         # Cache key is computed from the resolved (provider, model)
@@ -506,6 +562,14 @@ class AsyncLLMClient:
                         completion_tokens=hit.output_tokens,
                         latency_ms=hit.latency_ms,
                     )
+                # Cache hits cost $0 — still emit telemetry so MCP
+                # clients see a sensible token/cost stream.
+                _emit_usage_telemetry(
+                    sink, provider=provider, model=model,
+                    prompt_tokens=int(hit.input_tokens or 0),
+                    completion_tokens=int(hit.output_tokens or 0),
+                    cost_usd=0.0,
+                )
                 return hit.response
             logger.debug(
                 "llm_cache_miss",
@@ -552,7 +616,13 @@ class AsyncLLMClient:
                     response=content, latency_ms=0.0,
                     input_tokens=0, output_tokens=0,
                 )
-            # TODO: budget — agent-CLI usage plumbing
+            # TODO: budget — agent-CLI usage plumbing. Emit a zero-cost
+            # event so token/cost telemetry stays present on this code
+            # path (subscriptions are flat-priced; per-call USD is N/A).
+            _emit_usage_telemetry(
+                sink, provider=provider, model=model,
+                prompt_tokens=0, completion_tokens=0, cost_usd=0.0,
+            )
             return content
 
         provider_config = self._get_provider_config(provider)
@@ -640,6 +710,18 @@ class AsyncLLMClient:
                         input_tokens=int(usage.get("prompt_tokens", 0) or 0),
                         output_tokens=int(usage.get("completion_tokens", 0) or 0),
                     )
+                _pt = int(usage.get("prompt_tokens", 0) or 0)
+                _ct = int(usage.get("completion_tokens", 0) or 0)
+                _cost = _safe_completion_cost(response, model)
+                logger.info(
+                    "llm_completion_usage",
+                    stage=stage_label, provider=provider, model=model,
+                    tokens_in=_pt, tokens_out=_ct, cost_usd=_cost,
+                )
+                _emit_usage_telemetry(
+                    sink, provider=provider, model=model,
+                    prompt_tokens=_pt, completion_tokens=_ct, cost_usd=_cost,
+                )
                 return content
 
             completion_kwargs.update(kwargs)
@@ -685,6 +767,19 @@ class AsyncLLMClient:
                     input_tokens=int(usage.get("prompt_tokens", 0) or 0),
                     output_tokens=int(usage.get("completion_tokens", 0) or 0),
                 )
+
+            _pt = int(usage.get("prompt_tokens", 0) or 0)
+            _ct = int(usage.get("completion_tokens", 0) or 0)
+            _cost = _safe_completion_cost(response, model)
+            logger.info(
+                "llm_completion_usage",
+                stage=stage_label, provider=provider, model=model,
+                tokens_in=_pt, tokens_out=_ct, cost_usd=_cost,
+            )
+            _emit_usage_telemetry(
+                sink, provider=provider, model=model,
+                prompt_tokens=_pt, completion_tokens=_ct, cost_usd=_cost,
+            )
 
             return content
 

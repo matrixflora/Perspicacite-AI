@@ -27,7 +27,13 @@ from perspicacite.provenance.context import get_collector
 from perspicacite.rag.code_excerpts import collect_code_excerpts
 from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
+from perspicacite.search.screening import (
+    screen_papers,
+    screen_papers_llm,
+    screen_papers_rerank,
+)
 from perspicacite.rag.prompts import (
     ASSESS_DOCUMENT_QUALITY_PROMPT,
     GENERATE_CONTEXTUAL_QUERIES_PROMPT,
@@ -644,6 +650,8 @@ class ProfoundRAGMode(BaseRAGMode):
     ) -> AsyncIterator[StreamEvent]:
         """Execute Profound RAG with streaming output."""
 
+        _phase_sink = getattr(request, "telemetry_sink", None)
+        emit_phase(_phase_sink, phase="rewrite", state="running")
         yield StreamEvent.status("Profound RAG: Initializing deep research...")
 
         # Reset state
@@ -683,6 +691,8 @@ class ProfoundRAGMode(BaseRAGMode):
         except Exception as _qe:
             logger.debug("profound_upfront_optimizer_failed", error=str(_qe))
 
+        emit_phase(_phase_sink, phase="rewrite", state="done")
+        emit_phase(_phase_sink, phase="retrieve", state="running")
         for cycle in range(self.max_cycles):
             from perspicacite.rag.cancellation import is_cancelled
             _tid = getattr(request, "task_id", None)
@@ -815,6 +825,9 @@ class ProfoundRAGMode(BaseRAGMode):
             all_documents.extend(cycle_documents)
 
             if early_exit:
+                emit_phase(_phase_sink, phase="retrieve", state="done")
+                emit_phase(_phase_sink, phase="reason", state="done")
+                emit_phase(_phase_sink, phase="synthesize", state="running")
                 yield StreamEvent.status("Profound RAG: Early exit — synthesizing final answer...")
                 async for event in self._stream_final_response(
                     query=request.query,
@@ -826,6 +839,7 @@ class ProfoundRAGMode(BaseRAGMode):
                     completion_reason="question_answered",
                 ):
                     yield event
+                emit_phase(_phase_sink, phase="synthesize", state="done")
                 return
 
             if plan_limit_reason:
@@ -851,7 +865,9 @@ class ProfoundRAGMode(BaseRAGMode):
                     )
                 break
 
+            emit_phase(_phase_sink, phase="reflect", state="running", cycle=cycle)
             summary = await self._create_iteration_summary(request.query, cycle_steps, llm)
+            emit_phase(_phase_sink, phase="reflect", state="done", cycle=cycle)
             self._iteration_summaries.append(summary)
             _c_refl_s = get_collector()
             if _c_refl_s is not None:
@@ -893,6 +909,9 @@ class ProfoundRAGMode(BaseRAGMode):
             else:
                 self.consecutive_failures = 0
 
+        emit_phase(_phase_sink, phase="retrieve", state="done")
+        emit_phase(_phase_sink, phase="reason", state="done")
+        emit_phase(_phase_sink, phase="synthesize", state="running")
         yield StreamEvent.status("Profound RAG: Synthesizing final answer...")
         async for event in self._stream_final_response(
             query=request.query,
@@ -904,6 +923,7 @@ class ProfoundRAGMode(BaseRAGMode):
             completion_reason=completion_reason,
         ):
             yield event
+        emit_phase(_phase_sink, phase="synthesize", state="done")
 
     async def _create_plan(
         self,
@@ -2226,6 +2246,8 @@ Follow the system instructions for this situation."""
         filtered_docs = await self._filter_documents_by_relevance(
             documents=documents,
             query=query,
+            request=request,
+            llm=llm,
             max_keep=10,
         )
         sources = self._prepare_sources(filtered_docs)
@@ -2309,6 +2331,8 @@ Follow the system instructions for this situation."""
         self,
         documents: list[Any],
         query: str,
+        request: RAGRequest | None = None,
+        llm: Any = None,
         max_keep: int = 10,
     ) -> list[Any]:
         """Drop low-relevance docs before citation emission.
@@ -2327,10 +2351,15 @@ Follow the system instructions for this situation."""
         if not documents or len(documents) <= max_keep:
             return documents
 
-        try:
-            from perspicacite.search.screening import screen_papers_rerank
-        except Exception:
-            return documents
+        # Configurable screening knobs (RAGRequest.screen_method /
+        # screen_threshold). Default behavior is rerank @ 0.0 (legacy).
+        screen_method = getattr(request, "screen_method", None) if request else None
+        screen_threshold = (
+            getattr(request, "screen_threshold", None) if request else None
+        )
+        effective_threshold = (
+            screen_threshold if screen_threshold is not None else 0.0
+        )
 
         def _extract_text(d: Any) -> str:
             if hasattr(d, "chunk") and hasattr(d.chunk, "text"):
@@ -2366,14 +2395,39 @@ Follow the system instructions for this situation."""
         if len(kb_docs) >= max_keep:
             return kb_docs[:max_keep]
 
-        # Rerank the non-KB tail.
+        # Screen the non-KB tail with the configured method, falling back to
+        # rerank for unknown methods (and for "llm" when no llm is in scope).
         slots = max_keep - len(kb_docs)
         try:
-            items = [{"_doc": d, "text": _extract_text(d)} for d in rest]
-            results = await screen_papers_rerank(
-                items, query=query, threshold=0.0,
-            )
-            # results are RerankResult with .item.text and .score
+            # screen_papers (bm25) reads title/abstract directly; the
+            # rerank/llm paths use the pre-extracted text field.
+            items = [
+                {"_doc": d, "text": _extract_text(d), "title": _extract_text(d)}
+                for d in rest
+            ]
+            if screen_method == "bm25":
+                results = screen_papers(
+                    items,
+                    reference=query,
+                    method="bm25",
+                    threshold=effective_threshold,
+                )
+                used_method = "bm25"
+            elif screen_method == "llm" and llm is not None:
+                results = await screen_papers_llm(
+                    items,
+                    query=query,
+                    llm=llm,
+                    threshold=effective_threshold,
+                )
+                used_method = "llm"
+            else:
+                # None / "rerank" / unknown / "llm" without llm -> rerank.
+                results = await screen_papers_rerank(
+                    items, query=query, threshold=effective_threshold,
+                )
+                used_method = "rerank"
+            # results are ScreenResult with .item and .score
             scored = [(r.score, r.item) for r in results]
             scored.sort(key=lambda kv: kv[0], reverse=True)
             kept_rest = [item["_doc"] for _, item in scored[:slots]]
@@ -2381,6 +2435,7 @@ Follow the system instructions for this situation."""
                 "profound_citation_rerank",
                 in_=len(rest), kept=len(kept_rest),
                 kb_kept=len(kb_docs), max_keep=max_keep,
+                screen_method=used_method, threshold=effective_threshold,
             )
             return kb_docs + kept_rest
         except Exception as e:

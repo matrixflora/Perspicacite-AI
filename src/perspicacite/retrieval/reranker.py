@@ -55,6 +55,26 @@ class CrossEncoderReranker:
                 )
         return self._model
 
+    async def score_texts(self, query: str, texts: list[str]) -> list[float]:
+        """Score each text's relevance to the query with the cross-encoder.
+
+        Returns one raw relevance score per text (higher = more relevant), in
+        the same order as ``texts``. Unlike ``rerank`` this works on plain
+        strings, so callers can rank arbitrary candidate lists (e.g. literature
+        search results) that aren't ``RetrievedChunk`` objects.
+        """
+        if not texts:
+            return []
+        pairs = [(query, t or "") for t in texts]
+        loop = asyncio.get_running_loop()
+        model = self._get_model()
+        all_scores: list[float] = []
+        for i in range(0, len(pairs), self.batch_size):
+            batch = pairs[i : i + self.batch_size]
+            scores = await loop.run_in_executor(None, lambda b=batch: model.predict(b))
+            all_scores.extend(float(s) for s in scores.tolist())
+        return all_scores
+
     async def rerank(
         self,
         query: str,

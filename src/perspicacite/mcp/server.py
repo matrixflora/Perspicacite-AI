@@ -417,6 +417,29 @@ async def search_literature(
         return state
 
     from perspicacite.search.domain_aggregator import build_aggregator
+    from perspicacite.search.scilex_adapter import KNOWN_DATABASES
+    from perspicacite.rag.telemetry import ResponseMetadataCollector
+
+    # Response-level metadata collector. Mirrors the wiring in generate_report:
+    # any telemetry events emitted during this call (tokens / cost from the
+    # optimizer LLM, provider_progress / query_rephrased from the aggregator)
+    # are aggregated and embedded in the final JSON response — useful for
+    # callers that drop MCP progress notifications.
+    _response_collector = ResponseMetadataCollector()
+
+    # Filter caller-supplied database list against the authoritative set.
+    # Unknown names are dropped silently (the frontend can pass anything);
+    # if the filter empties the list, fall back to provider defaults.
+    filtered_databases: list[str] | None = None
+    if databases is not None:
+        filtered_databases = [d for d in databases if d in KNOWN_DATABASES]
+        dropped = sorted(set(databases) - KNOWN_DATABASES)
+        if dropped:
+            logger.warning(
+                "mcp_search_literature_unknown_db", dropped=dropped
+            )
+        if not filtered_databases:
+            filtered_databases = None  # fall back to defaults
 
     try:
         aggregator = build_aggregator(state.config)
@@ -428,23 +451,42 @@ async def search_literature(
                 scilex_available=False,
             )
         import perspicacite.search.query_optimizer as _qo_mod
-        opt = await _qo_mod.optimize_query(
-            query=query,
-            context=context,
-            app_state=state,
-            optimize_enabled=optimize_query,
-        )
+        try:
+            opt = await _qo_mod.optimize_query(
+                query=query,
+                context=context,
+                app_state=state,
+                optimize_enabled=optimize_query,
+                sink=_response_collector,
+            )
+        except Exception as _qo_exc:
+            # The optimizer fails closed: any unexpected error (bad config,
+            # missing LLM client, etc.) degrades to "use the verbatim query".
+            logger.warning(
+                "mcp_search_literature_optimizer_error", error=str(_qo_exc)
+            )
+            opt = _qo_mod.OptimizationResult(
+                searched_query=query, enabled=False, applied=False,
+                context_used=False, fallback_reason="optimizer_error",
+            )
 
         # When filtering by relevance, overfetch ~3x so the post-filter
         # has enough candidates to actually return ``max_results``
         # quality hits. Capped at SciLEx's per-DB ceiling.
         fetch_n = min(max_results * 3, 100) if min_relevance > 0 else max_results
+
+        # Dispatch to the multi-provider aggregator. The ``databases``
+        # filter is plumbed through so the aggregator can restrict its
+        # fan-out and SciLEx can restrict its sub-providers — without
+        # bypassing non-SciLEx providers (europepmc, ads, pubchem,
+        # inspire, google_scholar, ...).
         papers = await aggregator.search(
             query=opt.searched_query,
             max_results=fetch_n,
             year_min=year_min,
             year_max=year_max,
-            apis=databases or ["semantic_scholar", "openalex", "pubmed"],
+            apis=filtered_databases,
+            databases=filtered_databases,
             article_type=article_type,
         )
 
@@ -572,7 +614,9 @@ async def search_literature(
         # F-19: surface per-database failures so external agents can tell
         # "no matches" from "the upstream DB was down".
         errors_by_db = dict(getattr(aggregator, "last_errors_by_database", {}))
-        databases_queried = databases or ["semantic_scholar", "openalex", "pubmed"]
+        databases_queried = (
+            filtered_databases or ["semantic_scholar", "openalex", "pubmed"]
+        )
         all_dbs_failed = (
             bool(errors_by_db)
             and len(errors_by_db) >= len(databases_queried)
@@ -597,6 +641,10 @@ async def search_literature(
                 "fallback_reason": opt.fallback_reason,
             },
         }
+        # Merge response-level metadata extras (attempts / query_rephrasings /
+        # usage). When no telemetry events flowed (current default for
+        # search_literature, since the aggregator doesn't emit), this is a no-op.
+        payload.update(_response_collector.as_response_extras())
         if all_dbs_failed:
             payload["success"] = False
             payload["error"] = (
@@ -1240,6 +1288,10 @@ async def generate_report(
     max_total_seconds: float | None = None,
     batch_size: int | None = None,
     crossref_concurrency: int | None = None,
+    screen_method: str | None = None,
+    screen_threshold: float | None = None,
+    max_papers_to_download: int | None = None,
+    databases: list[str] | None = None,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1254,8 +1306,17 @@ async def generate_report(
         kb_names: Optional list of KBs to query together. All KBs must share the same
             embedding model. When provided and len > 1, supersedes kb_name.
             When exactly 1 entry, treated as single KB via kb_name.
-        mode: RAG mode - "basic" (fast), "advanced" (query expansion), "profound" (multi-cycle),
-            or "contradiction" (agreement/disagreement analysis)
+        mode: RAG mode (default "advanced"; an unknown value falls back to
+            "advanced"). One of:
+              - "basic": quick single-pass retrieval + synthesis, no rerank.
+              - "advanced": screening + rerank with query expansion (default).
+              - "profound": deep multi-cycle research with planning + reflection.
+              - "contradiction": surfaces conflicting evidence across papers
+                (agreement / disagreement / open questions).
+              - "agentic": multi-step, intent-driven orchestration — delegates
+                to the AgenticOrchestrator (tool use, iterative replanning).
+              - "literature_survey": broad survey with theme clustering and
+                paper recommendations.
         max_papers: Maximum papers to reference in the report
         recency_weight: Optional recency bias (0.0 = disabled, 1.0 = full recency). When > 0,
             retrieved chunks are re-scored toward more recent papers using exponential decay.
@@ -1265,6 +1326,17 @@ async def generate_report(
             (1–100 papers per batch). None uses the config-file default (20).
         crossref_concurrency: Override Crossref enrichment concurrency (1–10). None uses
             the default (2 without mailto env var, 6 with).
+        screen_method: Optional relevance screening method used by modes that
+            perform a screening step. One of "bm25", "rerank", "llm". Unknown
+            values are dropped (mode falls back to its config default).
+        screen_threshold: Optional screening threshold in [0, 1]. Values outside
+            the range are clamped. None means the mode's config default applies.
+        max_papers_to_download: Optional hard cap on the number of full-text
+            papers downloaded during the report (1–50). Out-of-range values are
+            clamped. None means the mode's default applies.
+        databases: Optional list of search databases (e.g. ["arxiv", "pubmed"]).
+            Unknown names are dropped with a warning. None means the mode's
+            default fan-out (semantic_scholar, openalex, pubmed) applies.
 
     Returns:
         JSON with the report text, cited sources, and metadata.
@@ -1363,6 +1435,35 @@ async def generate_report(
             default_provider = cfg_llm.llm.default_provider or default_provider
             default_model = cfg_llm.llm.default_model or default_model
 
+        # Clamp / validate the new knobs at the MCP boundary so that
+        # internal callers (and RAGRequest itself) can trust the values.
+        if screen_threshold is not None:
+            screen_threshold = max(0.0, min(1.0, float(screen_threshold)))
+        if max_papers_to_download is not None:
+            max_papers_to_download = max(1, min(50, int(max_papers_to_download)))
+        if screen_method is not None and screen_method not in (
+            "bm25", "rerank", "llm"
+        ):
+            logger.warning(
+                "mcp_generate_report_unknown_screen_method",
+                method=screen_method,
+            )
+            screen_method = None
+
+        filtered_databases: list[str] | None = None
+        if databases is not None:
+            from perspicacite.search.scilex_adapter import KNOWN_DATABASES
+
+            filtered_databases = [d for d in databases if d in KNOWN_DATABASES]
+            dropped = sorted(set(databases) - set(KNOWN_DATABASES))
+            if dropped:
+                logger.warning(
+                    "mcp_generate_report_unknown_db",
+                    dropped=dropped,
+                )
+            if not filtered_databases:
+                filtered_databases = None
+
         rag_request = RAGRequest(
             query=query,
             kb_name=effective_kb_name,
@@ -1375,19 +1476,63 @@ async def generate_report(
             max_total_seconds=max_total_seconds,
             batch_size=batch_size,
             crossref_concurrency=crossref_concurrency,
+            screen_method=screen_method,
+            screen_threshold=screen_threshold,
+            max_papers_to_download=max_papers_to_download,
+            databases=filtered_databases,
         )
 
         # Build telemetry sink and attach to the request so each RAG mode
         # can read it via getattr(request, "telemetry_sink", None).
         # The SSE chat path never sets this field, so legacy code hits
         # the `or []` fallback and behaves identically to before.
+        #
+        # The ResponseMetadataCollector always runs (regardless of ctx) so
+        # the final JSON response carries attempts/query_rephrasings/usage
+        # even when MCP progress notifications get dropped.
+        from perspicacite.rag.telemetry import ResponseMetadataCollector
+        _response_collector = ResponseMetadataCollector()
+
         if ctx is not None:
             from perspicacite.mcp.progress_adapter import MCPProgressAdapter
             from perspicacite.rag.telemetry import CallbackTelemetrySink
             _progress_adapter = MCPProgressAdapter(ctx)
-            rag_request.telemetry_sink = CallbackTelemetrySink(  # type: ignore[attr-defined]
-                _progress_adapter.on_event
+            _progress_sink = CallbackTelemetrySink(_progress_adapter.on_event)
+
+            class _FanOutSink:
+                """Fan-out wrapper: forwards each event to multiple sinks."""
+
+                def __init__(self, *sinks: Any) -> None:
+                    self._sinks = sinks
+                    # Mirror events into a buffer so legacy code that reads
+                    # ``sink.events`` keeps working.
+                    self.events: list[dict] = []
+
+                def append(self, event: dict) -> None:
+                    self.events.append(event)
+                    for s in self._sinks:
+                        try:
+                            s.append(event)
+                        except Exception:
+                            pass
+
+                async def on_event_async(self, event: dict) -> None:
+                    self.events.append(event)
+                    for s in self._sinks:
+                        try:
+                            fn = getattr(s, "on_event_async", None)
+                            if fn is not None:
+                                await fn(event)
+                            else:
+                                s.append(event)
+                        except Exception:
+                            pass
+
+            rag_request.telemetry_sink = _FanOutSink(  # type: ignore[attr-defined]
+                _progress_sink, _response_collector
             )
+        else:
+            rag_request.telemetry_sink = _response_collector  # type: ignore[attr-defined]
 
         cancelled_reason: str | None = None
         async for event in engine.query_stream(rag_request, message_id=message_id):
@@ -1431,35 +1576,35 @@ async def generate_report(
                 task_id=task_id,
                 partial_chars=len(report_text),
             )
-            return _json_ok(
-                {
-                    "query": query,
-                    "kb_name": effective_kb_name,
-                    "kb_names": effective_kb_names,
-                    "mode": mode,
-                    "report": report_text,  # partial, may be empty
-                    "sources": sources,
-                    "papers_used": len(sources),
-                    "message_id": message_id,
-                    "cancelled": True,
-                    "task_id": task_id,
-                }
-            )
-
-        logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
-
-        return _json_ok(
-            {
+            _cancelled_payload = {
                 "query": query,
                 "kb_name": effective_kb_name,
                 "kb_names": effective_kb_names,
                 "mode": mode,
-                "report": report_text,
+                "report": report_text,  # partial, may be empty
                 "sources": sources,
                 "papers_used": len(sources),
                 "message_id": message_id,
+                "cancelled": True,
+                "task_id": task_id,
             }
-        )
+            _cancelled_payload.update(_response_collector.as_response_extras())
+            return _json_ok(_cancelled_payload)
+
+        logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
+
+        _final_payload = {
+            "query": query,
+            "kb_name": effective_kb_name,
+            "kb_names": effective_kb_names,
+            "mode": mode,
+            "report": report_text,
+            "sources": sources,
+            "papers_used": len(sources),
+            "message_id": message_id,
+        }
+        _final_payload.update(_response_collector.as_response_extras())
+        return _json_ok(_final_payload)
 
     except Exception as e:
         logger.error("mcp_generate_report_error", query=query, error=str(e))
@@ -4102,12 +4247,604 @@ async def cancel_task(task_id: str) -> str:
     })
 
 
+# =============================================================================
+# Tool: search_by_passage
+# =============================================================================
+
+
+@mcp.tool()
+async def search_by_passage(
+    text: str,
+    kb_name: str = "default",
+    kb_names: list[str] | None = None,
+    k: int = 5,
+    min_score: float | None = None,
+) -> str:
+    """
+    Retrieve KB passages semantically similar to an arbitrary input text
+    (a sentence, paragraph, or claim you already have in hand).
+
+    When to use (vs ``search_knowledge_base``): use this when your input IS a
+    chunk of source text — e.g. you want to find supporting/related passages
+    for a sentence you are about to write, check whether a claim is backed by
+    the KB, or de-duplicate against existing material. Reach for
+    ``search_knowledge_base`` instead when you have a *question* and want a
+    synthesized answer rather than raw matching chunks. Unlike
+    ``search_knowledge_base``, every match here carries ``license_id`` and a
+    structured ``source`` record so the caller can make citation decisions on
+    the returned chunks. See also ``get_relevant_passages`` for keyword/query
+    style retrieval with an adaptive empty-result retry.
+
+    Args:
+        text: Free-form input text (sentence, paragraph, claim). 1–4000 chars.
+        kb_name: Single-KB scope (default "default"); used when ``kb_names``
+            is None or has 1 entry.
+        kb_names: Optional list of KBs to query together (default None). All
+            must share the same embedding model; when len > 1 it supersedes
+            ``kb_name``.
+        k: Top-k matches to return (default 5, max 50).
+        min_score: Optional similarity floor in [0, 1] (default None); matches
+            scoring below it are dropped.
+
+    Returns:
+        A JSON string. On success: {"success": True, "results": [{chunk_id,
+        chunk_text, score, source: {doi, title, authors, year, bibkey,
+        source_url, license_id}, kb_name}, ...]}. On failure:
+        {"success": False, "error": "..."}.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    try:
+        from perspicacite.retrieval.passage_search import search_passages
+
+        # Multi-KB path
+        if kb_names and len(kb_names) > 1:
+            from perspicacite.retrieval.multi_kb import (
+                MultiKBRetriever,
+                check_embedding_compat,
+            )
+
+            metas = [
+                await state.session_store.get_kb_metadata(n) for n in kb_names
+            ]
+            for i, meta in enumerate(metas):
+                if meta is None:
+                    return _json_error(f"Knowledge base not found: {kb_names[i]}")
+            compat_msg = check_embedding_compat(metas)
+            if compat_msg:
+                return _json_error(compat_msg)
+
+            retriever = MultiKBRetriever(
+                vector_store=state.vector_store,
+                embedding_service=state.embedding_provider,
+                kb_metas=metas,
+            )
+        else:
+            from perspicacite.models.kb import chroma_collection_name_for_kb
+            from perspicacite.rag.dynamic_kb import (
+                DynamicKnowledgeBase,
+                KnowledgeBaseConfig,
+            )
+
+            effective_kb = (
+                kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
+            )
+            kb_meta = await state.session_store.get_kb_metadata(effective_kb)
+            if not kb_meta:
+                return _json_error(f"Knowledge base '{effective_kb}' not found")
+            retriever = DynamicKnowledgeBase(
+                state.vector_store,
+                state.embedding_provider,
+                config=KnowledgeBaseConfig(
+                    vector_size=state.embedding_provider.dimension,
+                ),
+            )
+            retriever.collection_name = chroma_collection_name_for_kb(
+                effective_kb
+            )
+            retriever._initialized = True
+
+        matches = await search_passages(
+            retriever, text=text, k=k, min_score=min_score
+        )
+
+        return _json_ok(
+            {
+                "results": [
+                    {
+                        "chunk_id": m.chunk_id,
+                        "chunk_text": m.chunk_text,
+                        "score": m.score,
+                        "source": {
+                            "doi": m.source.doi,
+                            "title": m.source.title,
+                            "authors": m.source.authors,
+                            "year": m.source.year,
+                            "bibkey": m.source.bibkey,
+                            "source_url": m.source.source_url,
+                            "license_id": m.source.license_id,
+                        },
+                        "kb_name": m.kb_name,
+                    }
+                    for m in matches
+                ]
+            }
+        )
+
+    except ValueError as e:
+        return _json_error(str(e))
+    except Exception as e:
+        logger.error("mcp_search_by_passage_error", error=str(e))
+        return _json_error(f"search_by_passage failed: {e}")
+
+
+# =============================================================================
+# Tool: get_relevant_passages (with adaptive retry)
+# =============================================================================
+
+
+async def _rephrase_query(query: str, *, context: str | None = None) -> str | None:
+    """Wrap the search.query_optimizer for one-shot rephrasing.
+
+    Returns None when the optimizer can't suggest a rewrite (we then bail
+    on adaptive retry rather than loop). Internal helper; patched in tests.
+
+    Note: the underlying ``optimize_query`` takes an ``app_state`` kwarg and
+    returns an ``OptimizationResult``. We pass ``mcp_state`` (which exposes
+    the same ``config`` / ``llm_client`` attributes the optimizer needs) and
+    map the result back to a plain string (or ``None`` when no rewrite was
+    applied).
+    """
+    try:
+        from perspicacite.search.query_optimizer import optimize_query
+
+        if not mcp_state.initialized or mcp_state.config is None:
+            return None
+
+        result = await optimize_query(
+            query=query,
+            context=context,
+            app_state=mcp_state,
+            optimize_enabled=True,
+        )
+        if not result or not result.applied:
+            return None
+        refined = (result.searched_query or "").strip()
+        if not refined or refined == query.strip():
+            return None
+        return refined
+    except Exception as e:
+        logger.warning("query_rephrase_failed", error=str(e), query=query)
+        return None
+
+
+@mcp.tool()
+async def get_relevant_passages(
+    query: str,
+    kb_name: str = "default",
+    kb_names: list[str] | None = None,
+    k: int = 10,
+    paper_doi: str | None = None,
+    adaptive: bool = False,
+) -> str:
+    """
+    Keyword/query-style passage retrieval with an optional adaptive re-query
+    when the first attempt returns nothing.
+
+    When to use (vs ``search_by_passage``): use this when your input is a
+    *search query* — keywords or a short prompt — rather than a verbatim chunk
+    of source text. It is the better default when you are exploring ("what
+    does the KB say about X?") and want raw passages back. Use
+    ``search_by_passage`` instead when you already hold a sentence/paragraph
+    and want passages similar to that exact text. Setting ``adaptive=True``
+    makes the server run the query optimizer once and retry if the first pass
+    finds zero passages — handy for terse or jargon-heavy queries. The
+    response always reports ``attempts`` (1 or 2 entries) so the caller can
+    see whether the retry fired and what the rephrased query was.
+
+    Args:
+        query: Search query (keywords / short prompt).
+        kb_name: Single-KB scope (default "default").
+        kb_names: Optional multi-KB list (default None); all KBs must share the
+            same embedding model. When len > 1 it supersedes ``kb_name``.
+        k: Top-k passages per attempt (default 10, max 50).
+        paper_doi: Optional DOI scope-filter (default None; reserved, not yet
+            enforced).
+        adaptive: When True (default False), retry once with a rephrased query
+            if the first attempt returns no passages.
+
+    Returns:
+        A JSON string. On success: {"success": True, "passages": [{text,
+        source_doi, source_url, license_id, score, kb_name}, ...], "attempts":
+        [{query, hit_count}, ...], "refined_query": "..." | None}. On failure:
+        {"success": False, "error": "..."}.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    try:
+        from perspicacite.retrieval.passage_search import search_passages
+
+        # Build retriever (same pattern as search_by_passage).
+        if kb_names and len(kb_names) > 1:
+            from perspicacite.retrieval.multi_kb import (
+                MultiKBRetriever,
+                check_embedding_compat,
+            )
+
+            metas = [
+                await state.session_store.get_kb_metadata(n) for n in kb_names
+            ]
+            for i, meta in enumerate(metas):
+                if meta is None:
+                    return _json_error(
+                        f"Knowledge base not found: {kb_names[i]}"
+                    )
+            compat_msg = check_embedding_compat(metas)
+            if compat_msg:
+                return _json_error(compat_msg)
+            retriever = MultiKBRetriever(
+                vector_store=state.vector_store,
+                embedding_service=state.embedding_provider,
+                kb_metas=metas,
+            )
+        else:
+            from perspicacite.models.kb import chroma_collection_name_for_kb
+            from perspicacite.rag.dynamic_kb import (
+                DynamicKnowledgeBase,
+                KnowledgeBaseConfig,
+            )
+
+            effective_kb = (
+                kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
+            )
+            kb_meta = await state.session_store.get_kb_metadata(effective_kb)
+            if not kb_meta:
+                return _json_error(
+                    f"Knowledge base '{effective_kb}' not found"
+                )
+            retriever = DynamicKnowledgeBase(
+                state.vector_store,
+                state.embedding_provider,
+                config=KnowledgeBaseConfig(
+                    vector_size=state.embedding_provider.dimension,
+                ),
+            )
+            retriever.collection_name = chroma_collection_name_for_kb(
+                effective_kb
+            )
+            retriever._initialized = True
+
+        attempts: list[dict] = []
+        matches = await search_passages(retriever, text=query, k=k)
+        attempts.append({"query": query, "hit_count": len(matches)})
+        refined: str | None = None
+
+        if adaptive and not matches:
+            refined = await _rephrase_query(query)
+            if refined:
+                matches = await search_passages(retriever, text=refined, k=k)
+                attempts.append({"query": refined, "hit_count": len(matches)})
+
+        return _json_ok(
+            {
+                "passages": [
+                    {
+                        "text": m.chunk_text,
+                        "source_doi": m.source.doi,
+                        "source_url": m.source.source_url,
+                        "license_id": m.source.license_id,
+                        "score": m.score,
+                        "kb_name": m.kb_name,
+                    }
+                    for m in matches
+                ],
+                "attempts": attempts,
+                "refined_query": refined,
+            }
+        )
+
+    except ValueError as e:
+        return _json_error(str(e))
+    except Exception as e:
+        logger.error("mcp_get_relevant_passages_error", error=str(e))
+        return _json_error(f"get_relevant_passages failed: {e}")
+
+
+# =============================================================================
+# Tool: extract_parameters_from_passages
+# =============================================================================
+
+_PARAM_EXTRACTION_PROMPT = """\
+You are extracting numeric experimental or methodological parameters from
+scientific passages. Return a JSON array of objects with keys:
+  name, type ("numeric"|"categorical"), typical, units, min, max,
+  source_doi, source_quote, confidence (0..1)
+
+Only include parameters explicitly stated in the passages. If a value is
+absent, omit that key. Skip parameters not relevant to {context}.
+"""
+
+
+@mcp.tool()
+async def extract_parameters_from_passages(
+    passages: list[dict],
+    context: str | None = None,
+    parameter_families: list[str] | None = None,
+    model: str | None = None,
+) -> str:
+    """
+    Extract structured *numeric* parameters (thresholds, concentrations,
+    ranges, temperatures, pH, durations) from a list of passages using an LLM
+    with JSON-schema-style output.
+
+    When to use (vs ``extract_failure_modes_from_passages``): use this when you
+    want the quantitative settings a method depends on — the knobs and their
+    values/units/ranges. Use ``extract_failure_modes_from_passages`` instead
+    when you want the qualitative things that go wrong (symptoms, causes,
+    mitigations). Typical pipeline: call ``search_by_passage`` /
+    ``get_relevant_passages`` to gather candidate chunks, then feed the
+    returned passage dicts straight into this tool. Only parameters explicitly
+    stated in the passages are returned; ``license_id`` on each passage
+    controls how quotes are handled.
+
+    Args:
+        passages: List of {text, source_doi, license_id?, source_url?} dicts —
+            the shape returned by the passage-search tools. Passages with no
+            ``text`` are skipped.
+        context: Optional domain/skill hint to focus extraction (default None).
+        parameter_families: Optional list of family names to bias the LLM
+            toward (default None), e.g. ["threshold","concentration","pH",
+            "temperature"].
+        model: Optional LiteLLM-style "provider/model" override (default None
+            uses the server's configured default model).
+
+    Returns:
+        A JSON string. On success: {"success": True, "parameters": [{name,
+        type, typical, units, min, max, source_doi, source_quote, confidence},
+        ...]}. On failure: {"success": False, "error": "..."}.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    try:
+        from perspicacite.pipeline.extraction import (
+            Passage,
+            extract_structured,
+            handle_quote_for_license,
+        )
+
+        passage_objs = [
+            Passage(
+                text=str(p.get("text", "")),
+                source_doi=str(p.get("source_doi", "")),
+                license_id=p.get("license_id"),
+                source_url=p.get("source_url"),
+            )
+            for p in passages
+            if p.get("text")
+        ]
+
+        families = parameter_families or [
+            "threshold", "concentration", "pH",
+            "temperature", "time", "rate",
+        ]
+        prompt = _PARAM_EXTRACTION_PROMPT.format(context=context or "general")
+        prompt += f"\nFocus on these families when relevant: {', '.join(families)}."
+
+        records = await extract_structured(
+            llm_client=state.llm_client,
+            passages=passage_objs,
+            prompt_template=prompt,
+            schema={},
+            what="parameters",
+            context=context,
+            dedup_key=lambda r: (r.get("name"), r.get("units")),
+            model=model,
+        )
+
+        # Apply license-tier policy to source_quote on each record.
+        doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
+        cleaned: list[dict] = []
+        for r in records:
+            quote = r.get("source_quote")
+            if quote:
+                tier_quote = handle_quote_for_license(
+                    str(quote),
+                    license_id=doi_to_license.get(r.get("source_doi", "")),
+                    paraphraser=None,  # MVP: drop when paraphraser is unavailable
+                )
+                if tier_quote is None:
+                    r = {k: v for k, v in r.items() if k != "source_quote"}
+                else:
+                    r = {**r, "source_quote": tier_quote}
+            cleaned.append(r)
+
+        return _json_ok({"parameters": cleaned})
+
+    except Exception as e:
+        logger.error("mcp_extract_parameters_error", error=str(e))
+        return _json_error(f"extract_parameters_from_passages failed: {e}")
+
+
+# =============================================================================
+# Tool: extract_failure_modes_from_passages
+# =============================================================================
+
+_FAILURE_EXTRACTION_PROMPT = """\
+You are extracting failure modes, limitations, caveats, and pitfalls from
+scientific passages. Return a JSON array of objects with keys:
+  symptom (one sentence), root_cause, mitigation, source_doi,
+  source_quote, confidence (0..1)
+
+Only include failure modes explicitly stated. Skip generic disclaimers.
+Domain context: {context}.
+"""
+
+
+@mcp.tool()
+async def extract_failure_modes_from_passages(
+    passages: list[dict],
+    context: str | None = None,
+    model: str | None = None,
+) -> str:
+    """
+    Extract structured *failure modes* (symptoms, likely causes, and
+    mitigations) from a list of passages using an LLM.
+
+    When to use (vs ``extract_parameters_from_passages``): use this when you
+    want the qualitative ways a method or system breaks — what goes wrong, why,
+    and how to avoid it. Use ``extract_parameters_from_passages`` instead when
+    you want quantitative settings (thresholds, concentrations, ranges).
+    Typical pipeline: gather chunks with ``search_by_passage`` /
+    ``get_relevant_passages``, then pass those passage dicts directly here.
+    Records are de-duplicated by symptom, and each passage's ``license_id``
+    governs how its source quote is handled.
+
+    Args:
+        passages: List of {text, source_doi, license_id?, source_url?} dicts —
+            the shape returned by the passage-search tools. Passages with no
+            ``text`` are skipped.
+        context: Optional domain/skill hint to focus extraction (default None).
+        model: Optional LiteLLM-style "provider/model" override (default None
+            uses the server's configured default model).
+
+    Returns:
+        A JSON string. On success: {"success": True, "failure_modes":
+        [{symptom, root_cause, mitigation, source_doi, source_quote,
+        confidence}, ...]}. On failure: {"success": False, "error": "..."}.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    try:
+        from perspicacite.pipeline.extraction import (
+            Passage,
+            extract_structured,
+            handle_quote_for_license,
+        )
+
+        passage_objs = [
+            Passage(
+                text=str(p.get("text", "")),
+                source_doi=str(p.get("source_doi", "")),
+                license_id=p.get("license_id"),
+                source_url=p.get("source_url"),
+            )
+            for p in passages
+            if p.get("text")
+        ]
+
+        prompt = _FAILURE_EXTRACTION_PROMPT.format(context=context or "general")
+
+        records = await extract_structured(
+            llm_client=state.llm_client,
+            passages=passage_objs,
+            prompt_template=prompt,
+            schema={},
+            what="failure_modes",
+            context=context,
+            dedup_key=lambda r: (str(r.get("symptom", "")).strip().lower(),),
+            model=model,
+        )
+
+        doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
+        cleaned: list[dict] = []
+        for r in records:
+            quote = r.get("source_quote")
+            if quote:
+                tier_quote = handle_quote_for_license(
+                    str(quote),
+                    license_id=doi_to_license.get(r.get("source_doi", "")),
+                    paraphraser=None,
+                )
+                if tier_quote is None:
+                    r = {k: v for k, v in r.items() if k != "source_quote"}
+                else:
+                    r = {**r, "source_quote": tier_quote}
+            cleaned.append(r)
+
+        return _json_ok({"failure_modes": cleaned})
+
+    except Exception as e:
+        logger.error("mcp_extract_failure_modes_error", error=str(e))
+        return _json_error(f"extract_failure_modes_from_passages failed: {e}")
+
+
+@mcp.tool()
+async def suggest_databases(query: str, hints: list[str] | None = None) -> str:
+    """
+    Recommend which literature databases to search for a given query.
+
+    Use this BEFORE ``search_literature`` or ``generate_report`` when you are
+    unsure which databases to pass: it returns a topic-relevant shortlist so a
+    search hits the right sources instead of a blind broad sweep.
+
+    Deterministic: the recommendation comes from a keyword topic heuristic over
+    the query (plus optional ``hints``); no LLM is involved, so the same input
+    always yields the same output. Examples: biomedical → pubmed/europepmc;
+    machine learning / physics → arxiv; high-energy physics → inspire;
+    chemistry → pubchem. A broad default (semantic_scholar, openalex, crossref)
+    is always included so a recommendation is never empty.
+
+    Args:
+        query: The research question or topic to search for.
+        hints: Optional extra terms (e.g. ["chemistry"]) to steer the topic match.
+
+    Returns:
+        JSON {"success": True, "recommended": [...], "reasoning": "...",
+        "all_known": [...]} where ``all_known`` is the sorted set of every
+        database name accepted by ``search_literature``.
+    """
+    from perspicacite.search.database_advisor import suggest_databases_for_query
+    from perspicacite.search.scilex_adapter import KNOWN_DATABASES
+
+    suggestion = suggest_databases_for_query(query, hints=hints)
+    return _json_ok(
+        {
+            "recommended": suggestion.databases,
+            "reasoning": suggestion.reasoning,
+            "all_known": sorted(KNOWN_DATABASES),
+        }
+    )
+
+
+@mcp.tool()
+async def get_usage_guide() -> str:
+    """
+    Return the authoritative guide to using Perspicacité over MCP.
+
+    Call this FIRST when planning multi-step research: it returns the server's
+    capabilities, decision rules (translate non-English queries, set
+    ``optimize_query``, call ``suggest_databases``, pick the right tool and
+    mode/screening, read the ``{success}`` envelope), a documented entry for
+    every registered tool (``name``, ``purpose``, ``when_to_use``, ``key_knobs``),
+    and recommended knob defaults.
+
+    Returns:
+        JSON {"success": True, "capabilities": [...], "decision_rules": [...],
+        "tools": [...], "knob_defaults": {...}}.
+    """
+    from perspicacite.mcp.usage_guide import build_usage_guide
+
+    return _json_ok(build_usage_guide())
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
     "get_paper_references",
     "list_knowledge_bases",
     "search_knowledge_base",
+    "search_by_passage",
+    "get_relevant_passages",
+    "extract_parameters_from_passages",
+    "extract_failure_modes_from_passages",
     "create_knowledge_base",
     "add_papers_to_kb",
     "generate_report",
@@ -4134,6 +4871,8 @@ _TOOL_NAMES: list[str] = [
     "ingest_skill_bundle",
     "web_search",
     "cancel_task",
+    "suggest_databases",
+    "get_usage_guide",
 ]
 
 

@@ -23,6 +23,7 @@ from perspicacite.rag.code_excerpts import collect_code_excerpts
 from perspicacite.rag.conversation_helpers import compute_retrieval_query, format_conversation_block
 from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.rag.modes.base import BaseRAGMode
+from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
 from perspicacite.rag.prompts import (
     DEFAULT_SYSTEM_PROMPT,
@@ -533,7 +534,9 @@ Sources:
         tools: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Execute Advanced RAG with true streaming output."""
+        _phase_sink = getattr(request, "telemetry_sink", None)
 
+        emit_phase(_phase_sink, phase="rewrite", state="running")
         yield StreamEvent.status("Advanced RAG: Generating query variations...")
 
         kb_collection = chroma_collection_name_for_kb(request.kb_name)
@@ -562,6 +565,8 @@ Sources:
             original_query=retrieval_query, llm=llm, number=self.rephrases
         )
 
+        emit_phase(_phase_sink, phase="rewrite", state="done")
+        emit_phase(_phase_sink, phase="retrieve_kb", state="running")
         yield StreamEvent.status(
             f"Advanced RAG: Searching with {len(all_queries)} query variations..."
         )
@@ -577,11 +582,15 @@ Sources:
             request=request,
         )
 
+        emit_phase(_phase_sink, phase="retrieve_kb", state="done")
+
         if self.use_relevancy_optimization and selected_documents:
+            emit_phase(_phase_sink, phase="screen", state="running")
             selected_documents = reorder_documents_by_relevance(
                 getattr(request, "refined_query", None) or request.query,
                 selected_documents,
             )
+            emit_phase(_phase_sink, phase="screen", state="done")
 
         # Web-search fallback: if the WRRF retrieval over the KB(s) returned
         # nothing, run a live literature search using the user-selected
@@ -591,6 +600,7 @@ Sources:
         paper_results: list[dict[str, Any]] = []
         web_fallback_used_advanced = False
         if not selected_documents:
+            emit_phase(_phase_sink, phase="retrieve_web", state="running")
             from perspicacite.rag.modes.basic import _web_fallback_papers
 
             _db_pretty = ", ".join(
@@ -675,6 +685,7 @@ Sources:
                             by_provider=_bp,
                         )
             web_fallback_used_advanced = True
+            emit_phase(_phase_sink, phase="retrieve_web", state="done")
             if paper_results:
                 yield StreamEvent.status(
                     f"Web search returned {len(paper_results)} relevant paper(s)."
@@ -808,6 +819,7 @@ Sources:
             )
             return
 
+        emit_phase(_phase_sink, phase="synthesize", state="running")
         yield StreamEvent.status("Advanced RAG: Generating response...")
 
         if paper_results:
@@ -870,6 +882,7 @@ Sources:
             references = format_references(sources)
             yield StreamEvent.content("\n\n" + references)
 
+        emit_phase(_phase_sink, phase="synthesize", state="done")
         yield StreamEvent.done(
             conversation_id="",
             tokens_used=0,
