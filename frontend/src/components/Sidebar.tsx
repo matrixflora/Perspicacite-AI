@@ -84,7 +84,12 @@ export function Sidebar() {
     <aside className="sticky top-0 z-20 hidden h-screen w-[272px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)] md:flex">
       {/* Brand + new chat */}
       <div className="px-3 pt-4 pb-3">
-        <div className="mb-3 flex items-center gap-2.5 px-2">
+        <Link
+          href="/"
+          aria-label="Perspicacité home"
+          title="Home"
+          className="mb-3 flex items-center gap-2.5 rounded-[var(--radius-md)] px-2 py-1 transition hover:bg-[var(--cnrs-grey-light)]"
+        >
           <span
             className="grid h-7 w-7 place-items-center rounded-full"
             style={{ background: "var(--cnrs-yellow)" }}
@@ -96,7 +101,7 @@ export function Sidebar() {
             </p>
             <p className="text-[10px] text-[var(--text-muted)]">v2 · POC</p>
           </div>
-        </div>
+        </Link>
 
         <button
           type="button"
