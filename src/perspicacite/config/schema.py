@@ -1201,6 +1201,15 @@ class GoogleScholarConfig(BaseModel):
         ],
         description="Exa search restricted to these academic domains.",
     )
+    serpapi_api_key: str = Field(
+        default="",
+        description=(
+            "SerpApi key for the Google Scholar engine. When set (and the "
+            "google_scholar provider is enabled), the reliable SerpApi backend "
+            "is used instead of headless-Chromium scraping. Also read from "
+            "SERPAPI_API_KEY / SERPAPI_KEY env vars. Free tier: 100 searches/mo."
+        ),
+    )
 
 
 class GitHubConfig(BaseModel):

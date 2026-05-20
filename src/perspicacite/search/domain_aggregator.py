@@ -333,7 +333,24 @@ def build_aggregator(config: Any) -> DomainAwareAggregator:
                 from perspicacite.search.google_scholar_playwright import (
                     GoogleScholarPlaywrightProvider,
                 )
-                providers.append(GoogleScholarPlaywrightProvider(
+                from perspicacite.search.serpapi_scholar import (
+                    GoogleScholarChainProvider,
+                    SerpApiScholarProvider,
+                )
+
+                # google_scholar slot = ordered chain: SerpApi (reliable,
+                # structured, gives citation counts) first, Playwright
+                # (which itself falls back to OpenRouter/Exa) as backup so a
+                # SerpApi outage / quota exhaustion still returns Scholar hits.
+                _backends: list[Any] = []
+                _serp = SerpApiScholarProvider(
+                    api_key=str(getattr(scholar_cfg, "serpapi_api_key", "") or "")
+                )
+                if _serp.available:
+                    _backends.append(_serp)
+                else:
+                    logger.info("build_aggregator_serpapi_no_key")
+                _backends.append(GoogleScholarPlaywrightProvider(
                     delay_seconds=float(getattr(scholar_cfg, "delay_seconds", 2.0)),
                     headless=bool(getattr(scholar_cfg, "headless", True)),
                     user_agent=str(getattr(
@@ -356,6 +373,7 @@ def build_aggregator(config: Any) -> DomainAwareAggregator:
                         getattr(scholar_cfg, "openrouter_fallback_domains", [])
                     ) or None,
                 ))
+                providers.append(GoogleScholarChainProvider(_backends))
             else:
                 logger.info("build_aggregator_scholar_skipped_not_enabled")
         except Exception as exc:
