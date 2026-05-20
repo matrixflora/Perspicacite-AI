@@ -15,7 +15,7 @@ import pytest
 
 import perspicacite.mcp.server as mcp_server
 from perspicacite.mcp.server import MCPState, generate_report
-from perspicacite.models.rag import StreamEvent
+from perspicacite.models.rag import RAGMode, StreamEvent
 from perspicacite.rag.engine import RAGEngine
 
 if TYPE_CHECKING:
@@ -162,6 +162,28 @@ async def test_default_knobs_are_none() -> None:
     assert getattr(req, "screen_threshold", None) is None
     assert getattr(req, "max_papers_to_download", None) is None
     assert getattr(req, "databases", None) is None
+
+
+@pytest.mark.asyncio
+async def test_agentic_mode_routes_to_agentic_rag_mode() -> None:
+    """Regression guard: mode="agentic" must resolve to RAGMode.AGENTIC.
+
+    The AGENTIC mode delegates to the AgenticOrchestrator; this verifies the
+    string→enum wiring on the MCP boundary stays intact so the orchestrator
+    path remains reachable from generate_report.
+    """
+    state = _make_state()
+    captured: list[Any] = []
+    cleanup = _install_capturing_engine(captured)
+    try:
+        with patch.object(mcp_server, "mcp_state", state):
+            await generate_report(query="x", kb_name="kb", mode="agentic")
+    finally:
+        cleanup()
+
+    assert captured, "query_stream was never invoked"
+    req = captured[0]
+    assert req.mode == RAGMode.AGENTIC
 
 
 @pytest.mark.asyncio

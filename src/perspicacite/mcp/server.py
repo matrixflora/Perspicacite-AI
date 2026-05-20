@@ -1306,8 +1306,17 @@ async def generate_report(
         kb_names: Optional list of KBs to query together. All KBs must share the same
             embedding model. When provided and len > 1, supersedes kb_name.
             When exactly 1 entry, treated as single KB via kb_name.
-        mode: RAG mode - "basic" (fast), "advanced" (query expansion), "profound" (multi-cycle),
-            or "contradiction" (agreement/disagreement analysis)
+        mode: RAG mode (default "advanced"; an unknown value falls back to
+            "advanced"). One of:
+              - "basic": quick single-pass retrieval + synthesis, no rerank.
+              - "advanced": screening + rerank with query expansion (default).
+              - "profound": deep multi-cycle research with planning + reflection.
+              - "contradiction": surfaces conflicting evidence across papers
+                (agreement / disagreement / open questions).
+              - "agentic": multi-step, intent-driven orchestration — delegates
+                to the AgenticOrchestrator (tool use, iterative replanning).
+              - "literature_survey": broad survey with theme clustering and
+                paper recommendations.
         max_papers: Maximum papers to reference in the report
         recency_weight: Optional recency bias (0.0 = disabled, 1.0 = full recency). When > 0,
             retrieved chunks are re-scored toward more recent papers using exponential decay.
@@ -4252,22 +4261,36 @@ async def search_by_passage(
     min_score: float | None = None,
 ) -> str:
     """
-    Retrieve KB passages similar to an arbitrary input text (sentence / paragraph).
+    Retrieve KB passages semantically similar to an arbitrary input text
+    (a sentence, paragraph, or claim you already have in hand).
 
-    Differs from ``search_knowledge_base`` in that the response surfaces
-    ``license_id`` and a structured ``source`` record per match — designed for
-    consumers that need to make citation decisions on the returned chunks.
+    When to use (vs ``search_knowledge_base``): use this when your input IS a
+    chunk of source text — e.g. you want to find supporting/related passages
+    for a sentence you are about to write, check whether a claim is backed by
+    the KB, or de-duplicate against existing material. Reach for
+    ``search_knowledge_base`` instead when you have a *question* and want a
+    synthesized answer rather than raw matching chunks. Unlike
+    ``search_knowledge_base``, every match here carries ``license_id`` and a
+    structured ``source`` record so the caller can make citation decisions on
+    the returned chunks. See also ``get_relevant_passages`` for keyword/query
+    style retrieval with an adaptive empty-result retry.
 
     Args:
         text: Free-form input text (sentence, paragraph, claim). 1–4000 chars.
-        kb_name: Single-KB scope (used when ``kb_names`` is None or 1 entry).
-        kb_names: Optional list of KBs to query together. All must share the
-            same embedding model.
-        k: Top-k matches to return (max 50).
-        min_score: Optional similarity floor; matches below are dropped.
+        kb_name: Single-KB scope (default "default"); used when ``kb_names``
+            is None or has 1 entry.
+        kb_names: Optional list of KBs to query together (default None). All
+            must share the same embedding model; when len > 1 it supersedes
+            ``kb_name``.
+        k: Top-k matches to return (default 5, max 50).
+        min_score: Optional similarity floor in [0, 1] (default None); matches
+            scoring below it are dropped.
 
     Returns:
-        JSON {"success": True, "results": [...]} or {"success": False, "error": "..."}.
+        A JSON string. On success: {"success": True, "results": [{chunk_id,
+        chunk_text, score, source: {doi, title, authors, year, bibkey,
+        source_url, license_id}, kb_name}, ...]}. On failure:
+        {"success": False, "error": "..."}.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -4407,25 +4430,36 @@ async def get_relevant_passages(
     adaptive: bool = False,
 ) -> str:
     """
-    Keyword-style passage retrieval with optional adaptive re-query on empty.
+    Keyword/query-style passage retrieval with an optional adaptive re-query
+    when the first attempt returns nothing.
 
-    Like ``search_by_passage`` but treats the input as a search query rather
-    than a piece of source text. When ``adaptive=True`` and the first call
-    returns zero passages, the server invokes the query optimizer once and
-    retries. The response always includes ``attempts`` (1 or 2 entries) and,
-    when adaptive fired, ``refined_query``.
+    When to use (vs ``search_by_passage``): use this when your input is a
+    *search query* — keywords or a short prompt — rather than a verbatim chunk
+    of source text. It is the better default when you are exploring ("what
+    does the KB say about X?") and want raw passages back. Use
+    ``search_by_passage`` instead when you already hold a sentence/paragraph
+    and want passages similar to that exact text. Setting ``adaptive=True``
+    makes the server run the query optimizer once and retry if the first pass
+    finds zero passages — handy for terse or jargon-heavy queries. The
+    response always reports ``attempts`` (1 or 2 entries) so the caller can
+    see whether the retry fired and what the rephrased query was.
 
     Args:
         query: Search query (keywords / short prompt).
-        kb_name: Single KB scope.
-        kb_names: Optional multi-KB list (same embedding model required).
-        k: Top-k passages per attempt (max 50).
-        paper_doi: Optional DOI scope-filter (reserved; not yet enforced).
-        adaptive: When True, retry once with a rephrased query on empty.
+        kb_name: Single-KB scope (default "default").
+        kb_names: Optional multi-KB list (default None); all KBs must share the
+            same embedding model. When len > 1 it supersedes ``kb_name``.
+        k: Top-k passages per attempt (default 10, max 50).
+        paper_doi: Optional DOI scope-filter (default None; reserved, not yet
+            enforced).
+        adaptive: When True (default False), retry once with a rephrased query
+            if the first attempt returns no passages.
 
     Returns:
-        JSON {"success": True, "passages": [...], "attempts": [...], "refined_query": "..."?}
-        or {"success": False, "error": "..."}.
+        A JSON string. On success: {"success": True, "passages": [{text,
+        source_doi, source_url, license_id, score, kb_name}, ...], "attempts":
+        [{query, hit_count}, ...], "refined_query": "..." | None}. On failure:
+        {"success": False, "error": "..."}.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -4543,18 +4577,35 @@ async def extract_parameters_from_passages(
     model: str | None = None,
 ) -> str:
     """
-    Extract structured numeric parameters (thresholds, concentrations, ranges)
-    from a list of passages using an LLM with JSON-schema-style output.
+    Extract structured *numeric* parameters (thresholds, concentrations,
+    ranges, temperatures, pH, durations) from a list of passages using an LLM
+    with JSON-schema-style output.
+
+    When to use (vs ``extract_failure_modes_from_passages``): use this when you
+    want the quantitative settings a method depends on — the knobs and their
+    values/units/ranges. Use ``extract_failure_modes_from_passages`` instead
+    when you want the qualitative things that go wrong (symptoms, causes,
+    mitigations). Typical pipeline: call ``search_by_passage`` /
+    ``get_relevant_passages`` to gather candidate chunks, then feed the
+    returned passage dicts straight into this tool. Only parameters explicitly
+    stated in the passages are returned; ``license_id`` on each passage
+    controls how quotes are handled.
 
     Args:
-        passages: list of {text, source_doi, license_id?, source_url?}
-        context: Optional domain/skill hint to guide extraction.
+        passages: List of {text, source_doi, license_id?, source_url?} dicts —
+            the shape returned by the passage-search tools. Passages with no
+            ``text`` are skipped.
+        context: Optional domain/skill hint to focus extraction (default None).
         parameter_families: Optional list of family names to bias the LLM
-            (e.g., ["threshold","concentration","pH","temperature"]).
-        model: Optional model override (LiteLLM-style "provider/model").
+            toward (default None), e.g. ["threshold","concentration","pH",
+            "temperature"].
+        model: Optional LiteLLM-style "provider/model" override (default None
+            uses the server's configured default model).
 
     Returns:
-        JSON {"success": True, "parameters": [...]} or {"success": False, "error": "..."}.
+        A JSON string. On success: {"success": True, "parameters": [{name,
+        type, typical, units, min, max, source_doi, source_quote, confidence},
+        ...]}. On failure: {"success": False, "error": "..."}.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -4642,15 +4693,30 @@ async def extract_failure_modes_from_passages(
     model: str | None = None,
 ) -> str:
     """
-    Extract structured failure modes from a list of passages using an LLM.
+    Extract structured *failure modes* (symptoms, likely causes, and
+    mitigations) from a list of passages using an LLM.
+
+    When to use (vs ``extract_parameters_from_passages``): use this when you
+    want the qualitative ways a method or system breaks — what goes wrong, why,
+    and how to avoid it. Use ``extract_parameters_from_passages`` instead when
+    you want quantitative settings (thresholds, concentrations, ranges).
+    Typical pipeline: gather chunks with ``search_by_passage`` /
+    ``get_relevant_passages``, then pass those passage dicts directly here.
+    Records are de-duplicated by symptom, and each passage's ``license_id``
+    governs how its source quote is handled.
 
     Args:
-        passages: list of {text, source_doi, license_id?, source_url?}
-        context: Optional domain/skill hint.
-        model: Optional model override.
+        passages: List of {text, source_doi, license_id?, source_url?} dicts —
+            the shape returned by the passage-search tools. Passages with no
+            ``text`` are skipped.
+        context: Optional domain/skill hint to focus extraction (default None).
+        model: Optional LiteLLM-style "provider/model" override (default None
+            uses the server's configured default model).
 
     Returns:
-        JSON {"success": True, "failure_modes": [...]} or {"success": False, "error": "..."}.
+        A JSON string. On success: {"success": True, "failure_modes":
+        [{symptom, root_cause, mitigation, source_doi, source_quote,
+        confidence}, ...]}. On failure: {"success": False, "error": "..."}.
     """
     state = _require_state()
     if isinstance(state, str):
