@@ -932,6 +932,14 @@ class AgenticOrchestrator:
                     }
                 batch_for_eval = to_run
 
+            # Surface any search notices (e.g. "arXiv rate-limited, drew from
+            # OpenAlex instead") so the trail explains unexpected sources.
+            _notices = getattr(session, "search_notices", None)
+            if _notices:
+                for _n in _notices:
+                    yield {"type": "thinking", "message": _n}
+                session.search_notices = []  # type: ignore[attr-defined]
+
             trigger_eval = any(
                 s.type
                 in (
@@ -2849,6 +2857,74 @@ Generate your answer:"""
             return result_str[:100] + "..."
         return result_str
 
+    async def _rerank_papers_by_relevance(
+        self, query: str, papers: list, top_k: int
+    ) -> list:
+        """Semantically rerank a candidate paper pool by query relevance.
+
+        SciLEx returns papers in arbitrary collection order. When several
+        databases are searched, a noisy source (e.g. OpenAlex/PubMed for an AI
+        query) floods the pool and pushes genuinely-relevant papers past the
+        top-N cut before they ever reach the LLM relevance scorer. A cross-
+        encoder rerank here keeps the most on-topic papers regardless of
+        source. Lexical ranking is insufficient — "Evaluation of
+        Chemotherapeutic Agents" matches the words "agent"/"evaluation" — so we
+        use a semantic query-document model. Falls back to the original order
+        on any failure (missing model, etc.) so search never hard-breaks.
+        """
+        if len(papers) <= top_k:
+            return papers
+        try:
+            from perspicacite.retrieval.reranker import CrossEncoderReranker
+            if getattr(self, "_relevance_reranker", None) is None:
+                self._relevance_reranker = CrossEncoderReranker()
+            texts = [
+                f"{p.title or ''}. {(p.abstract or '')[:1000]}" for p in papers
+            ]
+            scores = await self._relevance_reranker.score_texts(query, texts)
+            # Sort by index to avoid comparing Paper objects on score ties.
+            order = sorted(range(len(papers)), key=lambda i: scores[i], reverse=True)
+            logger.info(
+                "agentic_scilex_reranked", pool=len(papers), kept=top_k
+            )
+            return [papers[i] for i in order[:top_k]]
+        except Exception as e:
+            logger.warning("agentic_scilex_rerank_failed", error=str(e))
+            return papers[:top_k]
+
+    def _note_search_fallback(
+        self, session: AgentSession | None, apis: list[str]
+    ) -> None:
+        """Stash a user-facing notice when SciLEx yields nothing and we fall
+        back to OpenAlex — usually because a selected source rate-limited.
+
+        Drained as a ``thinking`` event by the ``chat()`` loop so a user who
+        picked e.g. arXiv-only isn't surprised to see OpenAlex results.
+        """
+        if session is None:
+            return
+        errs = getattr(self.scilex_adapter, "last_errors_by_database", None) or {}
+        failed = [db for db in apis if db in errs]
+        if failed:
+            parts = [
+                f"{db} ({'rate-limited' if '429' in errs[db] else 'unavailable'})"
+                for db in failed
+            ]
+            msg = (
+                f"Note: {', '.join(parts)} returned nothing right now, "
+                "so results were drawn from OpenAlex instead."
+            )
+        else:
+            msg = (
+                "Note: your selected source(s) returned nothing, "
+                "so results were drawn from OpenAlex instead."
+            )
+        notices = getattr(session, "search_notices", None)
+        if notices is None:
+            notices = []
+            session.search_notices = notices  # type: ignore[attr-defined]
+        notices.append(msg)
+
     async def _scilex_search(
         self,
         query: str,
@@ -2895,10 +2971,25 @@ Generate your answer:"""
         )
         _apis = _selected_dbs or ["semantic_scholar", "openalex", "pubmed"]
         try:
+            # Over-fetch a wider candidate pool than we ultimately keep. The
+            # adapter truncates by arbitrary collection order, so when several
+            # databases are searched the relevant papers can sit deep in the
+            # pool (measured as far as position ~36 for a multi-DB AI query).
+            # We fetch wide, then semantically rerank down to ``max_results``.
+            _overfetch = max(max_results * 4, 40)
             papers = await self.scilex_adapter.search(
                 query=effective_query,
-                max_results=max_results,
+                max_results=_overfetch,
                 apis=_apis,
+            )
+
+            # Rerank the (possibly noisy, multi-source) pool by semantic
+            # relevance to the user's query, then keep only the top
+            # ``max_results``, so relevant papers aren't buried by a flooding
+            # database before the LLM scorer sees them. Uses the original
+            # query (intent), not the search-optimized rewrite.
+            papers = await self._rerank_papers_by_relevance(
+                query, papers, top_k=max_results
             )
 
             # Crossref-enrich: fills missing abstracts (Google Scholar /
@@ -2956,12 +3047,14 @@ Generate your answer:"""
                 return self._format_paper_list(paper_dicts)
             else:
                 logger.warning("agentic_scilex_search_no_results")
+                self._note_search_fallback(session, _apis)
                 return await self._fallback_openalex_search(
                     effective_query, max_results, step_id=step_id, session=session
                 )
 
         except Exception as e:
             logger.error("agentic_scilex_search_failed", error=str(e))
+            self._note_search_fallback(session, _apis)
             return await self._fallback_openalex_search(
                 effective_query, max_results, step_id=step_id, session=session
             )
