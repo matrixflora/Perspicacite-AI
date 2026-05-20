@@ -76,11 +76,42 @@ Also set `pdf_download.unpaywall_email` in `config.yml` for open-access PDF disc
 
 ### Run
 
+The app is two processes — a Python backend (REST API + MCP) and a Next.js
+frontend (web UI). For local development, one launcher starts both, and a
+single **Ctrl+C** stops both:
+
 ```bash
-uv run perspicacite -c config.yml serve
+./dev.sh
 ```
 
-Open **http://localhost:8000** in your browser. The MCP server is at `/mcp` on the same port.
+Then open **http://localhost:3000** for the web UI. The backend's REST API and
+MCP server are at **http://localhost:8000** (`/mcp`), which the frontend proxies.
+
+> **Heads-up — the backend is slow to start.** It loads ML models (PyTorch,
+> sentence-transformers) on boot, so expect roughly a minute before it's ready
+> (longer on the first run). On Windows-mounted / WSL filesystems it's slower
+> still — keeping the repo on a **native Linux filesystem** speeds startup up
+> substantially. The UI shows connection errors until the backend finishes
+> booting; just wait for it.
+
+Prefer separate terminals (e.g. to watch each log stream)?
+
+```bash
+# Backend — REST API on :8000, MCP at /mcp
+uv run perspicacite -c config.yml serve
+
+# Frontend — Next.js dev server on :3000 (separate terminal)
+cd frontend && npm install && npm run dev
+```
+
+> The previous server-rendered (Jinja) UI lived on `:8000`; it's preserved on
+> the **`backup/gui-vanilla-jinja`** branch.
+
+> **Google Scholar (optional):** in `config.yml`, add `google_scholar` to
+> `search.enabled_providers` and set `google_scholar.enabled: true`. Provide
+> `SERPAPI_API_KEY` in the environment for the reliable SerpApi backend (free
+> tier 100 searches/mo); otherwise it falls back to headless-Chromium scraping
+> (the `[browser]` extra).
 
 > Keys can live in either the shell environment (`export ANTHROPIC_API_KEY=...`)
 > or in `.env` at the project root — the CLI loads `.env` on startup. Shell
