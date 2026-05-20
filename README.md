@@ -87,6 +87,16 @@ single **Ctrl+C** stops both:
 Then open **http://localhost:3000** for the web UI. The backend's REST API and
 MCP server are at **http://localhost:8000** (`/mcp`), which the frontend proxies.
 
+**Which address do I open?**
+
+- **Researchers / everyday use → http://localhost:3000.** That's the whole
+  app. You never need to open `:8000` or know anything about MCP.
+- **Developers / tool integrations → http://localhost:8000.** This is the
+  backend: the REST API (`/api/...`) and the MCP server (`/mcp`) that agents
+  like Mimosa-AI or Claude Code connect to. The web UI talks to it for you, so
+  it has no human-facing pages of its own — opening `:8000` in a browser is
+  expected to look bare.
+
 > **Heads-up — the backend is slow to start.** It loads ML models (PyTorch,
 > sentence-transformers) on boot, so expect roughly a minute before it's ready
 > (longer on the first run). On Windows-mounted / WSL filesystems it's slower
