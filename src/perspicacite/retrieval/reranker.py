@@ -66,7 +66,7 @@ class CrossEncoderReranker:
         if not texts:
             return []
         pairs = [(query, t or "") for t in texts]
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         model = self._get_model()
         all_scores: list[float] = []
         for i in range(0, len(pairs), self.batch_size):
