@@ -2977,11 +2977,37 @@ Generate your answer:"""
             # pool (measured as far as position ~36 for a multi-DB AI query).
             # We fetch wide, then semantically rerank down to ``max_results``.
             _overfetch = max(max_results * 4, 40)
-            papers = await self.scilex_adapter.search(
-                query=effective_query,
-                max_results=_overfetch,
-                apis=_apis,
+
+            # Prefer the domain aggregator so user-selected non-SciLEx
+            # providers (Google Scholar via SerpApi, EuropePMC, CORE, ...) are
+            # actually queried — not just SciLEx's built-in APIs. It honours
+            # the same ``databases`` selection and forwards SciLEx sub-provider
+            # names down to SciLEx. Falls back to the raw SciLEx adapter when
+            # no config/aggregator is available (e.g. unit tests).
+            papers = None
+            _cfg = getattr(self, "config", None) or getattr(
+                getattr(self, "app_state", None), "config", None
             )
+            if _cfg is not None:
+                try:
+                    from perspicacite.search.domain_aggregator import build_aggregator
+                    if getattr(self, "_aggregator", None) is None:
+                        self._aggregator = build_aggregator(_cfg)
+                    if self._aggregator.available:
+                        papers = await self._aggregator.search(
+                            query=effective_query,
+                            max_results=_overfetch,
+                            databases=_selected_dbs,
+                        )
+                except Exception as _agg_exc:
+                    logger.warning("agentic_aggregator_failed", error=str(_agg_exc))
+                    papers = None
+            if papers is None:
+                papers = await self.scilex_adapter.search(
+                    query=effective_query,
+                    max_results=_overfetch,
+                    apis=_apis,
+                )
 
             # Rerank the (possibly noisy, multi-source) pool by semantic
             # relevance to the user's query, then keep only the top
