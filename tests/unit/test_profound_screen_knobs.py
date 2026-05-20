@@ -163,12 +163,85 @@ async def test_filter_unknown_method_falls_back_to_rerank(monkeypatch):
     assert len(out) == 5
 
 
-# ---- CHANGE B: reflect phase_progress source-level + emit shape -------
+# ---- CHANGE B: reflect phase_progress is emitted by a real cycle ------
 
 
-def test_profound_emits_reflect_phase_literals():
-    """Defend against typos; reflect phase wraps the iteration summary."""
-    with open(profound_mod.__file__) as fh:
-        src = fh.read()
-    assert 'phase="reflect", state="running"' in src
-    assert 'phase="reflect", state="done"' in src
+@pytest.mark.asyncio
+async def test_profound_emits_reflect_phase_progress_for_cycle(monkeypatch):
+    """Drive execute_stream through one full cycle and assert the reflect
+    phase_progress events (running + done) fire with cycle index 0.
+
+    The cycle is forced to reach ``_create_iteration_summary`` by stubbing
+    the per-cycle helpers so there is no early_exit / plan_limit_reason and
+    the final-response stream is a no-op.
+    """
+    from perspicacite.models.rag import StreamEvent
+    from perspicacite.rag.modes.profound import ResearchStep
+
+    cfg = Config()
+    mode = ProfoundRAGMode(cfg)
+    mode.max_cycles = 1  # single cycle: cycle index 0
+    mode.use_websearch = False  # avoid tools.list_tools() web branch
+
+    async def fake_create_plan(query, llm):
+        return ["step-1"]
+
+    async def fake_execute_cycle_steps(*args, **kwargs):
+        step = ResearchStep(step_purpose="p", query="q")
+        step.success = True
+        # (cycle_steps, cycle_documents, plan_limit_reason=None, early_exit=False)
+        return [step], [], None, False
+
+    summary_called: dict[str, Any] = {}
+
+    async def fake_iteration_summary(query, cycle_steps, llm):
+        summary_called["hit"] = True
+        return {"findings": "f", "missing": [], "should_continue": False}
+
+    async def fake_stream_final(*args, **kwargs):
+        yield StreamEvent.status("final")
+
+    # Upfront keyword optimizer runs before the loop; stub it out so the
+    # test needs no live LLM / app_state.
+    async def fake_optimize_query(**kwargs):
+        class _Res:
+            applied = False
+            searched_query = None
+
+        return _Res()
+
+    monkeypatch.setattr(mode, "_create_plan", fake_create_plan)
+    monkeypatch.setattr(mode, "_execute_cycle_steps", fake_execute_cycle_steps)
+    monkeypatch.setattr(mode, "_create_iteration_summary", fake_iteration_summary)
+    monkeypatch.setattr(mode, "_stream_final_response", fake_stream_final)
+    monkeypatch.setattr(
+        "perspicacite.search.query_optimizer.optimize_query", fake_optimize_query
+    )
+
+    # Fake telemetry sink: a plain list, matching how emit_phase appends and
+    # how the MCP path reads getattr(request, "telemetry_sink", None).
+    sink: list[dict[str, Any]] = []
+    req = RAGRequest(query="q")
+    req.telemetry_sink = sink  # type: ignore[attr-defined]
+
+    class _Tools:
+        def list_tools(self):
+            return []
+
+    async for _ in mode.execute_stream(
+        request=req, llm=object(), vector_store=None, embedding_provider=None, tools=_Tools()
+    ):
+        pass
+
+    assert summary_called.get("hit"), "cycle did not reach _create_iteration_summary"
+
+    reflect_events = [
+        ev
+        for ev in sink
+        if ev.get("kind") == "phase_progress" and ev.get("phase") == "reflect"
+    ]
+    assert {"kind": "phase_progress", "phase": "reflect", "state": "running", "cycle": 0} in sink
+    assert {"kind": "phase_progress", "phase": "reflect", "state": "done", "cycle": 0} in sink
+    # running must precede done within the same cycle.
+    states = [ev["state"] for ev in reflect_events]
+    assert states == ["running", "done"]
