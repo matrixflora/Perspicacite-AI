@@ -531,6 +531,63 @@ async def delete_knowledge_base(name: str):
     return {"deleted": name}
 
 
+@router.get("/api/kb/{name}/papers")
+async def list_kb_papers(name: str):
+    """List the papers in a knowledge base, derived from chunk metadata.
+
+    Backs the KB detail page's Papers tab + overview counts. Returns a 200
+    with an empty list (rather than 404) for an unknown/empty KB so the
+    frontend's combined ``Promise.all`` load doesn't reject and blank the
+    whole page.
+
+    Papers are derived from ChromaDB chunk metadata (deduped by paper_id) —
+    the authoritative record of what's actually embedded — rather than the
+    ``kb_paper_references`` table, which isn't always populated (e.g. for KBs
+    built through paths that don't record references).
+    """
+    if not app_state.session_store:
+        return {"papers": [], "total": 0}
+    kb = await app_state.session_store.get_kb_metadata(name)
+    if not kb:
+        return {"papers": [], "total": 0}
+
+    scan_cap = 20000
+    try:
+        coll = app_state.vector_store.client.get_collection(name=kb.collection_name)
+        total_chunks = coll.count()
+        got = coll.get(
+            limit=min(total_chunks, scan_cap) if total_chunks else 0,
+            include=["metadatas"],
+        )
+        metas = got.get("metadatas") or []
+    except Exception as e:
+        logger.warning(f"kb papers: collection scan failed for {name}: {e}")
+        metas = []
+
+    papers: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for m in metas:
+        m = m or {}
+        pid = m.get("paper_id")
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        authors = m.get("authors")
+        if isinstance(authors, str):
+            authors = [a.strip() for a in authors.split(",") if a.strip()]
+        papers.append(
+            {
+                "paper_id": pid,
+                "title": m.get("title"),
+                "authors": authors or [],
+                "year": m.get("year"),
+                "doi": m.get("doi"),
+                "added_at": None,
+            }
+        )
+    return {"papers": papers, "total": len(papers)}
+
+
 @router.post("/api/kb/{name}/papers")
 async def add_papers_to_kb(name: str, request: KBAddPapersRequest):
     """Add papers to a knowledge base with deduplication and optional PDF download."""
