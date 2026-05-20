@@ -4748,6 +4748,27 @@ async def suggest_databases(query: str, hints: list[str] | None = None) -> str:
     )
 
 
+@mcp.tool()
+async def get_usage_guide() -> str:
+    """
+    Return the authoritative guide to using Perspicacité over MCP.
+
+    Call this FIRST when planning multi-step research: it returns the server's
+    capabilities, decision rules (translate non-English queries, set
+    ``optimize_query``, call ``suggest_databases``, pick the right tool and
+    mode/screening, read the ``{success}`` envelope), a documented entry for
+    every registered tool (``name``, ``purpose``, ``when_to_use``, ``key_knobs``),
+    and recommended knob defaults.
+
+    Returns:
+        JSON {"success": True, "capabilities": [...], "decision_rules": [...],
+        "tools": [...], "knob_defaults": {...}}.
+    """
+    from perspicacite.mcp.usage_guide import build_usage_guide
+
+    return _json_ok(build_usage_guide())
+
+
 _TOOL_NAMES: list[str] = [
     "search_literature",
     "get_paper_content",
@@ -4785,6 +4806,7 @@ _TOOL_NAMES: list[str] = [
     "web_search",
     "cancel_task",
     "suggest_databases",
+    "get_usage_guide",
 ]
 
 
