@@ -20,6 +20,12 @@ if TYPE_CHECKING:
 
 logger = get_logger("perspicacite.zotero_ingest")
 
+# Max concurrent attachment/note lookups when summarizing a collection.
+# Each item is one HTTP call; gathering an entire large collection at once
+# (e.g. 727 items -> ~1450 requests) exhausts httpx's connection pool and
+# raises PoolTimeout. Cap it well under httpx's default 100-connection pool.
+_SUMMARIZE_CONCURRENCY = 8
+
 
 class ZoteroKBPlanEntry(BaseModel):
     """One KB to be created/populated from a Zotero source."""
@@ -40,11 +46,22 @@ def _slugify(name: str) -> str:
 
 
 async def _summarize_items(client: ZoteroClient, items: list[dict[str, Any]]) -> dict[str, int]:
-    """Return {with_doi, with_pdf, with_notes} counts for a list of Zotero items."""
+    """Return {with_doi, with_pdf, with_notes} counts for a list of Zotero items.
+
+    Attachment/note checks are one HTTP call per item. A bounded semaphore
+    caps how many run at once so a large collection doesn't fire hundreds of
+    simultaneous requests and exhaust httpx's connection pool (PoolTimeout).
+    """
     with_doi = sum(1 for it in items if (it.get("data") or {}).get("DOI"))
 
+    if not items:
+        return {"with_doi": 0, "with_pdf": 0, "with_notes": 0}
+
+    sem = asyncio.Semaphore(_SUMMARIZE_CONCURRENCY)
+
     async def _has_pdf(it: dict[str, Any]) -> bool:
-        atts = await client.get_item_attachments(it["key"])
+        async with sem:
+            atts = await client.get_item_attachments(it["key"])
         return any(
             (a.get("data") or {}).get("contentType") == "application/pdf"
             and (a.get("data") or {}).get("linkMode") in {"imported_file", "imported_url"}
@@ -52,11 +69,9 @@ async def _summarize_items(client: ZoteroClient, items: list[dict[str, Any]]) ->
         )
 
     async def _has_note(it: dict[str, Any]) -> bool:
-        notes = await client.get_item_notes(it["key"])
+        async with sem:
+            notes = await client.get_item_notes(it["key"])
         return any(n for n in notes)
-
-    if not items:
-        return {"with_doi": 0, "with_pdf": 0, "with_notes": 0}
 
     pdf_flags = await asyncio.gather(*(_has_pdf(it) for it in items))
     note_flags = await asyncio.gather(*(_has_note(it) for it in items))
