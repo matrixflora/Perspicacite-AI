@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 
-from perspicacite.integrations.zotero import ZoteroClient, _html_to_text
+from perspicacite.integrations.zotero import (
+    ZoteroClient,
+    _file_url_to_candidate_paths,
+    _html_to_text,
+)
 
 
 def test_html_to_text_strips_tags_keeps_text():
@@ -111,6 +117,53 @@ async def test_download_attachment_bytes_no_cloud_fallback_when_not_local():
         out = await c.download_attachment_bytes("ATT1")
     assert out is None
     assert len(seen_urls) == 1
+
+
+def test_file_url_to_candidate_paths_cross_platform():
+    """The file:// -> on-disk mapping must work regardless of where the
+    backend runs, not just on one machine."""
+    # native Linux/macOS: POSIX path as-is
+    assert _file_url_to_candidate_paths("file:///home/u/Zotero/storage/AB/x.pdf") == [
+        Path("/home/u/Zotero/storage/AB/x.pdf")
+    ]
+
+    # Windows drive: native-Windows path first, then the WSL /mnt mount.
+    # %20 must be decoded back to a space.
+    cands = _file_url_to_candidate_paths("file:///C:/Users/Tao%20Jiang/Zotero/storage/AB/x.pdf")
+    assert cands == [
+        Path("C:/Users/Tao Jiang/Zotero/storage/AB/x.pdf"),
+        Path("/mnt/c/Users/Tao Jiang/Zotero/storage/AB/x.pdf"),
+    ]
+
+    # Drive folded into the authority (file://C:/...) is normalized too.
+    assert Path("/mnt/d/data/p.pdf") in _file_url_to_candidate_paths("file://D:/data/p.pdf")
+
+    # An empty file:// URL yields no candidates.
+    assert _file_url_to_candidate_paths("file://") == []
+
+
+@pytest.mark.asyncio
+async def test_download_attachment_bytes_reads_local_file_redirect(tmp_path):
+    """The desktop local API 302-redirects /file to a file:// path on disk;
+    the client must read that file instead of trying to HTTP-follow file://."""
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.6 local-bytes")
+    file_uri = pdf.as_uri()  # file:///.../paper.pdf
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Local desktop API: redirect to the on-disk file, no body.
+        return httpx.Response(302, headers={"Location": file_uri})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        c = ZoteroClient(
+            api_key="",  # loopback needs no key
+            library_id="42",
+            base_url="http://localhost:23119/api",
+            http_client=http,
+        )
+        out = await c.download_attachment_bytes("ATT1")
+    assert out == b"%PDF-1.6 local-bytes"
 
 
 @pytest.mark.asyncio
