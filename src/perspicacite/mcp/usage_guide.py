@@ -109,6 +109,12 @@ _TOOL_ENTRIES: list[dict] = [
         "key_knobs": ["context", "model"],
     },
     {
+        "name": "extract_claims_from_passages",
+        "purpose": "Turn retrieved passages into typed, SHACL-validated scientific claims (indicium standard).",
+        "when_to_use": "After retrieval, when you need machine-readable claims (5-slot SuperPattern + ECO-typed evidence) rather than prose.",
+        "key_knobs": ["passages (required)", "context", "model"],
+    },
+    {
         "name": "generate_report",
         "purpose": "Run a full RAG report over a KB (basic/advanced/profound/agentic/literature_survey/contradiction).",
         "when_to_use": "Synthesise an answer with citations from KB content.",

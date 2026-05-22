@@ -5046,6 +5046,37 @@ async def extract_failure_modes_from_passages(
 
 
 @mcp.tool()
+async def extract_claims_from_passages(
+    passages: list[dict],
+    context: str | None = None,
+    model: str | None = None,
+) -> str:
+    """Extract typed scientific claims (Bucur 5-slot SuperPattern + ECO-typed
+    evidence) from retrieved passages, validated against the indicium standard.
+
+    Each claim has context/subject/qualifier/relation/object plus evidence
+    (DOI + exact quote + ECO evidence_type). Returns
+    {success, claims:[...], claims_valid: bool, validation_report?: str}.
+    Use after retrieval (e.g. get_relevant_passages) to produce a machine-
+    readable, standards-compliant claim set instead of prose.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+    try:
+        from perspicacite.pipeline.claims import extract_claims, validate_claims
+    except ImportError:
+        return _json_error("indicium not installed; reinstall with the 'indicia' extra")
+    claims = await extract_claims(
+        llm_client=state.llm_client, passages=passages, context=context, model=model)
+    conforms, report = validate_claims(claims) if claims else (True, "")
+    out: dict = {"claims": claims, "claims_valid": conforms}
+    if not conforms:
+        out["validation_report"] = report
+    return _json_ok(out)
+
+
+@mcp.tool()
 async def suggest_databases(query: str, hints: list[str] | None = None) -> str:
     """
     Recommend which literature databases to search for a given query.
@@ -5144,6 +5175,7 @@ _TOOL_NAMES: list[str] = [
     "cancel_task",
     "suggest_databases",
     "get_usage_guide",
+    "extract_claims_from_passages",
 ]
 
 
