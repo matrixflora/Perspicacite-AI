@@ -2308,7 +2308,122 @@ async def push_to_zotero(
 
 
 # =============================================================================
-# Tool 11b: ingest_url
+# Tool 11b: push_notes_to_zotero
+# =============================================================================
+
+
+@mcp.tool()
+async def push_notes_to_zotero(
+    notes: list[dict],
+    library_id: str | None = None,
+) -> str:
+    """Attach text notes to existing Zotero items.
+
+    Each entry in ``notes`` must supply **content** and a way to identify
+    the parent item — either ``item_key`` (direct Zotero key) or ``doi``
+    (looked up in the library first):
+
+    .. code-block:: json
+
+        [
+          {"item_key": "ABCD1234", "content": "Key finding: …", "tags": ["ai-forge"]},
+          {"doi": "10.1234/xyz",   "content": "Reviewer note: …"}
+        ]
+
+    Fields per entry:
+
+    - **content** *(str, required)* — plain text or Markdown; converted to
+      Zotero note HTML automatically.
+    - **item_key** *(str)* — direct Zotero item key.  Use when you already
+      have the key from ``push_to_zotero`` or ``zotero_get_collection_items``.
+    - **doi** *(str)* — DOI of the parent item; resolved to a Zotero key via
+      a library search.  Ignored when ``item_key`` is also provided.
+    - **tags** *(list[str], optional)* — Zotero tags to attach to the note.
+
+    Returns a JSON object with ``created`` (list of ``{note_key, parent_key}``)
+    and ``failed`` (list of ``{input, reason}``) arrays.
+
+    **Typical use-cases**
+
+    - Attach a Perspicacité RAG summary to the Zotero record of a paper so
+      the annotation survives outside the KB.
+    - Record reviewer feedback, decision rationale, or usage notes alongside
+      the reference.
+    - Export proposal-drafting annotations back to Zotero for archival.
+    """
+    try:
+        cfg = mcp_state.config
+        zotero_cfg = cfg.zotero if cfg else None
+        if not zotero_cfg or not zotero_cfg.api_key:
+            return _json_error(
+                "Zotero is not configured. Set zotero.api_key and "
+                "zotero.library_id in config.yml."
+            )
+
+        from perspicacite.integrations.zotero import ZoteroClient
+
+        lib_id = library_id or str(zotero_cfg.library_id or "")
+        lib_type = getattr(zotero_cfg, "library_type", "user") or "user"
+
+        client = ZoteroClient(
+            api_key=zotero_cfg.api_key,
+            library_id=lib_id,
+            library_type=lib_type,
+        )
+
+        created: list[dict] = []
+        failed: list[dict] = []
+
+        for entry in notes:
+            content = entry.get("content")
+            if not content:
+                failed.append({"input": entry, "reason": "missing required field: content"})
+                continue
+
+            item_key = entry.get("item_key")
+            doi = entry.get("doi")
+            tags = entry.get("tags") or []
+
+            # Resolve parent key via DOI when item_key not provided
+            if not item_key:
+                if not doi:
+                    failed.append({
+                        "input": entry,
+                        "reason": "must supply item_key or doi to identify the parent item",
+                    })
+                    continue
+                item_key = await client._find_existing_by_doi(doi)
+                if not item_key:
+                    failed.append({
+                        "input": entry,
+                        "reason": f"DOI {doi!r} not found in library {lib_id}",
+                    })
+                    continue
+
+            try:
+                note_key = await client.create_note(
+                    parent_item_key=item_key,
+                    content=content,
+                    tags=tags,
+                )
+                created.append({"note_key": note_key, "parent_key": item_key})
+            except Exception as exc:
+                failed.append({"input": entry, "reason": str(exc)})
+
+        logger.info(
+            "mcp_push_notes_to_zotero",
+            created=len(created),
+            failed=len(failed),
+        )
+        return _json_ok({"created": created, "failed": failed})
+
+    except Exception as e:
+        logger.error("mcp_push_notes_to_zotero_error", error=str(e))
+        return _json_error(f"Failed to push notes to Zotero: {e}")
+
+
+# =============================================================================
+# Tool 11c: ingest_url
 # =============================================================================
 
 
@@ -5000,6 +5115,7 @@ _TOOL_NAMES: list[str] = [
     "screen_papers",
     "add_dois_to_kb",
     "push_to_zotero",
+    "push_notes_to_zotero",
     "build_kbs_from_zotero",
     "ingest_local_documents",
     "add_local_papers_to_kb",

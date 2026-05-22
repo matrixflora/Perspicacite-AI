@@ -192,6 +192,24 @@ def _html_to_text(html: str) -> str:
     return p.get_text()
 
 
+def _text_to_html(text: str) -> str:
+    """Convert plain text / Markdown to minimal Zotero note HTML.
+
+    Paragraph breaks (blank lines) become ``<p>…</p>`` blocks;
+    single newlines become ``<br>``.  No Markdown rendering is
+    attempted — the goal is legibility in Zotero's note editor,
+    not perfect HTML.
+    """
+    import html as _html_mod
+    paras = (text or "").split("\n\n")
+    parts = []
+    for para in paras:
+        escaped = _html_mod.escape(para.strip()).replace("\n", "<br>")
+        if escaped:
+            parts.append(f"<p>{escaped}</p>")
+    return "\n".join(parts) or "<p></p>"
+
+
 class ZoteroClient:
     def __init__(
         self,
@@ -963,3 +981,68 @@ class ZoteroClient:
             if data.get("itemType") == "note":
                 out.append(_html_to_text(data.get("note") or ""))
         return out
+
+    async def create_note(
+        self,
+        parent_item_key: str,
+        content: str,
+        tags: list[str] | None = None,
+    ) -> str | None:
+        """Create a child note on an existing Zotero item.
+
+        ``content`` is plain text or Markdown — converted to minimal HTML
+        before storage so Zotero's note editor renders it cleanly.
+
+        Returns the new note's Zotero key, or ``None`` if Zotero accepted
+        the request but did not return a key (shouldn't happen in practice).
+
+        Raises:
+            ZoteroWriteUnsupportedError: when ``api_key`` is missing.
+            ZoteroAPIError: on unexpected HTTP status from the Zotero API.
+        """
+        if self.is_local and not self.api_key:
+            raise ZoteroWriteUnsupportedError(
+                "Zotero note creation requires the cloud API key. Set "
+                "zotero.api_key in config.yml."
+            )
+        tag_list = [{"tag": t} for t in (tags or [])]
+        body = [
+            {
+                "itemType": "note",
+                "parentItem": parent_item_key,
+                "note": _text_to_html(content),
+                "tags": tag_list,
+            }
+        ]
+        c = await self._client()
+        await self._rate_limiter.acquire()
+        try:
+            r = await c.post(
+                f"{self._write_base()}/items",
+                json=body,
+                headers=self._headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise ZoteroAPIError(f"Zotero POST note failed: {exc}") from exc
+        if r.status_code in (401, 403):
+            raise ZoteroAuthError(
+                f"Zotero rejected create_note ({r.status_code}). "
+                "Check api_key + library write permissions."
+            )
+        if r.status_code not in (200, 201):
+            raise ZoteroAPIError(
+                f"Zotero POST /items (note) returned {r.status_code}: {r.text[:300]}"
+            )
+        data = r.json() or {}
+        successful = data.get("successful") or {}
+        if successful:
+            v = next(iter(successful.values()))
+            return v.get("key") if isinstance(v, dict) else None
+        success = data.get("success") or {}
+        if success:
+            return next(iter(success.values()))
+        failed = data.get("failed") or {}
+        if failed:
+            reason = next(iter(failed.values()))
+            raise ZoteroAPIError(f"Zotero create_note failed: {reason}")
+        return None

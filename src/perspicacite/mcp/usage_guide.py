@@ -211,6 +211,19 @@ _TOOL_ENTRIES: list[dict] = [
         "key_knobs": [],
     },
     {
+        "name": "push_notes_to_zotero",
+        "purpose": "Attach text notes to existing Zotero items.",
+        "when_to_use": (
+            "After push_to_zotero or when you have a Zotero item_key/DOI and want to "
+            "store a RAG summary, annotation, or drafting note alongside the reference."
+        ),
+        "key_knobs": [
+            "content (required)",
+            "item_key or doi (one required per note)",
+            "tags",
+        ],
+    },
+    {
         "name": "zotero_list_collections",
         "purpose": "List Zotero collections.",
         "when_to_use": "Discover Zotero collections before ingesting.",
