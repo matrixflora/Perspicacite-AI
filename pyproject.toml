@@ -122,6 +122,16 @@ browser = [
   "playwright>=1.40",
 ]
 
+# indicium — Knowledge Graph / SHACL validation layer for structured claim
+# representation. Local sibling package (not on PyPI). Pulls in linkml,
+# pyshacl, and rdflib. Install only when KG-backed workflows are needed.
+#
+# Install with:
+#   uv sync --extra indicia
+indicia = [
+  "indicium",
+]
+
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
 
@@ -143,6 +153,9 @@ packages = ["src/perspicacite"]
 # Override scilex's transitive httpx<0.28 pin so fastmcp 3.x can resolve.
 # Safe while the [scilex] extra is unused by the core / KB / MCP paths.
 override-dependencies = ["httpx>=0.28.1"]
+
+[tool.uv.sources]
+indicium = { path = "../indicium", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
