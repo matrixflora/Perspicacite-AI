@@ -81,6 +81,31 @@ class KBAddDOIsRequest(BaseModel):
     dois: list[str] = Field(..., min_length=1)
 
 
+class ExpandSimilarScoreRequest(BaseModel):
+    direction: str = "both"          # "forward" | "backward" | "both"
+    max_per_seed: int = 10
+    method: str = "hybrid"           # "embedding" | "bm25" | "hybrid"
+
+
+class _CalibrationLabel(BaseModel):
+    score: float
+    relevant: bool
+
+
+class ExpandSimilarCutoffRequest(BaseModel):
+    labels: list[_CalibrationLabel] = Field(default_factory=list)
+
+
+class _ScoredCandidate(BaseModel):
+    doi: str | None = None
+    score: float
+
+
+class ExpandSimilarCommitRequest(BaseModel):
+    scored: list[_ScoredCandidate] = Field(default_factory=list)
+    cutoff: float
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1473,6 +1498,84 @@ async def build_capsules_for_kb_async(name: str, force: bool = False) -> dict:
                     "status": "errored", "error": str(exc),
                 })
         await app_state.job_registry.finish(job_id, {"total": len(rows)})
+
+    task = asyncio.create_task(_runner())
+    _local_tasks.add(task)
+    task.add_done_callback(_local_tasks.discard)
+    return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
+
+
+@router.post("/api/kb/{name}/expand-similar/cutoff")
+async def expand_similar_cutoff(name: str, payload: ExpandSimilarCutoffRequest) -> dict:
+    """Best-fit keep/drop cutoff from the user's labels on the calibration
+    samples. Fast + synchronous (no job)."""
+    from perspicacite.search.screening import ScreenResult, cutoff_from_labels
+
+    labeled = [
+        (ScreenResult(item={}, score=lbl.score, kept=False), lbl.relevant)
+        for lbl in payload.labels
+    ]
+    return {"cutoff": cutoff_from_labels(labeled)}
+
+
+@router.post("/api/kb/{name}/expand-similar/score")
+async def expand_similar_score(name: str, payload: ExpandSimilarScoreRequest) -> dict:
+    """Phase 1: snowball + similarity-score candidates against the KB. Returns
+    a job whose SSE ``done`` event carries {candidates, histogram, samples}."""
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="Job registry not available")
+    kb_meta = await app_state.session_store.get_kb_metadata(name)
+    if kb_meta is None:
+        raise HTTPException(status_code=404, detail=f"KB '{name}' not found")
+    job_id = await app_state.job_registry.create("expand_similar_score", total=1)
+
+    async def _runner():
+        from perspicacite.pipeline.similarity_expansion import score_expansion_candidates
+        try:
+            report = await score_expansion_candidates(
+                app_state=app_state,
+                kb_name=name,
+                direction=payload.direction,
+                max_per_seed=payload.max_per_seed,
+                method=payload.method,
+            )
+            await app_state.job_registry.finish(job_id, {
+                "candidates": report.candidates,
+                "histogram": report.histogram,
+                "samples": report.samples,
+                "seed_count": report.seed_count,
+                "method": report.method,
+            })
+        except Exception as exc:  # noqa: BLE001 — report failure on the stream
+            await app_state.job_registry.fail(job_id, str(exc))
+
+    task = asyncio.create_task(_runner())
+    _local_tasks.add(task)
+    task.add_done_callback(_local_tasks.discard)
+    return {"job_id": job_id, "sse_url": f"/api/jobs/{job_id}/events"}
+
+
+@router.post("/api/kb/{name}/expand-similar/commit")
+async def expand_similar_commit(name: str, payload: ExpandSimilarCommitRequest) -> dict:
+    """Phase 2: ingest the candidates scoring at/above ``cutoff`` into the KB.
+    Returns a job whose SSE ``done`` event carries the ingest report."""
+    if app_state.job_registry is None:
+        raise HTTPException(status_code=503, detail="Job registry not available")
+    kb_meta = await app_state.session_store.get_kb_metadata(name)
+    if kb_meta is None:
+        raise HTTPException(status_code=404, detail=f"KB '{name}' not found")
+    scored = [{"doi": c.doi, "score": c.score} for c in payload.scored]
+    job_id = await app_state.job_registry.create("expand_similar_commit", total=len(scored))
+
+    async def _runner():
+        from perspicacite.pipeline.similarity_expansion import commit_expansion
+        try:
+            res = await commit_expansion(
+                app_state=app_state, kb_name=name, scored=scored, cutoff=payload.cutoff
+            )
+            await app_state.job_registry.finish(job_id, res)
+        except Exception as exc:  # noqa: BLE001 — report failure on the stream
+            await app_state.job_registry.fail(job_id, str(exc))
 
     task = asyncio.create_task(_runner())
     _local_tasks.add(task)
