@@ -1292,6 +1292,7 @@ async def generate_report(
     screen_threshold: float | None = None,
     max_papers_to_download: int | None = None,
     databases: list[str] | None = None,
+    extract_claims: bool = False,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1337,9 +1338,15 @@ async def generate_report(
         databases: Optional list of search databases (e.g. ["arxiv", "pubmed"]).
             Unknown names are dropped with a warning. None means the mode's
             default fan-out (semantic_scholar, openalex, pubmed) applies.
+        extract_claims: When True, run the indicium claim-extraction pipeline
+            over the cited sources after the report is generated and attach the
+            result as an ``indicia`` list in the response payload. Defaults to
+            False so existing callers are unaffected.
 
     Returns:
         JSON with the report text, cited sources, and metadata.
+        When ``extract_claims=True`` the payload also includes an ``indicia``
+        key containing a list of typed claim dicts (5-slot SuperPattern).
     """
     state = _require_state()
     if isinstance(state, str):
@@ -1593,6 +1600,20 @@ async def generate_report(
 
         logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
 
+        indicia = None
+        if extract_claims:
+            try:
+                from perspicacite.pipeline.claims import extract_claims as _extract_claims
+                _passages = [
+                    {"chunk_text": s.get("section") or s.get("title", ""),
+                     "source": {"doi": s.get("doi"), "title": s.get("title")}}
+                    for s in sources
+                ]
+                indicia = await _extract_claims(
+                    llm_client=state.llm_client, passages=_passages, context=query)
+            except ImportError:
+                indicia = None
+
         _final_payload = {
             "query": query,
             "kb_name": effective_kb_name,
@@ -1604,6 +1625,8 @@ async def generate_report(
             "message_id": message_id,
         }
         _final_payload.update(_response_collector.as_response_extras())
+        if indicia is not None:
+            _final_payload["indicia"] = indicia
         return _json_ok(_final_payload)
 
     except Exception as e:
