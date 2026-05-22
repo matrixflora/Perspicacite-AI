@@ -56,6 +56,7 @@ class HtmlCapture:
     tier: str
     char_count: int
     extracted_title: str | None = None
+    extracted_text: str | None = None
 
 
 class _TextExtractor(HTMLParser):
@@ -330,4 +331,5 @@ async def capture_landing_html(
         tier=tier,
         char_count=len(text),
         extracted_title=extracted_title,
+        extracted_text=text,
     )

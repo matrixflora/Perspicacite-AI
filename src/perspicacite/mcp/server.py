@@ -1813,6 +1813,10 @@ async def add_dois_to_kb(
                         doi,
                         http_client=client,
                         pdf_parser=state.pdf_parser,
+                        # When the user has cookies configured, let the DOI
+                        # path fall back to a cookie-authenticated landing
+                        # capture (parity with ingest_url for paywalled papers).
+                        enable_landing_capture=bool(cookies_path),
                         **pdf_kwargs,
                     )
                 except Exception as e:

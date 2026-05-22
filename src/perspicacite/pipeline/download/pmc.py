@@ -8,8 +8,10 @@ plain text — free, no login, no API key.
   https://pmc-oa-opendata.s3.amazonaws.com/PMC3041641.1/PMC3041641.1.xml
 
 Fallback order after PMCID resolution:
-1. S3 JATS XML — structured sections + references, best quality
-2. S3 plain text — guaranteed content if XML is missing
+1. S3 JATS XML — structured sections + references, best quality (OA subset only)
+2. S3 plain text — guaranteed content if XML is missing (OA subset only)
+3. NCBI efetch JATS XML — serves PMCIDs outside the OA bulk subset (author
+   manuscripts, "restricted-by pmc") for individual retrieval
 """
 
 from __future__ import annotations
@@ -103,6 +105,27 @@ def _s3_xml_url(pmcid: str) -> str:
 
 def _s3_txt_url(pmcid: str) -> str:
     return f"{_S3_BASE}/{pmcid}.1/{pmcid}.1.txt"
+
+
+_EFETCH_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+
+
+def _efetch_xml_url(pmcid: str) -> str:
+    """NCBI efetch JATS XML URL for a PMCID.
+
+    Unlike the OA S3 bucket, efetch serves the full JATS for individual
+    retrieval even when the article is outside the OA bulk subset (author
+    manuscripts, "restricted-by pmc"). Includes ``tool`` and an optional
+    ``NCBI_API_KEY`` for polite, higher-quota access.
+    """
+    import os
+
+    numeric = pmcid[3:] if pmcid.upper().startswith("PMC") else pmcid
+    url = f"{_EFETCH_BASE}?db=pmc&id={numeric}&rettype=xml&tool=perspicacite"
+    api_key = os.environ.get("NCBI_API_KEY")
+    if api_key:
+        url += f"&api_key={api_key}"
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +592,33 @@ async def get_fulltext_from_pmc(
                     return text, None
         except Exception as e:
             logger.info("pmc_s3_txt_failed", doi=clean, error=str(e))
+
+        # Step 5: Fallback — NCBI efetch JATS XML.
+        # The OA S3 bucket only holds the OA bulk subset; PMCIDs outside it
+        # (author manuscripts, "restricted-by pmc") 404 there. efetch still
+        # serves the full JATS for individual retrieval, in the same format
+        # the extractors above already understand.
+        efetch_url = _efetch_xml_url(pmcid)
+        logger.info("pmc_efetch_try_xml", doi=clean, pmcid=pmcid, url=efetch_url)
+        try:
+            r_ef = await client.get(efetch_url, headers={"Accept": "application/xml"})
+            if r_ef.status_code == 200 and r_ef.content:
+                sections = _extract_sections_from_xml(r_ef.content)
+                text = _extract_text_from_xml(r_ef.content)
+                if text and len(text) > 200:
+                    refs = _extract_references_from_xml(r_ef.content)
+                    logger.info(
+                        "pmc_efetch_xml_success",
+                        doi=clean,
+                        pmcid=pmcid,
+                        text_length=len(text),
+                        sections=len(sections) if sections else 0,
+                        references=len(refs) if refs else 0,
+                    )
+                    _write_cache(pmcid, text, sections, refs, doi=clean)
+                    return text, sections
+        except Exception as e:
+            logger.info("pmc_efetch_xml_failed", doi=clean, error=str(e))
 
         logger.warning("pmc_s3_failed", doi=clean, pmcid=pmcid)
         return None, None
