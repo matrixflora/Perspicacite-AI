@@ -267,6 +267,9 @@ _CAPABILITIES: list[str] = [
 _DECISION_RULES: list[str] = [
     "Translate non-English queries to English before searching.",
     "Set optimize_query on for literature search unless you need a verbatim query.",
+    "For author searches, set optimize_query=false (or filter by ORCID/OpenAlex "
+    "author id): the rewrite is tuned for topical recall and may drop bare "
+    "surnames it does not recognise as scientific terms.",
     "Call suggest_databases first when unsure which databases to target.",
     "Pick the tool: search_literature/web_search for discovery; "
     "search_knowledge_base/search_by_passage/get_relevant_passages for KB retrieval; "

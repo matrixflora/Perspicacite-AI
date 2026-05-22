@@ -23,6 +23,10 @@ citation/quote you show back to the user.
   its own one-shot LLM rewrite; set `optimize_query=False` only when you need an
   exact verbatim query. The response surfaces `fallback_reason` if the rewrite
   failed and the verbatim query was used.
+- **Author searches:** set `optimize_query=False`, or better, resolve the author
+  to an ORCID/OpenAlex id and filter by it. The rewrite is tuned for topical
+  recall and may drop a bare surname it does not recognise as a scientific term
+  (e.g. "Libis" → dropped), turning an author search into a topic search.
 - For passage search (`search_by_passage`), pass the **raw** sentence/paragraph
   text — that tool matches on the literal input, so do not rewrite it.
 

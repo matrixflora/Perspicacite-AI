@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from perspicacite.search.query_optimizer import (
+    _PROMPT,
     OptimizationResult,
     optimize_query,
 )
@@ -178,6 +179,40 @@ async def test_optimize_forwards_sink_to_llm_complete():
     )
     state.llm_client.complete.assert_called_once()
     assert state.llm_client.complete.call_args.kwargs.get("sink") is sink
+
+
+def test_prompt_instructs_preserving_author_names():
+    """The rewrite prompt must explicitly protect author/person surnames.
+
+    Author searches (e.g. "Libis biosynthetic gene cluster") are a distinct
+    intent: the surname is search-critical but is not a recognisable
+    scientific term, so the recall-maximising rewrite would otherwise strip
+    it. The prompt must name authors/persons in its keep-verbatim guidance.
+    """
+    lowered = _PROMPT.lower()
+    assert "surname" in lowered or "author name" in lowered
+
+
+def test_prompt_forbids_deleting_user_supplied_tokens():
+    """Governing rule: the optimizer is additive/normalising, never subtractive
+    of content words the user typed. This root-fixes the whole class of
+    'dropped an unrecognised-but-critical token' failures (authors, strain IDs,
+    cell lines, instrument names), not just author surnames.
+    """
+    lowered = _PROMPT.lower()
+    assert "never delete" in lowered
+
+
+@pytest.mark.asyncio
+async def test_optimize_sends_author_preservation_guidance_in_prompt():
+    state = _state()
+    await optimize_query(
+        query="Libis biosynthetic gene cluster",
+        context=None,
+        app_state=state,
+    )
+    sent = state.llm_client.complete.call_args.kwargs["messages"][0]["content"].lower()
+    assert "surname" in sent or "author name" in sent
 
 
 @pytest.mark.asyncio
