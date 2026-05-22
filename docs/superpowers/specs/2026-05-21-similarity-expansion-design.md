@@ -47,13 +47,11 @@ New *logic* clusters in `search/screening.py`; everything else is thin wiring on
 - **`bm25` against the set:** *no new code* — `screen_papers` already accepts `reference: str | Sequence[str]` and scores max-over-list.
 - `screen_papers_rerank` / `screen_papers_llm`: unchanged, retained as the query-only methods.
 
-### `pipeline/search_to_kb.py` (`screen_candidates`) — adapter (axes 1 + 2)
+### Reference assembly (axis 1) — abstracts in metadata, chunk-text fallback
 
-Extend the existing glue to (a) dispatch `method="embedding"|"hybrid"` and (b) accept a **KB-set reference** (a `collection` + the KB abstract list) as an alternative to `query`. **KB abstracts source:** derived from the KB's stored chunk metadata (same paper-derivation as `GET /api/kb/{name}/papers`); papers with no stored abstract are omitted from the BM25 reference list (the embedding scorer is unaffected — it queries the collection directly). Returns the surviving papers + the full score table (kept + dropped), exactly as today.
+The KB-set reference is the KB's **per-paper abstracts**. To make these available, the abstract is **stored in chunk metadata at ingest**: `ChunkMetadata` gains an `abstract` field, populated from `paper.abstract` on the chunk-0 ("metadata") chunk; `_chunk_to_metadata`/`_metadata_to_chunk`/`list_paper_metadata` carry it through. Reference assembly (`get_kb_reference_texts(collection, cap)`) then prefers those abstracts and **falls back to capped chunk texts** (`list_chunk_texts`) when a KB has none — so **existing KBs work unchanged** (they hit the fallback), and newly-ingested papers get clean-abstract references. The embedding scorer needs no text — it queries the collection directly.
 
-### `pipeline/snowball.py` — passthrough (tiny)
-
-`expand_kb_via_citations` gains the ability to forward a scorer choice + KB-set reference to `screen_candidates`. Its existing one-shot path (apply `screen_threshold` and ingest immediately) is preserved unchanged for the CLI/MCP callers.
+The interactive v1 flow calls the Plan-1 scorers **directly** from the orchestrator, so **`screen_candidates` and the one-shot `expand_kb_via_citations` are NOT modified** in v1 (that query/`screen_method` wiring is deferred with the CLI/MCP adapters). Their existing query-based screening is untouched.
 
 ### `pipeline/similarity_expansion.py` — two-phase orchestrator *(new file)*
 

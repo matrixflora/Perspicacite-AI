@@ -22,6 +22,7 @@ class ChunkMetadata(BaseModel):
     year: int | None = None
     doi: str | None = None
     url: str | None = None
+    abstract: str | None = None
     # Local-doc / smart-chunking extensions (all optional):
     content_type: str | None = None  # "pdf" | "markdown" | "code" | "text"
     language: str | None = None  # python | typescript | ...
