@@ -244,12 +244,21 @@ class ZoteroClient:
         return f"{self.base_url}/{self.library_type}/{self.library_id}"
 
     def _write_base(self) -> str:
-        """Base URL for write operations (create_item, upload_attachment).
+        """Base URL for write operations (create_item, create_note, upload_attachment).
 
-        Always cloud, even when ``base_url`` is the local desktop API —
-        the local API is read-only at the Zotero level, and group writes
-        always need the cloud regardless. Requires ``api_key``."""
-        write_root = ZOTERO_API if self.is_local else self.base_url
+        Routing rules:
+        - **Group libraries**: always use the cloud API (``api.zotero.org``),
+          even when ``base_url`` is the local desktop API — group writes must
+          go through Zotero's cloud sync layer.
+        - **User libraries, local config**: use ``base_url`` (i.e. the local
+          desktop API at ``localhost:23119``) — the local API accepts writes
+          for personal libraries without an ``api_key``.
+        - **User libraries, cloud config**: use ``base_url`` (already cloud).
+        """
+        if self.library_type == "groups" and self.is_local:
+            write_root = ZOTERO_API
+        else:
+            write_root = self.base_url
         return f"{write_root}/{self.library_type}/{self.library_id}"
 
     def _headers(self) -> dict[str, str]:
@@ -416,11 +425,13 @@ class ZoteroClient:
                 (i.e. local-only configuration with no cloud credentials).
             ZoteroAPIError: when the create POST returns an unexpected status.
         """
-        if self.is_local and not self.api_key:
+        # api_key required only when the write goes to the cloud.
+        # Local user-library writes go to localhost and don't need a key.
+        if not self.api_key and not (self.is_local and self.library_type == "users"):
             raise ZoteroWriteUnsupportedError(
-                "Zotero push requires the cloud API key. Set "
-                "zotero.api_key in config.yml to enable push to "
-                "api.zotero.org while keeping the local read base_url."
+                "Zotero push requires an api_key when writing to the cloud. "
+                "Set zotero.api_key in config.yml, or configure a local "
+                "desktop base_url (localhost:23119) for a personal library."
             )
 
         c = await self._client()
@@ -784,11 +795,13 @@ class ZoteroClient:
         """
         import hashlib
 
-        if self.is_local and not self.api_key:
+        # Attachment upload uses a 4-step cloud protocol; local desktop API
+        # does not support it. Always requires api_key.
+        if not self.api_key:
             raise ZoteroWriteUnsupportedError(
-                "Zotero attachment upload requires the cloud API key. "
-                "Set zotero.api_key in config.yml to enable upload to "
-                "api.zotero.org while keeping the local read base_url."
+                "Zotero attachment upload requires the cloud API key "
+                "(zotero.api_key in config.yml) — the upload protocol is "
+                "cloud-only even for personal libraries."
             )
         from pathlib import Path
         path = Path(file_path).expanduser()
@@ -1000,10 +1013,11 @@ class ZoteroClient:
             ZoteroWriteUnsupportedError: when ``api_key`` is missing.
             ZoteroAPIError: on unexpected HTTP status from the Zotero API.
         """
-        if self.is_local and not self.api_key:
+        if not self.api_key and not (self.is_local and self.library_type == "users"):
             raise ZoteroWriteUnsupportedError(
-                "Zotero note creation requires the cloud API key. Set "
-                "zotero.api_key in config.yml."
+                "Zotero note creation requires an api_key when writing to the "
+                "cloud. Set zotero.api_key in config.yml, or configure a local "
+                "desktop base_url (localhost:23119) for a personal library."
             )
         tag_list = [{"tag": t} for t in (tags or [])]
         body = [

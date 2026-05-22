@@ -251,13 +251,8 @@ async def test_create_item_explicit_item_type(respx_mock):
 
 
 @pytest.mark.asyncio
-async def test_create_item_writes_to_cloud_when_configured_for_local(respx_mock):
-    """Live-discovered (2026-05-16): when zotero.base_url points at the
-    Zotero desktop local API, create_item must still POST to the cloud
-    API (api.zotero.org) because the local API is read-only at the
-    Zotero level. Same fallback pattern as ``download_attachment_bytes``
-    (which falls back to cloud on empty local response)."""
-    # Dedup lookup should also hit cloud (the same library writes go to).
+async def test_create_item_group_local_writes_to_cloud(respx_mock):
+    """Group library + local base_url → writes must still go to cloud."""
     respx_mock.get("https://api.zotero.org/groups/999/items").mock(
         return_value=httpx.Response(200, json=[])
     )
@@ -268,7 +263,6 @@ async def test_create_item_writes_to_cloud_when_configured_for_local(respx_mock)
             "failed": {},
         })
     )
-
     async with httpx.AsyncClient() as http:
         c = ZoteroClient(
             api_key="real-cloud-key",
@@ -279,22 +273,71 @@ async def test_create_item_writes_to_cloud_when_configured_for_local(respx_mock)
         )
         key = await c.create_item(paper={"doi": "10.1/x", "title": "T"})
     assert key == "K1"
-    # The POST went to the cloud base_url, NOT to localhost.
-    assert create_route.called
     posted_url = str(create_route.calls[0].request.url)
     assert "api.zotero.org" in posted_url
     assert "localhost" not in posted_url
 
 
 @pytest.mark.asyncio
-async def test_create_item_local_without_api_key_raises_clear_error():
-    """Local base_url + no api_key → ZoteroWriteUnsupportedError with a
-    clear remediation message. (Previously the error claimed local was
-    "read-only" without mentioning that an api_key would fix it.)"""
+async def test_create_item_user_local_writes_to_localhost(respx_mock):
+    """User library + local base_url → writes go directly to localhost, no api_key needed."""
+    respx_mock.get("http://localhost:23119/api/users/42/items").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    create_route = respx_mock.post("http://localhost:23119/api/users/42/items").mock(
+        return_value=httpx.Response(200, json={
+            "successful": {"0": {"key": "LOCAL1"}},
+            "success": {"0": "LOCAL1"},
+            "failed": {},
+        })
+    )
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="",
+            library_id="42",
+            library_type="user",
+            base_url="http://localhost:23119/api",
+            http_client=http,
+        )
+        key = await c.create_item(paper={"doi": "10.1/x", "title": "T"})
+    assert key == "LOCAL1"
+    posted_url = str(create_route.calls[0].request.url)
+    assert "localhost" in posted_url
+    assert "api.zotero.org" not in posted_url
+
+
+@pytest.mark.asyncio
+async def test_create_note_user_local_writes_to_localhost(respx_mock):
+    """User library + local base_url → note POST goes to localhost."""
+    create_route = respx_mock.post("http://localhost:23119/api/users/42/items").mock(
+        return_value=httpx.Response(200, json={
+            "successful": {"0": {"key": "NOTE_LOCAL"}},
+            "success": {"0": "NOTE_LOCAL"},
+            "failed": {},
+        })
+    )
+    async with httpx.AsyncClient() as http:
+        c = ZoteroClient(
+            api_key="",
+            library_id="42",
+            library_type="user",
+            base_url="http://localhost:23119/api",
+            http_client=http,
+        )
+        key = await c.create_note(parent_item_key="PARENT1", content="Local note")
+    assert key == "NOTE_LOCAL"
+    posted_url = str(create_route.calls[0].request.url)
+    assert "localhost" in posted_url
+    assert "api.zotero.org" not in posted_url
+
+
+@pytest.mark.asyncio
+async def test_create_item_group_local_without_api_key_raises():
+    """Group library + local base_url + no api_key → ZoteroWriteUnsupportedError."""
     from perspicacite.integrations.zotero import ZoteroWriteUnsupportedError
     async with httpx.AsyncClient() as http:
         c = ZoteroClient(
-            api_key="",  # No cloud creds — push impossible.
+            api_key="",
             library_id="999",
             library_type="group",
             base_url="http://localhost:23119/api",
