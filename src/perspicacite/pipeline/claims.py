@@ -81,3 +81,29 @@ def _coerce_claim(c: dict) -> dict | None:
     if evidence:
         claim["evidence"] = [evidence]
     return claim
+
+
+_ASB = "https://asb.holobiomics.org/ns/asb#"
+
+
+def claims_to_graph(claims: list[dict]):
+    """Serialize claim dicts to an rdflib Graph using the asb: vocabulary that
+    indicium's SHACL targets (a asb:Claim with asb:context/subject/...)."""
+    import rdflib
+
+    g = rdflib.Graph()
+    ASB = rdflib.Namespace(_ASB)
+    for i, c in enumerate(claims):
+        node = rdflib.URIRef(f"urn:perspicacite:claim:{i}")
+        g.add((node, rdflib.RDF.type, ASB.Claim))
+        for slot in ("context", "subject", "qualifier", "relation", "object"):
+            if c.get(slot):
+                g.add((node, ASB[slot], rdflib.Literal(c[slot])))
+    return g
+
+
+def validate_claims(claims: list[dict]) -> tuple[bool, str]:
+    """SHACL-validate claims against indicium's shapes. Returns (conforms, report)."""
+    import indicium
+
+    return indicium.validate_graph(claims_to_graph(claims))
