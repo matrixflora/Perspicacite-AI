@@ -351,3 +351,199 @@ async def screen_papers_llm(
     kept_count = sum(r.kept for r in results)
     logger.info("screen_papers_llm", n=len(candidates), kept=kept_count)
     return results
+
+
+async def screen_papers_embedding(
+    candidates: Sequence[dict],
+    *,
+    collection: str,
+    embedding_provider: Any,
+    vector_store: Any,
+    top_k: int = 5,
+    threshold: float = 0.3,
+) -> list[ScreenResult]:
+    """Score candidates by embedding similarity to a KB's vector collection.
+
+    Each candidate's title+abstract is embedded with ``embedding_provider``
+    (the same provider/model that built the KB, so the vectors share a
+    space) and compared to the KB's stored vectors via
+    ``vector_store.search``. The candidate's score is the mean of its top-k
+    cosine hit scores (already normalised to (0,1] by the store). A
+    candidate with no abstract scores 0.0. Errors degrade to 0.0 with a
+    reason rather than raising.
+    """
+    candidates_list = list(candidates)
+    if not candidates_list:
+        return []
+
+    results: list[ScreenResult] = []
+    for c in candidates_list:
+        if not (c.get("abstract") or "").strip():
+            results.append(
+                ScreenResult(item=c, score=0.0, kept=False, reason="no abstract")
+            )
+            continue
+        try:
+            embedding = (await embedding_provider.embed([_candidate_text(c)]))[0]
+            hits = await vector_store.search(collection, embedding, top_k=top_k)
+        except Exception as exc:
+            results.append(
+                ScreenResult(item=c, score=0.0, kept=False, reason=f"embedding_error: {exc}")
+            )
+            continue
+        if not hits:
+            results.append(
+                ScreenResult(item=c, score=0.0, kept=False, reason="no_kb_hits")
+            )
+            continue
+        top = [float(h.score) for h in hits[:top_k]]
+        mean_score = sum(top) / len(top)
+        results.append(
+            ScreenResult(
+                item=c,
+                score=mean_score,
+                kept=mean_score >= threshold,
+                reason=f"embedding_top{len(top)}_mean={mean_score:.3f}",
+            )
+        )
+
+    results.sort(key=lambda r: r.score, reverse=True)
+    logger.info(
+        "screen_papers_embedding",
+        n=len(candidates_list),
+        kept=sum(r.kept for r in results),
+        threshold=threshold,
+    )
+    return results
+
+
+async def screen_papers_hybrid(
+    candidates: Sequence[dict],
+    *,
+    reference_abstracts: Sequence[str],
+    collection: str,
+    embedding_provider: Any,
+    vector_store: Any,
+    weights: tuple[float, float] = (0.5, 0.5),
+    top_k: int = 5,
+    threshold: float = 0.3,
+) -> list[ScreenResult]:
+    """Blend set-BM25 (vs ``reference_abstracts``) with set-embedding (vs the
+    KB ``collection``). Both component scores are already in [0,1], so the
+    final score is ``w_bm25 * bm25 + w_emb * emb``. Realignment is by object
+    identity — the same candidate dicts flow through both scorers.
+    """
+    candidates_list = list(candidates)
+    if not candidates_list:
+        return []
+
+    w_bm25, w_emb = weights
+    bm25_results = screen_papers(
+        candidates_list,
+        reference=list(reference_abstracts),
+        method="bm25",
+        threshold=0.0,
+    )
+    emb_results = await screen_papers_embedding(
+        candidates_list,
+        collection=collection,
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+        top_k=top_k,
+        threshold=0.0,
+    )
+    bm25_by_id = {id(r.item): r.score for r in bm25_results}
+    emb_by_id = {id(r.item): r.score for r in emb_results}
+
+    results: list[ScreenResult] = []
+    for c in candidates_list:
+        b = bm25_by_id.get(id(c), 0.0)
+        e = emb_by_id.get(id(c), 0.0)
+        score = w_bm25 * b + w_emb * e
+        results.append(
+            ScreenResult(
+                item=c,
+                score=score,
+                kept=score >= threshold,
+                reason=f"hybrid bm25={b:.3f} emb={e:.3f}",
+            )
+        )
+
+    results.sort(key=lambda r: r.score, reverse=True)
+    logger.info(
+        "screen_papers_hybrid",
+        n=len(candidates_list),
+        kept=sum(r.kept for r in results),
+        threshold=threshold,
+        weights=list(weights),
+    )
+    return results
+
+
+def select_calibration_samples(
+    results: Sequence[ScreenResult], n: int = 4
+) -> list[ScreenResult]:
+    """Pick ``n`` samples spanning the score distribution, for human labeling.
+
+    Targets ``n`` evenly-spaced points across the observed score range
+    (high -> low) and picks the nearest not-yet-chosen result to each. Returns
+    all results (sorted descending) when there are <= ``n`` of them.
+    """
+    items = sorted(results, key=lambda r: r.score, reverse=True)
+    if len(items) <= n:
+        return items
+
+    lo, hi = items[-1].score, items[0].score
+    if hi == lo:
+        step = len(items) / n
+        return [items[min(len(items) - 1, int(i * step))] for i in range(n)]
+
+    # Evenly spaced fractions, high to low: for n=4 -> 0.875, 0.625, 0.375, 0.125.
+    fractions = [1.0 - (i + 0.5) / n for i in range(n)]
+    picked: list[ScreenResult] = []
+    seen: set[int] = set()
+    for f in fractions:
+        target = lo + f * (hi - lo)
+        best = min(
+            (r for r in items if id(r) not in seen),
+            key=lambda r: abs(r.score - target),
+            default=None,
+        )
+        if best is not None:
+            seen.add(id(best))
+            picked.append(best)
+    return picked
+
+
+def cutoff_from_labels(
+    labeled: Sequence[tuple[ScreenResult, bool]],
+) -> float:
+    """Return the score cutoff that best separates relevant (True) samples
+    from not-relevant (False) ones.
+
+    Tries every boundary (each sample score, plus just below the min and just
+    above the max) and returns the one minimising misclassified samples -- a
+    'relevant' that falls below the cutoff, or a 'not-relevant' kept at/above
+    it. Ties break toward the HIGHER cutoff (more conservative -- keep fewer).
+    Empty input returns 0.0 (keep everything).
+    """
+    labels = list(labeled)
+    if not labels:
+        return 0.0
+
+    distinct = sorted({r.score for r, _ in labels})
+    eps = 1e-6
+    candidates = [distinct[0] - eps, *distinct, distinct[-1] + eps]
+
+    best_cut = candidates[0]
+    best_err: int | None = None
+    for cut in candidates:  # ascending
+        err = 0
+        for r, is_relevant in labels:
+            kept = r.score >= cut
+            if kept != is_relevant:
+                err += 1
+        if best_err is None or err < best_err or (err == best_err and cut > best_cut):
+            best_err = err
+            best_cut = cut
+    return float(max(0.0, best_cut))
