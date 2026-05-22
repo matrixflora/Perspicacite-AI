@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Purpose
 
-Perspicacité is a local-first, AI-powered scientific literature research assistant. It exposes a FastAPI web app, a REST API, and an MCP server (10 tools) that can be consumed by external agents (e.g., Mimosa-AI). Users query academic databases, build personal knowledge bases (KBs) from BibTeX or DOIs, and answer research questions using one of six RAG modes.
+Perspicacité is a local-first, AI-powered scientific literature research assistant. It exposes a FastAPI web app, a REST API, and an MCP server (40+ tools) that can be consumed by external agents (e.g., Mimosa-AI). Users query academic databases, build personal knowledge bases (KBs) from BibTeX or DOIs, and answer research questions using one of six RAG modes.
 
 ## Environment
 
@@ -114,7 +114,9 @@ FastAPI app is defined in [src/perspicacite/web/app.py](src/perspicacite/web/app
 
 ### MCP Server
 
-Defined in [src/perspicacite/mcp/server.py](src/perspicacite/mcp/server.py) using `fastmcp`. It has its own `MCPState` singleton (separate from `AppState`) and is mounted at `/mcp` by the CLI. The 10 tools and their usage patterns are documented in [docs/perspicacite_skills.md](docs/perspicacite_skills.md).
+Defined in [src/perspicacite/mcp/server.py](src/perspicacite/mcp/server.py) using `fastmcp`. It has its own `MCPState` singleton (separate from `AppState`) and is mounted at `/mcp` by the CLI. Tool usage patterns are documented in [docs/perspicacite_skills.md](docs/perspicacite_skills.md) (and the live `get_usage_guide` tool is the source of truth).
+
+The claim/standardization tools — `extract_claims_from_passages` and `export_astra` — require the optional **`indicia`** extra (`uv sync --extra indicia`), which pulls in the local [`indicium`](../indicium) standard package (typed claims: Bucur 5-slot SuperPattern + ECO/CiTO/SEPIO; SHACL-validated). They degrade with a clear error when the extra isn't installed.
 
 For using Perspicacité over MCP intelligently (query shaping, tool/mode choice), follow [.claude/skills/perspicacite-mcp/SKILL.md](.claude/skills/perspicacite-mcp/SKILL.md) or call the `get_usage_guide` tool for the live source of truth.
 

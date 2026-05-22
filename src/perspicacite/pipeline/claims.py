@@ -92,13 +92,13 @@ def claims_to_graph(claims: list[dict]):
     import rdflib
 
     g = rdflib.Graph()
-    ASB = rdflib.Namespace(_ASB)
+    asb = rdflib.Namespace(_ASB)
     for i, c in enumerate(claims):
         node = rdflib.URIRef(f"urn:perspicacite:claim:{i}")
-        g.add((node, rdflib.RDF.type, ASB.Claim))
+        g.add((node, rdflib.RDF.type, asb.Claim))
         for slot in ("context", "subject", "qualifier", "relation", "object"):
             if c.get(slot):
-                g.add((node, ASB[slot], rdflib.Literal(c[slot])))
+                g.add((node, asb[slot], rdflib.Literal(c[slot])))
     return g
 
 
