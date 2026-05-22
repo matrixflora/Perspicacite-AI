@@ -263,7 +263,7 @@ _TOOL_ENTRIES: list[dict] = [
         "name": "export_astra",
         "purpose": "Project indicium claims to ASTRA Insights for interoperable analysis records.",
         "when_to_use": "After extracting claims, to hand them to an ASTRA-consuming tool.",
-        "key_knobs": "claims (required list of claim dicts).",
+        "key_knobs": ["claims"],
     },
 ]
 
