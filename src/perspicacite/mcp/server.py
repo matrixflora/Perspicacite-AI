@@ -2369,6 +2369,7 @@ async def push_notes_to_zotero(
             api_key=zotero_cfg.api_key,
             library_id=lib_id,
             library_type=lib_type,
+            base_url=getattr(zotero_cfg, "base_url", "") or None,
         )
 
         created: list[dict] = []
