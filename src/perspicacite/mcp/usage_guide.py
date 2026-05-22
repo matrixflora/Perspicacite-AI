@@ -259,6 +259,12 @@ _TOOL_ENTRIES: list[dict] = [
         "when_to_use": "Stop an in-flight report/ingest you no longer need.",
         "key_knobs": ["task_id"],
     },
+    {
+        "name": "export_astra",
+        "purpose": "Project indicium claims to ASTRA Insights for interoperable analysis records.",
+        "when_to_use": "After extracting claims, to hand them to an ASTRA-consuming tool.",
+        "key_knobs": "claims (required list of claim dicts).",
+    },
 ]
 
 _CAPABILITIES: list[str] = [
