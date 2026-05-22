@@ -2569,6 +2569,155 @@ async def ingest_local_documents(
 
 
 @mcp.tool()
+async def add_local_papers_to_kb(
+    kb_name: str,
+    papers: list[dict],
+) -> str:
+    """Add locally-stored documents to a KB with user-provided metadata.
+
+    Bridges the gap between ``ingest_local_documents`` (full text, filename
+    as title) and ``add_papers_to_kb`` (rich metadata, DOI-only download).
+    This tool accepts both a local file path AND explicit metadata so the KB
+    entry has a proper title, authors, year, and searchable full text.
+
+    Each paper dict requires:
+      - ``file``  (str) — absolute path to a local PDF, Markdown, or text file.
+                          Must be under ``local_docs.allowed_roots`` in config.
+      - ``title`` (str) — human-readable title shown in search results.
+
+    Optional fields (all improve retrieval quality):
+      - ``authors``  list[str]  e.g. ["Alice Smith", "Bob Jones"]
+      - ``year``     int
+      - ``abstract`` str        ingested as extra context alongside the full text
+      - ``keywords`` list[str]
+      - ``doi``      str        used as the stable paper_id when present
+
+    When to use vs. alternatives:
+      - Use ``ingest_local_documents`` when you don't have metadata and
+        the filename is a sufficient identifier.
+      - Use ``add_papers_to_kb`` when you have DOIs and want automatic
+        PDF download from the web.
+      - Use this tool when you have local files AND want proper metadata
+        (proposal PDFs, lab reports, preprints without DOIs, etc.).
+
+    Returns JSON with ``added_chunks``, ``papers_added``, and per-file status.
+    """
+    import hashlib
+
+    from perspicacite.integrations.local_docs import (
+        LocalDocsDisabledError,
+        LocalDocsValidationError,
+        validate_local_path,
+    )
+    from perspicacite.models.papers import Author, Paper, PaperSource
+    from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase, KnowledgeBaseConfig
+
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    allowed = list(getattr(state.config.local_docs, "allowed_roots", []) or [])
+    kb_meta = await state.session_store.get_kb_metadata(kb_name)
+    if not kb_meta:
+        return _json_error(f"Knowledge base '{kb_name}' not found")
+
+    from perspicacite.models.kb import chroma_collection_name_for_kb
+    collection_name = chroma_collection_name_for_kb(kb_name)
+    dkb_config = KnowledgeBaseConfig(
+        vector_size=state.embedding_provider.dimension,
+        chunk_size=state.config.knowledge_base.chunk_size,
+        chunk_overlap=state.config.knowledge_base.chunk_overlap,
+        chunking_method=state.config.knowledge_base.chunking_method,
+    )
+    dkb = DynamicKnowledgeBase(state.vector_store, state.embedding_provider, config=dkb_config)
+    dkb.collection_name = collection_name
+    dkb._initialized = True
+
+    results: list[dict] = []
+    total_chunks = 0
+
+    for pd in papers:
+        raw_file = pd.get("file", "")
+        title = pd.get("title", "")
+        if not raw_file:
+            results.append({"file": raw_file, "status": "error", "reason": "missing 'file' field"})
+            continue
+        if not title:
+            results.append({"file": raw_file, "status": "error", "reason": "missing 'title' field"})
+            continue
+
+        try:
+            fp = validate_local_path(raw_file, allowed_roots=allowed)
+        except LocalDocsDisabledError as exc:
+            return _json_error(str(exc))
+        except LocalDocsValidationError as exc:
+            results.append({"file": raw_file, "status": "error", "reason": str(exc)})
+            continue
+
+        # Parse full text from the local file.
+        from perspicacite.integrations.local_docs import infer_content_type
+        content_type, _ = infer_content_type(fp)
+        full_text: str | None = None
+        if content_type == "pdf":
+            if state.pdf_parser is not None:
+                try:
+                    parsed = await state.pdf_parser.parse(fp)
+                    full_text = parsed.text or None
+                except Exception as exc:
+                    results.append({"file": raw_file, "status": "error",
+                                    "reason": f"PDF parse failed: {exc}"})
+                    continue
+        else:
+            try:
+                full_text = fp.read_text(encoding="utf-8", errors="replace") or None
+            except Exception as exc:
+                results.append({"file": raw_file, "status": "error", "reason": f"Read failed: {exc}"})  # noqa: E501
+                continue
+
+        doi = pd.get("doi")
+        paper_id = doi if doi else f"generated:{hashlib.md5(title.encode()).hexdigest()[:12]}"
+
+        authors = [
+            Author(name=a) if isinstance(a, str) else Author(**a)
+            for a in pd.get("authors", [])
+        ]
+        abstract = pd.get("abstract")
+        # Prepend abstract to full text so it's always retrievable even for
+        # chunked documents where the first page may be split across chunks.
+        if abstract and full_text:
+            full_text = f"{abstract}\n\n{full_text}"
+        elif abstract:
+            full_text = abstract
+
+        paper = Paper(
+            id=paper_id,
+            title=title,
+            authors=authors,
+            year=pd.get("year"),
+            doi=doi,
+            abstract=abstract,
+            keywords=pd.get("keywords", []),
+            source=PaperSource.LOCAL,
+            full_text=full_text,
+        )
+
+        try:
+            n = await dkb.add_papers([paper], include_full_text=True)
+            total_chunks += n
+            results.append({"file": raw_file, "title": title, "status": "ok", "chunks": n})
+        except Exception as exc:
+            results.append({"file": raw_file, "title": title, "status": "error",
+                            "reason": str(exc)})
+
+    papers_ok = sum(1 for r in results if r["status"] == "ok")
+    kb_meta.chunk_count = (kb_meta.chunk_count or 0) + total_chunks
+    kb_meta.paper_count = (kb_meta.paper_count or 0) + papers_ok
+    await state.session_store.save_kb_metadata(kb_meta)
+
+    return _json_ok({"papers_added": papers_ok, "added_chunks": total_chunks, "results": results})
+
+
+@mcp.tool()
 async def ingest_urls_to_kb(
     kb_name: str,
     urls: list[str],
@@ -4853,6 +5002,7 @@ _TOOL_NAMES: list[str] = [
     "push_to_zotero",
     "build_kbs_from_zotero",
     "ingest_local_documents",
+    "add_local_papers_to_kb",
     "build_capsule",
     "fetch_supplementary",
     "build_capsules_for_kb",

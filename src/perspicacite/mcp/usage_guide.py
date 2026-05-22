@@ -135,8 +135,14 @@ _TOOL_ENTRIES: list[dict] = [
     {
         "name": "ingest_local_documents",
         "purpose": "Ingest local files (PDF/text) into a KB.",
-        "when_to_use": "Add documents already on disk to a KB.",
+        "when_to_use": "Add documents already on disk to a KB when the filename is a sufficient identifier.",
         "key_knobs": [],
+    },
+    {
+        "name": "add_local_papers_to_kb",
+        "purpose": "Ingest local files into a KB with user-provided metadata (title, authors, year, abstract).",
+        "when_to_use": "Use instead of ingest_local_documents when you have metadata to attach — proposal PDFs, preprints without DOIs, lab reports. Gives proper titles in search results rather than raw filenames.",
+        "key_knobs": ["file (required)", "title (required)", "authors", "year", "abstract", "keywords", "doi"],
     },
     {
         "name": "ingest_github_repo",
