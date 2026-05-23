@@ -1346,6 +1346,7 @@ async def generate_report(
     max_papers_to_download: int | None = None,
     databases: list[str] | None = None,
     extract_claims: bool = False,
+    domain: str | None = None,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1397,6 +1398,10 @@ async def generate_report(
             over the cited sources after the report is generated and attach the
             result as an ``indicia`` list in the response payload. Defaults to
             False so existing callers are unaffected.
+        domain: Optional domain adapter ID (e.g. "metabolomics"). When provided
+            alongside ``extract_claims=True``, claims are enriched with ontology
+            terms and validated against domain-specific SHACL shapes. Requires
+            indicium-adapters to be installed; silently ignored if not available.
 
     Returns:
         JSON with the report text, cited sources, and metadata.
@@ -1665,16 +1670,34 @@ async def generate_report(
         logger.info("mcp_generate_report", query=query, kb_name=effective_kb_name, mode=mode)
 
         indicia = None
+        claims_valid: bool | None = None
+        validation_report: str | None = None
         if extract_claims:
             try:
-                from perspicacite.pipeline.claims import extract_claims as _extract_claims
+                from perspicacite.pipeline.claims import extract_claims as _extract_claims, validate_claims
                 _passages = [
                     {"chunk_text": s.get("section") or s.get("title", ""),
                      "source": {"doi": s.get("doi"), "title": s.get("title")}}
                     for s in sources
                 ]
+
+                # Resolve domain adapter (best-effort; silently skip if indicium-adapters not installed)
+                domain_adapter = None
+                if domain:
+                    try:
+                        from indicium_adapters import discover_adapters
+                        domain_adapter = discover_adapters().get(domain)
+                    except ImportError:
+                        pass  # indicium-adapters not installed — proceed without adapter
+
                 indicia = await _extract_claims(
-                    llm_client=state.llm_client, passages=_passages, context=query)
+                    llm_client=state.llm_client, passages=_passages, context=query,
+                    domain_adapter=domain_adapter)
+
+                conforms, val_report = validate_claims(indicia, domain_adapter=domain_adapter) if indicia else (True, "")
+                claims_valid = conforms
+                if not conforms:
+                    validation_report = val_report
             except ImportError:
                 indicia = None
 
@@ -1692,6 +1715,9 @@ async def generate_report(
         _final_payload.update(_response_collector.as_response_extras())
         if indicia is not None:
             _final_payload["indicia"] = indicia
+            _final_payload["claims_valid"] = claims_valid
+            if validation_report is not None:
+                _final_payload["validation_report"] = validation_report
         return _json_ok(_final_payload)
 
     except Exception as e:
