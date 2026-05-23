@@ -7,6 +7,7 @@ Modes:
 - AgenticRAGMode: Intent-based agentic RAG with tool use
 - LiteratureSurveyRAGMode: Systematic field mapping with theme identification
 - ContradictionRAGMode: Agreement / disagreement / open-question detection
+- ReasoningRAGMode: Claim-graph-grounded reasoning with provenance/contradiction strategies
 """
 
 from perspicacite.rag.modes.advanced import AdvancedRAGMode
@@ -15,6 +16,7 @@ from perspicacite.rag.modes.basic import BasicRAGMode
 from perspicacite.rag.modes.contradiction import ContradictionRAGMode
 from perspicacite.rag.modes.literature_survey import LiteratureSurveyRAGMode
 from perspicacite.rag.modes.profound import ProfoundRAGMode
+from perspicacite.rag.modes.reasoning import ReasoningRAGMode
 
 __all__ = [
     "AdvancedRAGMode",
@@ -23,4 +25,5 @@ __all__ = [
     "ContradictionRAGMode",
     "LiteratureSurveyRAGMode",
     "ProfoundRAGMode",
+    "ReasoningRAGMode",
 ]

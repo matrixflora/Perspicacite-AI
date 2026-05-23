@@ -51,3 +51,29 @@ async def test_missing_indicia_extra_yields_error(monkeypatch):
     err = next(e for e in events if e.event == "error")
     payload = json.loads(err.data)
     assert "indicia" in payload["message"]
+
+
+async def test_reasoning_mode_registered_in_engine():
+    """RAGEngine._modes must contain RAGMode.REASONING after construction."""
+    from unittest.mock import MagicMock
+    from perspicacite.models.rag import RAGMode
+    from perspicacite.rag.engine import RAGEngine
+    from perspicacite.config.schema import Config
+
+    engine = RAGEngine(
+        llm_client=MagicMock(),
+        vector_store=MagicMock(),
+        embedding_provider=MagicMock(),
+        tool_registry=MagicMock(),
+        config=Config(),
+    )
+    assert RAGMode.REASONING in engine._modes
+
+
+async def test_reasoning_in_chat_route_map():
+    """RAG_MODE_MAP in the chat router must map 'reasoning' to RAGMode.REASONING."""
+    from perspicacite.models.rag import RAGMode
+    from perspicacite.web.routers.chat import RAG_MODE_MAP
+
+    assert "reasoning" in RAG_MODE_MAP
+    assert RAG_MODE_MAP["reasoning"] == RAGMode.REASONING
