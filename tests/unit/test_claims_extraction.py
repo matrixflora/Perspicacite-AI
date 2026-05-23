@@ -239,3 +239,69 @@ def test_validate_claims_adapter_without_shacl_shapes_no_error():
     assert conforms is True
     _, kwargs = mock_vg.call_args
     assert kwargs.get("extra_shapes") is None
+
+
+@pytest.mark.unit
+def test_validate_claims_enrichment_and_shacl_combined():
+    """validate_claims() with an adapter that has both enrich_claim and shacl_shapes
+    must call shacl_shapes() once (wiring integration check)."""
+    import rdflib
+    from unittest.mock import MagicMock, patch
+    from perspicacite.pipeline.claims import validate_claims
+
+    mock_graph = rdflib.Graph()
+    adapter = MagicMock()
+    adapter.shacl_shapes.return_value = mock_graph
+
+    claims = [{"context": "c", "subject": "s", "qualifier": "causes",
+               "relation": "r", "object": "o"}]
+
+    with patch("indicium.validate_graph", return_value=(True, "")) as mock_vg:
+        conforms, _ = validate_claims(claims, domain_adapter=adapter)
+
+    adapter.shacl_shapes.assert_called_once()
+    mock_vg.assert_called_once()
+    # extra_shapes kwarg was the mock_graph
+    _, kwargs = mock_vg.call_args
+    assert kwargs.get("extra_shapes") is mock_graph
+    assert conforms is True
+
+
+# ---------------------------------------------------------------------------
+# claims_to_graph() — ontology_terms serialization
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_claims_to_graph_serializes_ontology_terms():
+    """ontology_terms in a claim dict must appear as asb:{slot}_ontology_term triples."""
+    import rdflib
+    from perspicacite.pipeline.claims import claims_to_graph
+    _ASB = "https://asb.holobiomics.org/ns/asb#"
+    asb = rdflib.Namespace(_ASB)
+    claim = {
+        "context": "in vivo", "subject": "glucose", "qualifier": "quantifies",
+        "relation": "measured in", "object": "plasma",
+        "ontology_terms": {"subject": "CHEBI:17234", "object": "CHEBI:00001"},
+    }
+    g = claims_to_graph([claim])
+    nodes = list(g.subjects(rdflib.RDF.type, asb.Claim))
+    assert len(nodes) == 1
+    node = nodes[0]
+    assert (node, asb.subject_ontology_term, rdflib.Literal("CHEBI:17234")) in g
+    assert (node, asb.object_ontology_term, rdflib.Literal("CHEBI:00001")) in g
+
+
+@pytest.mark.unit
+def test_claims_to_graph_no_ontology_terms_no_error():
+    """Claims without ontology_terms must not raise and produce no extra triples."""
+    import rdflib
+    from perspicacite.pipeline.claims import claims_to_graph
+    _ASB = "https://asb.holobiomics.org/ns/asb#"
+    asb = rdflib.Namespace(_ASB)
+    claim = {
+        "context": "in vivo", "subject": "glucose", "qualifier": "quantifies",
+        "relation": "measured in", "object": "plasma",
+    }
+    g = claims_to_graph([claim])
+    terms = list(g.triples((None, asb.subject_ontology_term, None)))
+    assert terms == []
