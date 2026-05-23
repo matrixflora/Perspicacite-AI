@@ -5571,7 +5571,7 @@ async def build_claim_graph(
         )
 
     data_dir = pathlib.Path("data/claim_graphs") / kb_name
-    store = ClaimGraphStore(kb_name, data_dir=data_dir, backend="memory")
+    store = ClaimGraphStore(kb_name, data_dir=data_dir, backend="oxigraph")
     try:
         result = await _build(
             kb_name=kb_name,
@@ -5846,15 +5846,46 @@ async def claim_graph_export(
                         + (jld_list if isinstance(jld_list, list) else []),
                     }
         else:
-            # oxigraph backend — dump via pyoxigraph
+            # oxigraph backend — dump via pyoxigraph; JSON-LD/RO-Crate via rdflib bridge
             import io
 
-            import pyoxigraph as oxi  # noqa: F401
+            from rdflib import ConjunctiveGraph as _CG
 
             buf = io.BytesIO()
-            oxi_fmt = "text/turtle" if format == "turtle" else "application/n-triples"
-            store._oxistore.dump(buf, oxi_fmt)
-            result = buf.getvalue().decode("utf-8")
+            if format == "turtle":
+                store._oxistore.dump(buf, "text/turtle")
+                result = buf.getvalue().decode("utf-8")
+            else:
+                # pyoxigraph has no native JSON-LD serialiser; round-trip via N-Triples→rdflib
+                store._oxistore.dump(buf, "application/n-triples")
+                g = _CG()
+                g.parse(data=buf.getvalue().decode("utf-8"), format="n-triples")
+                raw_jld = g.serialize(format="json-ld")
+                try:
+                    jld_list = json.loads(raw_jld) if isinstance(raw_jld, str) else raw_jld
+                except Exception:
+                    jld_list = []
+                if format == "jsonld":
+                    result = jld_list
+                else:  # rocrate
+                    result = {
+                        "@context": "https://w3id.org/ro/crate/1.1/context",
+                        "@graph": [
+                            {
+                                "@type": "CreativeWork",
+                                "@id": "ro-crate-metadata.json",
+                                "about": {"@id": "./"},
+                                "conformsTo": {"@id": "https://w3id.org/ro/crate/1.1"},
+                            },
+                            {
+                                "@type": "Dataset",
+                                "@id": "./",
+                                "name": f"Perspicacite claim graph: {kb_name}",
+                                "hasPart": [{"@id": "claim-graph.jsonld"}],
+                            },
+                        ]
+                        + (jld_list if isinstance(jld_list, list) else []),
+                    }
     finally:
         store.close()
 
