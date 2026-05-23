@@ -10,39 +10,16 @@ async def _drain(stream):
     return [ev async for ev in stream]
 
 
-async def test_default_strategy_after_subplan_a_is_contradiction(tmp_path, monkeypatch):
+async def test_default_strategy_after_subplan_b_is_evidence_graded():
     from perspicacite.rag.modes.reasoning import (
         DEFAULT_REASONING_STRATEGY,
         SHIPPED_STRATEGIES,
     )
 
-    assert DEFAULT_REASONING_STRATEGY == "contradiction"
-    assert "provenance" in SHIPPED_STRATEGIES
-    assert "contradiction" in SHIPPED_STRATEGIES
-    assert "graph" in SHIPPED_STRATEGIES
-    assert "evidence_graded" not in SHIPPED_STRATEGIES
-
-
-async def test_unshipped_strategy_yields_not_implemented_error(monkeypatch):
-    from perspicacite.rag.modes import reasoning as reasoning_mod
-    from perspicacite.rag.modes.reasoning import ReasoningRAGMode
-
-    # Ensure the indicia gate is open so we reach the strategy dispatcher.
-    monkeypatch.setattr(reasoning_mod, "_HAS_INDICIA", True)
-    mode = ReasoningRAGMode(Config())
-    req = RAGRequest(query="q", mode=RAGMode.REASONING, reasoning_strategy="evidence_graded")
-    events = await _drain(
-        mode.execute_stream(req, llm=None, vector_store=None, embedding_provider=None, tools=None)
+    assert DEFAULT_REASONING_STRATEGY == "evidence_graded"
+    assert (
+        frozenset({"provenance", "contradiction", "graph", "evidence_graded"}) == SHIPPED_STRATEGIES
     )
-    err = next(e for e in events if e.event == "error")
-    payload = json.loads(err.data)
-    assert "Subplan B" in payload["message"] or "not yet shipped" in payload["message"]
-
-
-async def test_graph_strategy_routes_through_dispatcher():
-    from perspicacite.rag.modes.reasoning import SHIPPED_STRATEGIES
-
-    assert "graph" in SHIPPED_STRATEGIES
 
 
 async def test_missing_indicia_extra_yields_error(monkeypatch):

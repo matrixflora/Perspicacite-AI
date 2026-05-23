@@ -29,9 +29,11 @@ from perspicacite.rag.modes.base import BaseRAGMode
 
 logger = get_logger("perspicacite.rag.modes.reasoning")
 
-# After Subplan B Task 3: "provenance" + "contradiction" + "graph" ship.
-SHIPPED_STRATEGIES: frozenset[str] = frozenset({"provenance", "contradiction", "graph"})
-DEFAULT_REASONING_STRATEGY: str = "contradiction"
+# After Subplan B: all four strategies ship; default is evidence_graded.
+SHIPPED_STRATEGIES: frozenset[str] = frozenset(
+    {"provenance", "contradiction", "graph", "evidence_graded"}
+)
+DEFAULT_REASONING_STRATEGY: str = "evidence_graded"
 
 # Module-level toggle so tests can monkey-patch without touching sys.modules.
 try:
@@ -114,6 +116,22 @@ class ReasoningRAGMode(BaseRAGMode):
             )
 
             async for ev in run_graph_traversal_stream(
+                request=request,
+                llm=llm,
+                vector_store=vector_store,
+                embedding_provider=embedding_provider,
+                config=self.config,
+                session_store=self.session_store,
+            ):
+                yield ev
+            return
+
+        elif strategy == "evidence_graded":
+            from perspicacite.rag.modes.reasoning.evidence_graded import (
+                run_evidence_graded_stream,
+            )
+
+            async for ev in run_evidence_graded_stream(
                 request=request,
                 llm=llm,
                 vector_store=vector_store,
