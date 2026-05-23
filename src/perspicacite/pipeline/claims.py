@@ -98,7 +98,7 @@ def _coerce_claim(c: dict, qualifiers: frozenset[str] = _QUALIFIERS) -> dict | N
     # Mint a stable id so every claim dict is Indicium-adapter-compatible.
     # Callers may override by setting claim["id"] after coercion if they have
     # a stable identifier from the upstream source (e.g. a DOI-scoped hash).
-    claim: dict = {"id": f"perspicacite:{uuid.uuid4().hex[:8]}"}
+    claim: dict = {"id": f"perspicacite:{uuid.uuid4().hex[:12]}"}
     claim.update({k: c[k] for k in required})
     if c.get("claim_type") in {"explicit", "implicit"}:
         claim["claim_type"] = c["claim_type"]
