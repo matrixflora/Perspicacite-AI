@@ -10,11 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- `extract_claims_from_passages` MCP tool: `domain: str | None` renamed to
+- **BREAKING:** `extract_claims_from_passages` MCP tool: `domain: str | None` renamed to
   `domains: list[str] | None`. Pass a single domain as `["metabolomics"]`. Multiple
   domain IDs are resolved and composed into a `CompositeAdapter` so all adapters'
   context, qualifier, enrichment, and SHACL shapes are applied together.
-- `generate_report` MCP tool: same `domain` → `domains` rename and composition logic.
+- **BREAKING:** `generate_report` MCP tool: same `domain` → `domains` rename and composition logic.
 
 ### Added
 - `domains` multi-adapter support for both claim-extraction MCP tools (see Changed above).
