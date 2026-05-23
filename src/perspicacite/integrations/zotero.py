@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -128,6 +129,48 @@ def _url_matches(zotero_item: dict, normalized_url: str) -> bool:
         return False
     data = zotero_item.get("data") or {}
     return _normalize_url(data.get("url") or "") == normalized_url
+
+
+def _file_url_to_candidate_paths(file_url: str) -> list[Path]:
+    """Map a ``file://`` URL to candidate on-disk paths, most-likely first.
+
+    The Zotero *desktop* local API doesn't stream attachment bytes — it
+    302-redirects ``/items/<key>/file`` to a ``file://`` URL pointing at the
+    file in its storage dir. HTTP clients can't open ``file://``, so the
+    caller reads the file itself. This maps the URL to the paths a backend
+    might see, so it works regardless of where the backend runs:
+
+    - native Linux/macOS (backend + Zotero same host): the POSIX path as-is
+    - native Windows: the ``C:/...`` drive path
+    - WSL reaching a Windows Zotero: the ``/mnt/c/...`` mount of that drive
+    - a UNC ``file://host/share/...`` URL: the ``//host/share/...`` path
+
+    The caller tries each and uses the first that exists, so paths that don't
+    resolve on this machine (e.g. Zotero on another host) simply yield nothing
+    and the caller falls back to the cloud download.
+    """
+    import re
+    from urllib.parse import unquote, urlparse
+
+    parsed = urlparse(file_url)
+    netloc = parsed.netloc
+    path = unquote(parsed.path)
+    # Some emitters fold a Windows drive into the authority: file://C:/x.
+    if netloc and re.fullmatch(r"[A-Za-z]:", netloc):
+        path = "/" + netloc + path
+        netloc = ""
+
+    candidates: list[Path] = []
+    drive_m = re.match(r"^/([A-Za-z]):/(.*)$", path)  # /C:/Users/...
+    if drive_m:
+        drive, rest = drive_m.group(1), drive_m.group(2)
+        candidates.append(Path(f"{drive}:/{rest}"))  # native Windows
+        candidates.append(Path(f"/mnt/{drive.lower()}/{rest}"))  # WSL mount
+    elif netloc:
+        candidates.append(Path(f"//{netloc}{path}"))  # UNC share
+    elif path:
+        candidates.append(Path(path))  # POSIX
+    return candidates
 
 
 # Maps internal "kind" fields onto Zotero schema fields by itemType.
@@ -722,26 +765,54 @@ class ZoteroClient:
         the cloud path — without it, we'd get the 302 with an empty
         body and silently return None.
 
-        Local-API fallback: Zotero desktop's local API returns 200 with
-        ``Content-Length: 0`` for group-library attachments whose bytes
-        live only in Zotero cloud storage (it serves user-library files
-        via ``file://`` redirect, which httpx won't follow either). When
-        a local call yields empty content, retry against the cloud REST
-        API if we have an api_key.
+        Local-API path: the desktop local API serves user-library files via
+        a ``file://`` 302 redirect to the on-disk copy (it does not stream the
+        bytes, and HTTP clients can't follow ``file://``). So for a local
+        base_url we fetch *without* following redirects and read the file off
+        disk ourselves (see ``_read_local_file_redirect``). If that yields
+        nothing (file not reachable from this host, e.g. group-library files
+        that live only in Zotero cloud), we retry against the cloud REST API
+        when an api_key is available.
         """
         c = await self._client()
+        # Cloud (S3) needs redirect-following; the local API redirects to
+        # file://, which we must intercept and read ourselves.
         try:
             r = await c.get(
                 f"{self._base()}/items/{attachment_key}/file",
                 headers=self._headers(),
-                follow_redirects=True,
+                follow_redirects=not self.is_local,
             )
         except httpx.HTTPError:
             r = None
         if r is not None and r.status_code == 200 and r.content:
             return r.content
+        if r is not None and self.is_local and r.status_code in (301, 302, 303, 307, 308):
+            blob = self._read_local_file_redirect(r.headers.get("location") or "")
+            if blob:
+                return blob
         if self.is_local and self.api_key:
             return await self._download_attachment_bytes_via_cloud(attachment_key)
+        return None
+
+    @staticmethod
+    def _read_local_file_redirect(location: str) -> bytes | None:
+        """Read the bytes a local-API ``file://`` redirect points at, or None.
+
+        Tries each candidate path from :func:`_file_url_to_candidate_paths`
+        and returns the first that exists and is non-empty, so it works across
+        native Linux/macOS/Windows and WSL-reaching-Windows setups alike.
+        """
+        if not location.lower().startswith("file:"):
+            return None
+        for cand in _file_url_to_candidate_paths(location):
+            try:
+                if cand.is_file():
+                    data = cand.read_bytes()
+                    if data:
+                        return data
+            except OSError:
+                continue
         return None
 
     async def _download_attachment_bytes_via_cloud(
