@@ -136,8 +136,25 @@ def claims_to_graph(claims: list[dict]):
     return g
 
 
-def validate_claims(claims: list[dict]) -> tuple[bool, str]:
-    """SHACL-validate claims against indicium's shapes. Returns (conforms, report)."""
+def validate_claims(
+    claims: list[dict],
+    domain_adapter: Any | None = None,
+) -> tuple[bool, str]:
+    """SHACL-validate claims against indicium's shapes. Returns (conforms, report).
+
+    Args:
+        claims: List of claim dicts (as returned by extract_claims()).
+        domain_adapter: Optional DomainAdapter. If it has a ``shacl_shapes()``
+            method (i.e. satisfies SHACLProvider), its shapes are merged with
+            indicium's base shapes before validation. No import from
+            indicium_adapters is required — duck-typing via hasattr only.
+    """
     import indicium
 
-    return indicium.validate_graph(claims_to_graph(claims))
+    g = claims_to_graph(claims)
+    extra = (
+        domain_adapter.shacl_shapes()
+        if domain_adapter is not None and hasattr(domain_adapter, "shacl_shapes")
+        else None
+    )
+    return indicium.validate_graph(g, extra_shapes=extra)

@@ -160,3 +160,82 @@ async def test_extract_claims_domain_qualifier_dropped_without_adapter():
     )
 
     assert claims == []
+
+
+# ---------------------------------------------------------------------------
+# validate_claims() — domain adapter awareness
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+def test_validate_claims_no_adapter_backward_compat():
+    """validate_claims() with no domain_adapter must behave identically to before."""
+    from unittest.mock import patch
+
+    from perspicacite.pipeline.claims import validate_claims
+
+    claims = [{
+        "context": "c", "subject": "s", "qualifier": "inhibits",
+        "relation": "r", "object": "o", "id": "perspicacite:abc123",
+    }]
+
+    with patch("indicium.validate_graph", return_value=(True, "")) as mock_vg:
+        conforms, _ = validate_claims(claims)
+
+    assert conforms is True
+    _, kwargs = mock_vg.call_args
+    assert kwargs.get("extra_shapes") is None
+
+
+@pytest.mark.unit
+def test_validate_claims_calls_shacl_shapes_from_adapter():
+    """validate_claims() with an adapter that has shacl_shapes() must call it once."""
+    from unittest.mock import MagicMock, patch
+
+    import rdflib
+
+    from perspicacite.pipeline.claims import validate_claims
+
+    extra = rdflib.Graph()
+    adapter = MagicMock()
+    adapter.shacl_shapes.return_value = extra
+
+    claims = [{
+        "context": "c", "subject": "s", "qualifier": "inhibits",
+        "relation": "r", "object": "o", "id": "perspicacite:abc123",
+    }]
+
+    with patch("indicium.validate_graph", return_value=(True, "")) as mock_vg:
+        validate_claims(claims, domain_adapter=adapter)
+
+    adapter.shacl_shapes.assert_called_once()
+    _, kwargs = mock_vg.call_args
+    assert kwargs.get("extra_shapes") is extra
+
+
+@pytest.mark.unit
+def test_validate_claims_adapter_without_shacl_shapes_no_error():
+    """validate_claims() with an adapter that lacks shacl_shapes() must not raise."""
+    from typing import ClassVar
+    from unittest.mock import patch
+
+    from perspicacite.pipeline.claims import validate_claims
+
+    class _NoSHACLAdapter:
+        domain_id = "test"
+        api_version = 1
+        qualifiers = frozenset()
+        ontology_prefixes: ClassVar[dict] = {}
+        def extraction_context(self): return ""
+        def enrich_claim(self, c): return c
+
+    claims = [{
+        "context": "c", "subject": "s", "qualifier": "inhibits",
+        "relation": "r", "object": "o", "id": "perspicacite:abc123",
+    }]
+
+    with patch("indicium.validate_graph", return_value=(True, "")) as mock_vg:
+        conforms, _ = validate_claims(claims, domain_adapter=_NoSHACLAdapter())
+
+    assert conforms is True
+    _, kwargs = mock_vg.call_args
+    assert kwargs.get("extra_shapes") is None
