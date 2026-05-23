@@ -341,6 +341,19 @@ _TOOL_ENTRIES: list[dict] = [
         ),
         "key_knobs": ["kb_name (required)", "claim_iri (required)"],
     },
+    {
+        "name": "get_claim_links",
+        "purpose": (
+            "Return ClaimLink nodes (supports, contradicts, refines, etc.) "
+            "for a claim IRI in the KB claim graph."
+        ),
+        "when_to_use": (
+            "After build_claim_graph, when you need the full typed-edge context "
+            "around a specific claim — e.g. to surface contradicting claims, "
+            "argument chains, or methodological refinements in a report."
+        ),
+        "key_knobs": ["kb_name (required)", "claim_iri (required)"],
+    },
 ]
 
 _CAPABILITIES: list[str] = [

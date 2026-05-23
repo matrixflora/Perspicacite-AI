@@ -39,10 +39,15 @@ from perspicacite.indicium_layer.manifest import (
 from perspicacite.indicium_layer.pruner import build_candidate_pairs
 from perspicacite.indicium_layer.queries import (
     ASB_NS,
+    INDICIUM_NS,
+    IRI_ASSERTED_BY,
     IRI_CAPTION,
     IRI_CLAIM,
+    IRI_CLAIM_LINK,
+    IRI_CLAIM_STATUS,
     IRI_CONTEXT,
     IRI_CREATED,
+    IRI_DECISION_CONTEXT,
     IRI_DERIVED_FROM_PASSAGE,
     IRI_EVIDENCE,
     IRI_EVIDENCE_PROP,
@@ -50,6 +55,8 @@ from perspicacite.indicium_layer.queries import (
     IRI_FIGURE,
     IRI_FIGURE_ID,
     IRI_FIGURE_TYPE,
+    IRI_FROM_CLAIM,
+    IRI_LINK_TYPE,
     IRI_OBJECT,
     IRI_QUALIFIER,
     IRI_RDF_TYPE,
@@ -59,6 +66,7 @@ from perspicacite.indicium_layer.queries import (
     IRI_SOURCE_DOI,
     IRI_SUBJECT,
     IRI_TEXT_CHUNK,
+    IRI_TO_CLAIM,
     IRI_WAS_DERIVED_FROM,
     IRI_WAS_GENERATED_BY,
     OA_NS,
@@ -160,6 +168,36 @@ def _add_figure_node(
     # Link claim → figure
     store.add(claim_iri_str, IRI_WAS_DERIVED_FROM, fig_iri)
     return fig_iri
+
+
+def _add_claim_link_node(
+    store: Any,
+    kb_name: str,
+    from_iri: str,
+    to_iri: str,
+    link_type: str,
+    *,
+    asserted_by: str | None = None,
+    graph: str | None = None,
+) -> str:
+    """Mint and store a ClaimLink node in the cito graph.
+
+    Creates a new node of type cito:Citation (per Indicium v1.3 ClaimLink
+    class_uri) with from_claim, to_claim, and link_type properties.
+    """
+    from uuid import uuid4
+
+    link_iri = f"kb://{kb_name}/claimlink/{uuid4()}"
+    g = graph or cito_graph_iri(kb_name)
+
+    store.add(link_iri, IRI_RDF_TYPE, IRI_CLAIM_LINK, graph=g)
+    store.add(link_iri, IRI_FROM_CLAIM, from_iri, graph=g)
+    store.add(link_iri, IRI_TO_CLAIM, to_iri, graph=g)
+    store.add(link_iri, IRI_LINK_TYPE, ("literal", link_type, None), graph=g)
+    if asserted_by:
+        store.add(link_iri, IRI_ASSERTED_BY, asserted_by, graph=g)
+
+    return link_iri
 
 
 async def build_claim_graph(
@@ -293,6 +331,11 @@ async def build_claim_graph(
             store.add(c_iri, IRI_EVIDENCE_PROP, e_iri)
             store.add(c_iri, IRI_WAS_DERIVED_FROM, p_iri)
             store.add(c_iri, IRI_WAS_GENERATED_BY, run)
+            # Indicium v1.3 — claim_status, asserted_by, decision_context
+            store.add(c_iri, IRI_CLAIM_STATUS, ("literal", "draft", None))
+            store.add(c_iri, IRI_ASSERTED_BY, run)
+            for tag in claim.get("decision_context", []):
+                store.add(c_iri, IRI_DECISION_CONTEXT, ("literal", str(tag), None))
             store.add(
                 c_iri,
                 IRI_CREATED,

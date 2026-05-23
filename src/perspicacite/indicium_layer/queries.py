@@ -22,6 +22,7 @@ DCT_NS = "http://purl.org/dc/terms/"
 RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 XSD_NS = "http://www.w3.org/2001/XMLSchema#"
 DCAT_NS = "http://www.w3.org/ns/dcat#"
+INDICIUM_NS = "https://w3id.org/indicium/"
 
 # Indicium v1.2 figure / script / dataset type IRIs
 IRI_FIGURE = f"{DOCO_NS}Figure"
@@ -45,6 +46,7 @@ PREFIX dct: <{DCT_NS}>
 PREFIX rdf: <{RDF_NS}>
 PREFIX xsd: <{XSD_NS}>
 PREFIX dcat: <{DCAT_NS}>
+PREFIX indicium: <{INDICIUM_NS}>
 """
 
 # ---------- Type IRIs (frequently referenced by builder + strategies) ----------
@@ -67,6 +69,15 @@ IRI_WAS_DERIVED_FROM = f"{PROV_NS}wasDerivedFrom"
 IRI_WAS_GENERATED_BY = f"{PROV_NS}wasGeneratedBy"
 IRI_CREATED = f"{DCT_NS}created"
 IRI_RDF_TYPE = f"{RDF_NS}type"
+
+# Indicium v1.3 ClaimLink property IRIs
+IRI_CLAIM_LINK       = f"{CITO_NS}Citation"         # class_uri: cito:Citation per LinkML schema
+IRI_FROM_CLAIM       = f"{INDICIUM_NS}from_claim"
+IRI_TO_CLAIM         = f"{INDICIUM_NS}to_claim"
+IRI_LINK_TYPE        = f"{INDICIUM_NS}link_type"
+IRI_CLAIM_STATUS     = f"{INDICIUM_NS}claim_status"
+IRI_ASSERTED_BY      = f"{PROV_NS}wasAttributedTo"   # slot_uri: prov:wasAttributedTo
+IRI_DECISION_CONTEXT = f"{INDICIUM_NS}decision_context"
 
 # ---------- Named graph helpers ----------
 
@@ -343,6 +354,56 @@ def neighbors(
                 BIND("incoming" AS ?direction)
                 BIND(STR(?p) AS ?predicate)
                 {pred_filter}
+            }}
+        }}
+    """
+    )
+    return store.select(sparql)
+
+
+def claim_links_for_claim(
+    store,
+    kb_name: str,
+    claim_iri: str,
+) -> list[dict]:
+    """Return ClaimLink nodes where claim_iri is from_claim or to_claim.
+
+    Queries the cito graph for all ClaimLink nodes (typed cito:Citation per
+    the Indicium v1.3 schema) where the given claim IRI appears as either
+    from_claim (outgoing edge) or to_claim (incoming edge).
+
+    Args:
+        store:     Store object with a .select(sparql) method.
+        kb_name:   KB name (used to resolve the cito named graph IRI).
+        claim_iri: IRI of the claim to query.
+
+    Returns:
+        List of dicts: {link_iri, from_claim, to_claim, link_type, direction}.
+    """
+    g = cito_graph_iri(kb_name)
+    sparql = (
+        SPARQL_PREFIXES
+        + f"""
+        SELECT ?link ?from_claim ?to_claim ?link_type ?direction
+        WHERE {{
+            {{
+                GRAPH <{g}> {{
+                    ?link rdf:type <{IRI_CLAIM_LINK}> ;
+                          indicium:from_claim <{claim_iri}> ;
+                          indicium:to_claim   ?to_claim ;
+                          indicium:link_type  ?link_type .
+                }}
+                BIND(<{claim_iri}> AS ?from_claim)
+                BIND("outgoing" AS ?direction)
+            }} UNION {{
+                GRAPH <{g}> {{
+                    ?link rdf:type <{IRI_CLAIM_LINK}> ;
+                          indicium:to_claim   <{claim_iri}> ;
+                          indicium:from_claim ?from_claim ;
+                          indicium:link_type  ?link_type .
+                }}
+                BIND(<{claim_iri}> AS ?to_claim)
+                BIND("incoming" AS ?direction)
             }}
         }}
     """

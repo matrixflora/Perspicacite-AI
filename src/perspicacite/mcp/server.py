@@ -5731,6 +5731,52 @@ async def get_claim_figures(
 
 
 @mcp.tool()
+async def get_claim_links(
+    kb_name: str,
+    claim_iri: str,
+) -> str:
+    """Return ClaimLink nodes where the given claim is from_claim or to_claim.
+
+    Queries the KB's claim graph for all ClaimLink nodes (typed cito:Citation
+    per Indicium v1.3) where from_claim or to_claim equals claim_iri. Returns
+    both outgoing edges (where this claim makes an assertion about another) and
+    incoming edges (where another claim references this one).
+
+    Requires build_claim_graph to have been run on the KB first. ClaimLinks are
+    written using the full 13-predicate CiTO vocabulary: supports, disputes,
+    qualifies, citesForInformation, contradicts, refines, extends, agreesWith,
+    disagreesWith, updates, corrects, usesDataFrom, usesMethodIn.
+
+    Args:
+        kb_name:   KB whose claim graph to query.
+        claim_iri: IRI of the claim (e.g. ``kb://my_kb/claim/abc123``).
+
+    Returns:
+        JSON ``{success, kb_name, claim_iri, links: [{link_iri, from_claim,
+        to_claim, link_type, direction}]}`` where direction is "outgoing" or
+        "incoming".
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+
+    from perspicacite.indicium_layer.queries import claim_links_for_claim
+
+    store = _open_claim_graph_store_for_kb(kb_name)
+    try:
+        rows = claim_links_for_claim(store, kb_name, claim_iri)
+    finally:
+        store.close()
+
+    return _json_ok({
+        "kb_name": kb_name,
+        "claim_iri": claim_iri,
+        "links": rows,
+    })
+
+
+@mcp.tool()
 async def claim_graph_export(
     kb_name: str,
     format: str = "turtle",
@@ -5918,6 +5964,7 @@ _TOOL_NAMES: list[str] = [
     "claim_graph_status",
     "query_claim_graph",
     "get_claim_figures",
+    "get_claim_links",
     "claim_graph_export",
     "get_usage_guide",
     "extract_claims_from_passages",
