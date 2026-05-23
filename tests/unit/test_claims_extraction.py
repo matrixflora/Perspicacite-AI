@@ -267,6 +267,50 @@ def test_validate_claims_enrichment_and_shacl_combined():
     assert conforms is True
 
 
+@pytest.mark.unit
+async def test_extract_claims_mcp_tool_passes_adapter_not_manual_enrich():
+    """Regression: extract_claims_from_passages MCP tool must pass domain_adapter
+    directly to extract_claims(), NOT call adapter.enrich_claim() manually after.
+
+    Before the fix, the server called extract_claims() without domain_adapter and
+    then ran [adapter.enrich_claim(c) for c in claims] manually — bypassing:
+      - LLM prompt enrichment via adapter.extraction_context()
+      - domain qualifier acceptance via adapter.qualifiers
+
+    This test patches extract_claims() at the pipeline level to assert it receives
+    domain_adapter, confirming the MCP tool wiring is correct.
+    """
+    import json
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from perspicacite.pipeline.claims import extract_claims
+
+    adapter = _MockAdapter()
+
+    # extract_claims() with the adapter should call enrich_claim on each claim
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value=json.dumps({"claims": [{
+        "context": "in vitro", "subject": "glucose",
+        "qualifier": "test_qualifier",   # domain-only qualifier — only accepted when adapter passed
+        "relation": "measured in", "object": "plasma",
+    }]}))
+
+    claims = await extract_claims(
+        llm_client=llm,
+        passages=[{"chunk_text": "glucose measured in plasma", "source": {"doi": "10.1/x"}}],
+        context="test",
+        domain_adapter=adapter,
+    )
+
+    # The domain qualifier must be accepted (would be dropped without adapter)
+    assert len(claims) == 1, (
+        "domain qualifier 'test_qualifier' should be accepted when adapter is passed"
+    )
+    # enrich_claim() must have been called by extract_claims() internally
+    assert claims[0].get("enriched_by_adapter") is True, (
+        "extract_claims() must call adapter.enrich_claim() internally"
+    )
+
+
 # ---------------------------------------------------------------------------
 # claims_to_graph() — ontology_terms serialization
 # ---------------------------------------------------------------------------

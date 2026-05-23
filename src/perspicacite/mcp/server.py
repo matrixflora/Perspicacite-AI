@@ -5331,11 +5331,8 @@ async def extract_claims_from_passages(
             pass  # indicium-adapters not installed — proceed without adapter
 
     claims = await extract_claims(
-        llm_client=state.llm_client, passages=passages, context=context, model=model)
-
-    # Enrich claims with domain ontology terms when adapter provides enrichment
-    if adapter is not None and claims:
-        claims = [adapter.enrich_claim(c) for c in claims]
+        llm_client=state.llm_client, passages=passages, context=context, model=model,
+        domain_adapter=adapter)
 
     conforms, report = validate_claims(claims, domain_adapter=adapter) if claims else (True, "")
     out: dict = {"claims": claims, "claims_valid": conforms}
