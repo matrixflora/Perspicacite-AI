@@ -271,6 +271,18 @@ _TOOL_ENTRIES: list[dict] = [
         "when_to_use": "After extracting claims, to hand them to an ASTRA-consuming tool.",
         "key_knobs": ["claims"],
     },
+    {
+        "name": "build_claim_graph",
+        "purpose": "Build/refresh the indicium claim graph for a KB (oxigraph-backed).",
+        "when_to_use": "Run before first RAGMode.REASONING query or after new papers.",
+        "key_knobs": ["kb_name (required)", "refresh", "max_pairs_per_claim", "model"],
+    },
+    {
+        "name": "claim_graph_status",
+        "purpose": "Return the per-KB claim-graph manifest + last build summary.",
+        "when_to_use": "Check KB claim-graph freshness before reasoning; detects schema drift.",
+        "key_knobs": ["kb_name (required)"],
+    },
 ]
 
 _CAPABILITIES: list[str] = [
