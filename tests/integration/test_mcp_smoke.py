@@ -217,6 +217,88 @@ _TOOL_ARGS: dict[str, dict[str, Any]] = {
     "ingest_skill_bundle": {
         "source": "/nonexistent/path/smoke",
     },
+    # ---- tools added after the original _TOOL_ARGS was written ----
+    "push_notes_to_zotero": {
+        "notes": [{"item_key": "FAKEKEYSMOKE", "content": "Smoke test note."}],
+    },
+    "ingest_url": {
+        "url": "https://example.com/nonexistent-smoke-page",
+    },
+    "add_local_papers_to_kb": {
+        "kb_name": "nonexistent-smoke-kb",
+        "papers": [
+            {
+                "file": "/nonexistent/smoke.pdf",
+                "title": "Smoke Test Paper",
+            }
+        ],
+    },
+    "ingest_urls_to_kb": {
+        "kb_name": "nonexistent-smoke-kb",
+        "urls": ["https://example.com/nonexistent-smoke-page"],
+    },
+    "zotero_get_collection_items": {
+        "collection_id": "FAKECOL1",
+    },
+    "zotero_get_attachment_bytes": {
+        "attachment_key": "FAKEATT1",
+    },
+    "zotero_ingest_collection_to_kb": {
+        "collection_id": "FAKECOL1",
+        "kb_name": "nonexistent-smoke-kb",
+    },
+    "web_search": {
+        "query": "CRISPR gene editing",
+        "max_results": 3,
+    },
+    "cancel_task": {
+        "task_id": "nonexistent-smoke-task-id",
+    },
+    "search_by_passage": {
+        "text": "Attention is all you need.",
+        "kb_name": "nonexistent-smoke-kb",
+    },
+    "get_relevant_passages": {
+        "query": "protein folding mechanisms",
+        "kb_name": "nonexistent-smoke-kb",
+    },
+    "extract_parameters_from_passages": {
+        "passages": [
+            {
+                "text": "The optimal pH range was 7.2–7.4.",
+                "paper_id": "10.1234/fake",
+                "title": "Smoke Test Paper",
+            }
+        ],
+        "context": "bioreactor conditions",
+    },
+    "extract_failure_modes_from_passages": {
+        "passages": [
+            {
+                "text": "Aggregation occurs above 45 °C.",
+                "paper_id": "10.1234/fake",
+                "title": "Smoke Test Paper",
+            }
+        ],
+        "context": "protein stability",
+    },
+    "extract_claims_from_passages": {
+        "passages": [
+            {
+                "text": "Treatment increased yield by 30%.",
+                "paper_id": "10.1234/fake",
+                "title": "Smoke Test Paper",
+            }
+        ],
+        "context": "agricultural study",
+    },
+    "export_astra": {
+        "claims": [],
+    },
+    "suggest_databases": {
+        "query": "CRISPR off-target effects",
+    },
+    "get_usage_guide": {},
 }
 
 # ---------------------------------------------------------------------------
@@ -379,10 +461,26 @@ async def test_tool_inventory(tool_name: str, mock_state):
     if isinstance(result, str):
         try:
             parsed = json.loads(result)
-            # Must have a 'success' key or 'error' key (our JSON convention)
-            assert "success" in parsed or "error" in parsed or "hits" in parsed or \
-                   "knowledge_bases" in parsed or "plan" in parsed or "per_kb" in parsed, \
-                   f"Unexpected JSON shape for '{tool_name}': {list(parsed.keys())}"
+            # Must have at least one known envelope key — this catches
+            # completely unstructured returns while accommodating the several
+            # different response shapes used across tools.
+            _KNOWN_ENVELOPE_KEYS = {
+                "success", "error", "hits", "knowledge_bases", "plan", "per_kb",
+                # cancel_task uses "ok"
+                "ok",
+                # web_search / search_literature return "papers"
+                "papers",
+                # extract_* tools / suggest_databases / get_usage_guide
+                "databases", "capabilities", "tools", "claims",
+                # zotero tools
+                "items", "collection_id", "filename", "content_b64",
+                # passage retrieval tools
+                "passages", "results",
+                # ingest / summary tools
+                "summary", "added",
+            }
+            assert any(k in parsed for k in _KNOWN_ENVELOPE_KEYS), \
+                f"Unexpected JSON shape for '{tool_name}': {list(parsed.keys())}"
         except json.JSONDecodeError as exc:
             pytest.fail(f"Tool '{tool_name}' returned non-JSON string: {result[:200]!r} — {exc}")
 

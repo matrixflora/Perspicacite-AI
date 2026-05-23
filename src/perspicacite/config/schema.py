@@ -564,6 +564,26 @@ class LLMConfig(BaseModel):
         ),
     )
 
+    # Free-tier fallback chain — tried sequentially when the primary model
+    # fails with a quota-exceeded, bad-model-ID, or auth error. All entries
+    # are routed via the 'openrouter' provider so an API key is still needed
+    # (free-tier OpenRouter accounts require a (free) key for rate-limiting).
+    # Leave empty to disable (default). Recommended starting point:
+    #   free_tier_fallback_models:
+    #     - "deepseek/deepseek-v4-flash:free"
+    #     - "meta-llama/llama-3.3-70b-instruct:free"
+    #     - "openrouter/free"
+    free_tier_fallback_models: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ordered list of OpenRouter free-tier model IDs tried sequentially "
+            "when the primary model fails with a quota, invalid-model-ID, or "
+            "auth error. All entries are called via the 'openrouter' provider. "
+            "Requires OPENROUTER_API_KEY (free account is sufficient). "
+            "Example: ['deepseek/deepseek-v4-flash:free', 'openrouter/free']."
+        ),
+    )
+
     # ---- disk cache (Wave 2.1) -------------------------------------
     # Cache complete() responses on disk keyed by
     # (provider, model, messages, temperature, max_tokens). Pays back

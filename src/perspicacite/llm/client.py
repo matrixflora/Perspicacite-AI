@@ -139,6 +139,37 @@ def _auth_hint(msg: str) -> str:
     return "unknown"
 
 
+def _should_trigger_free_fallback(exc: Exception) -> bool:
+    """Return True when the error warrants trying free-tier fallback models.
+
+    Triggers on:
+    - Invalid / unknown model ID ("not a valid model id", "model not found")
+    - Quota / billing / credit exhausted
+    - Auth errors (no key, wrong key) — a free-tier key might still work
+
+    Does NOT trigger on budget-cap breaches (user-set limit) or generic
+    network / timeout errors (those should retry on the same model).
+    """
+    from perspicacite.llm.errors import AuthError
+    if isinstance(exc, AuthError):
+        return True
+    msg = str(exc).lower()
+    if any(k in msg for k in (
+        "not a valid model",
+        "model not found",
+        "no endpoints found",
+        "quota",
+        "billing",
+        "credit balance",
+        "usage limit",
+        "insufficient",
+        "invalid api key",
+        "authentication",
+    )):
+        return True
+    return False
+
+
 def _is_deterministic_fail(exc: Exception) -> bool:
     """F1 (audit 2026-05-15): tenacity predicate for "do not retry".
 
@@ -491,7 +522,7 @@ class AsyncLLMClient:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def complete(
+    async def _complete_primary(
         self,
         messages: list[dict[str, str]],
         model: str | None = None,
@@ -500,23 +531,7 @@ class AsyncLLMClient:
         max_tokens: int = 4096,
         **kwargs: Any,
     ) -> str:
-        """
-        Complete a conversation with the LLM.
-
-        Args:
-            messages: List of message dicts with 'role' and 'content'
-            model: Model name (e.g., 'claude-3-5-sonnet-20241022'). Uses default if None.
-            provider: Provider name (e.g., 'anthropic'). Uses default if None.
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-            **kwargs: Additional parameters for the provider
-
-        Returns:
-            Generated text
-
-        Raises:
-            Exception: If the API call fails after retries
-        """
+        """Internal retry-decorated completion. Call :meth:`complete` instead."""
         if provider is None:
             provider = self.config.default_provider
         if model is None:
@@ -944,6 +959,90 @@ class AsyncLLMClient:
                 error=str(e),
             )
             raise _maybe_wrap_error(e, provider) from e
+
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        model: str | None = None,
+        provider: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        **kwargs: Any,
+    ) -> str:
+        """Complete a conversation with the LLM.
+
+        Tries the configured primary model first (with automatic retries on
+        transient errors). If the primary fails with a quota-exceeded,
+        invalid-model-ID, or auth error **and** ``llm.free_tier_fallback_models``
+        is configured, it tries each free-tier model in order via OpenRouter
+        before giving up.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'.
+            model: Model name. Uses ``default_model`` when None.
+            provider: Provider name. Uses ``default_provider`` when None.
+            temperature: Sampling temperature.
+            max_tokens: Maximum tokens to generate.
+            **kwargs: Forwarded to the provider (e.g. ``stage``, ``cache``).
+
+        Returns:
+            Generated text.
+
+        Raises:
+            Exception: Primary + all free-tier fallbacks failed.
+        """
+        try:
+            return await self._complete_primary(
+                messages, model=model, provider=provider,
+                temperature=temperature, max_tokens=max_tokens, **kwargs,
+            )
+        except Exception as primary_exc:
+            free_models: list[str] = getattr(
+                self.config, "free_tier_fallback_models", []
+            ) or []
+            if not free_models or not _should_trigger_free_fallback(primary_exc):
+                raise
+
+            logger.warning(
+                "llm_primary_failed_trying_free_fallback",
+                primary_model=model or self.config.default_model,
+                primary_provider=provider or self.config.default_provider,
+                error=str(primary_exc),
+                free_tier_count=len(free_models),
+            )
+
+            # Pop `cache` kwarg — free-tier fallback responses should not be
+            # cached under the primary model's key; pass cache=False to avoid
+            # serving a cached free-tier response for the primary model later.
+            kwargs_no_cache = {**kwargs, "cache": False}
+
+            last_exc: Exception = primary_exc
+            for free_model in free_models:
+                try:
+                    result = await self._complete_primary(
+                        messages,
+                        model=free_model,
+                        provider="openrouter",
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        **kwargs_no_cache,
+                    )
+                    logger.info(
+                        "llm_free_fallback_success",
+                        free_model=free_model,
+                        original_model=model or self.config.default_model,
+                    )
+                    return result
+                except Exception as free_exc:
+                    last_exc = free_exc
+                    logger.warning(
+                        "llm_free_fallback_step_failed",
+                        free_model=free_model,
+                        error=str(free_exc),
+                    )
+
+            # All free-tier models also failed — re-raise the last error.
+            raise last_exc
 
     async def complete_with_fallback(
         self,
