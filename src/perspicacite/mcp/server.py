@@ -5343,6 +5343,115 @@ async def export_astra(claims: list[dict]) -> str:
 
 
 @mcp.tool()
+async def build_claim_graph(
+    kb_name: str,
+    *,
+    refresh: bool = False,
+    max_pairs_per_claim: int = 20,
+    model: str | None = None,
+) -> str:
+    """Build (or incrementally refresh) the claim graph for a KB.
+
+    Extracts indicium claims from every passage, SHACL-validates, upserts
+    Claim/Evidence/Passage/Paper nodes, prunes candidate pairs, then runs a
+    CiTO classification pass. Outputs go to ``data/claim_graphs/<kb_name>/``.
+
+    Args:
+        kb_name: KB to build.
+        refresh: When True, ignore manifest and rebuild every paper.
+        max_pairs_per_claim: Cap on per-claim CiTO fan-out (default 20).
+        model: Optional LLM override (default: server's configured model).
+
+    Returns:
+        JSON: ``{success, kb_name, claims_added, edges_added,
+                 pairs_classified, papers_processed, duration_seconds}``.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+
+    import pathlib
+
+    from perspicacite.indicium_layer.builder import build_claim_graph as _build
+    from perspicacite.indicium_layer.store import ClaimGraphStore
+    from perspicacite.models.kb import chroma_collection_name_for_kb
+
+    collection = chroma_collection_name_for_kb(kb_name)
+
+    # Fetch all papers and chunks async, then expose via sync providers to builder.
+    papers_list = await state.vector_store.list_paper_metadata(collection)
+    papers_dict = {p["paper_id"]: p for p in papers_list}
+    paper_ids = list(papers_dict.keys())
+    chunks_list = await state.vector_store.get_chunks_by_paper_ids(collection, paper_ids)
+
+    passages_by_pid: dict[str, list[dict]] = {pid: [] for pid in paper_ids}
+    for chunk in chunks_list:
+        pid = chunk.metadata.paper_id
+        cs = chunk.metadata.char_span
+        passages_by_pid.setdefault(pid, []).append({
+            "chunk_idx": chunk.metadata.chunk_index,
+            "text": chunk.text,
+            "char_start": cs[0] if cs else None,
+            "char_end": cs[1] if cs else None,
+        })
+
+    data_dir = pathlib.Path("data/claim_graphs") / kb_name
+    store = ClaimGraphStore(kb_name, data_dir=data_dir, backend="memory")
+    try:
+        result = await _build(
+            kb_name=kb_name,
+            store=store,
+            llm_client=state.llm_client,
+            papers_provider=lambda: papers_dict,
+            passages_provider=lambda pid: passages_by_pid.get(pid, []),
+            refresh=refresh,
+            max_pairs_per_claim=max_pairs_per_claim,
+            model=model,
+        )
+    finally:
+        store.close()
+
+    return _json_ok({
+        "kb_name": result.kb_name,
+        "claims_added": result.claims_added,
+        "edges_added": result.edges_added,
+        "pairs_classified": result.pairs_classified,
+        "papers_processed": result.papers_processed,
+        "duration_seconds": result.duration_seconds,
+    })
+
+
+@mcp.tool()
+async def claim_graph_status(kb_name: str) -> str:
+    """Return the claim-graph manifest + last build summary for a KB.
+
+    Returns:
+        JSON: ``{success, kb_name, paper_count, indicium_schema_version,
+                 builder_version, last_build_iso, schema_drift}``.
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+    from perspicacite.indicium_layer.invalidation import schema_version_changed
+    from perspicacite.indicium_layer.manifest import read_manifest
+
+    m = read_manifest(kb_name)
+    return _json_ok({
+        "kb_name": m.kb_name,
+        "paper_count": len(m.paper_hashes),
+        "indicium_schema_version": m.indicium_schema_version,
+        "builder_version": m.builder_version,
+        "last_build_iso": m.last_build_iso,
+        "schema_drift": schema_version_changed(m),
+    })
+
+
+@mcp.tool()
 async def suggest_databases(query: str, hints: list[str] | None = None) -> str:
     """
     Recommend which literature databases to search for a given query.
@@ -5441,6 +5550,8 @@ _TOOL_NAMES: list[str] = [
     "web_search",
     "cancel_task",
     "suggest_databases",
+    "build_claim_graph",
+    "claim_graph_status",
     "get_usage_guide",
     "extract_claims_from_passages",
     "export_astra",
