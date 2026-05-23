@@ -9,13 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `extract_claims_from_passages` MCP tool: `domain: str | None` renamed to
+  `domains: list[str] | None`. Pass a single domain as `["metabolomics"]`. Multiple
+  domain IDs are resolved and composed into a `CompositeAdapter` so all adapters'
+  context, qualifier, enrichment, and SHACL shapes are applied together.
+- `generate_report` MCP tool: same `domain` → `domains` rename and composition logic.
+
 ### Added
-- `domain` parameter on the `extract_claims_from_passages` MCP tool. When provided, the
-  corresponding `indicium-adapters` domain adapter is resolved and wired through the full
-  pipeline: LLM context enrichment, qualifier acceptance, ontology-term annotation, and
-  domain-specific SHACL validation.
-- `domain` parameter on the `generate_report` MCP tool — the `extract_claims=True` path now
-  supports the same adapter-aware extraction and validation as `extract_claims_from_passages`.
+- `domains` multi-adapter support for both claim-extraction MCP tools (see Changed above).
 - `claims_to_graph()` now serializes the `ontology_terms` dict from enriched claims as
   `asb:{slot}_ontology_term` RDF literals, enabling SHACL property-shape validation on
   ontology identifiers.
