@@ -44,6 +44,7 @@ async def test_extract_claims_drops_out_of_vocab_qualifier():
 class _MockAdapter:
     """Minimal adapter that satisfies the DomainAdapter structural protocol."""
     domain_id = "test"
+    api_version = 1
     qualifiers = frozenset({"test_qualifier"})
     ontology_prefixes: ClassVar[dict[str, str]] = {"TST": "http://test.example.org/"}
 
@@ -349,3 +350,25 @@ def test_claims_to_graph_no_ontology_terms_no_error():
     g = claims_to_graph([claim])
     terms = list(g.triples((None, asb.subject_ontology_term, None)))
     assert terms == []
+
+
+@pytest.mark.unit
+def test_claims_to_graph_skips_none_ontology_terms():
+    """None values in ontology_terms must be skipped — not serialized as literal 'None'."""
+    import rdflib
+    from perspicacite.pipeline.claims import claims_to_graph
+    _ASB = "https://asb.holobiomics.org/ns/asb#"
+    asb = rdflib.Namespace(_ASB)
+    claim = {
+        "context": "in vivo", "subject": "glucose", "qualifier": "quantifies",
+        "relation": "measured in", "object": "plasma",
+        "ontology_terms": {"subject": None, "object": "CHEBI:00001"},
+    }
+    g = claims_to_graph([claim])
+    # subject term with None value must NOT appear
+    subject_terms = list(g.objects(None, asb.subject_ontology_term))
+    assert subject_terms == [], f"Expected no subject_ontology_term triple, got {subject_terms}"
+    # object term with valid value must appear
+    object_terms = list(g.objects(None, asb.object_ontology_term))
+    assert len(object_terms) == 1
+    assert str(object_terms[0]) == "CHEBI:00001"

@@ -134,7 +134,8 @@ def claims_to_graph(claims: list[dict]):
             if c.get(slot):
                 g.add((node, asb[slot], rdflib.Literal(c[slot])))
         for slot, curie in (c.get("ontology_terms") or {}).items():
-            g.add((node, asb[f"{slot}_ontology_term"], rdflib.Literal(str(curie))))
+            if curie:
+                g.add((node, asb[f"{slot}_ontology_term"], rdflib.Literal(str(curie))))
     return g
 
 
