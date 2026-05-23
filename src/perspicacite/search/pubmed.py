@@ -133,7 +133,15 @@ class PubMedSearchAdapter:
 
     name = "pubmed"
     description = "Direct NCBI PubMed search via Biopython Entrez (esearch → efetch)"
-    domains: list[str] = ["biomedical"]
+    # PubMed indexes biomedical literature but the boundary with adjacent
+    # fields (chemistry, ML-in-medicine, public health) is fuzzy, and the
+    # domain classifier returns "general" for many biomedical-leaning chatty
+    # queries (e.g. "statins heart attack risk last 5 years"). Adding
+    # "general" lets PubMed serve as the baseline biomedical fallback for
+    # those queries too; it just returns 0 hits for genuinely non-biomedical
+    # queries (CS/ML), which the aggregator merges harmlessly with the
+    # other providers.
+    domains: list[str] = ["general", "biomedical"]
     tier: str = "reliable"
     retry: int = 0
 

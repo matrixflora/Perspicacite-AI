@@ -257,9 +257,12 @@ class SciLExAdapter:
             "DBLP": DBLPtoZoteroFormat,
         }
 
-        # Default APIs
+        # Default APIs — PubMed first (no key needed, reliable). Semantic
+        # Scholar is intentionally last because its public tier rate-limits
+        # aggressively and frequently errors out; we still query it for
+        # CS coverage, but it shouldn't lead the fan-out.
         if apis is None:
-            apis = ["semantic_scholar", "openalex", "pubmed"]
+            apis = ["pubmed", "openalex", "semantic_scholar"]
 
         # Defense in depth: SciLEx only knows the APIs in ``api_name_map``.
         # Callers sometimes pass the full user-selected provider list (e.g.

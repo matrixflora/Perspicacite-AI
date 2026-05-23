@@ -614,8 +614,11 @@ async def search_literature(
         # F-19: surface per-database failures so external agents can tell
         # "no matches" from "the upstream DB was down".
         errors_by_db = dict(getattr(aggregator, "last_errors_by_database", {}))
+        # PubMed leads the default fan-out (no key, reliable); Semantic Scholar
+        # is last (rate-limited). Keep in sync with the SciLEx adapter's
+        # default ``apis`` list in ``_scilex_search_sync``.
         databases_queried = (
-            filtered_databases or ["semantic_scholar", "openalex", "pubmed"]
+            filtered_databases or ["pubmed", "openalex", "semantic_scholar"]
         )
         all_dbs_failed = (
             bool(errors_by_db)
