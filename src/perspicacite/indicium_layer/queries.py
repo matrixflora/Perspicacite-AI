@@ -91,3 +91,220 @@ def cito_edges_for_claim(store: Any, kb_name: str, claim_iri: str) -> list[dict[
     """
     )
     return store.select(sparql)
+
+
+# ---------- ECO grading helpers ----------
+
+_ECO_TIER_RANK = {
+    "data": 0,
+    "citation": 1,
+    "knowledge": 2,
+    "inference": 3,
+    "speculation": 4,
+}
+_ECO_IRI_BY_TIER = {
+    "data": "http://purl.obolibrary.org/obo/ECO_0000006",
+    "citation": "http://purl.obolibrary.org/obo/ECO_0000033",
+    "knowledge": "http://purl.obolibrary.org/obo/ECO_0000302",
+    "inference": "http://purl.obolibrary.org/obo/ECO_0000361",
+    "speculation": "http://purl.obolibrary.org/obo/ECO_0000034",
+}
+
+
+def _eco_iris_at_or_above(min_tier: str | None) -> list[str]:
+    if min_tier is None:
+        return []
+    rank = _ECO_TIER_RANK.get(min_tier, 0)
+    return [iri for tier, iri in _ECO_IRI_BY_TIER.items() if _ECO_TIER_RANK[tier] <= rank]
+
+
+# ---------- Five typed traversal queries (Phase 2) ----------
+
+
+def claims_supporting(
+    store: Any,
+    kb_name: str,
+    subject_or_iri: str,
+    *,
+    min_eco_grade: str | None = None,
+) -> list[dict[str, str]]:
+    """Return claims whose subject contains the given lemma (or IRI matches).
+
+    Optionally filter by minimum ECO tier (data > citation > knowledge >
+    inference > speculation).
+    """
+    if subject_or_iri.startswith("kb://") or subject_or_iri.startswith("doi:"):
+        subject_clause = f"FILTER(?claim = <{subject_or_iri}>)"
+    else:
+        lit = subject_or_iri.replace('"', '\\"')
+        subject_clause = f'FILTER(CONTAINS(LCASE(STR(?subject)), LCASE("{lit}")))'
+    eco_filter = ""
+    if min_eco_grade:
+        iris = _eco_iris_at_or_above(min_eco_grade)
+        iri_list = ", ".join(f"<{i}>" for i in iris)
+        eco_filter = f"?claim asb:evidenceTypeIri ?eco . FILTER(?eco IN ({iri_list}))"
+    sparql = (
+        SPARQL_PREFIXES
+        + f"""
+        SELECT ?claim ?subject ?object ?paper ?eco WHERE {{
+            ?claim rdf:type asb:Claim ;
+                   asb:subject ?subject ;
+                   asb:object ?object ;
+                   prov:wasDerivedFrom ?paper .
+            OPTIONAL {{ ?claim asb:evidenceTypeIri ?eco }} .
+            {eco_filter}
+            {subject_clause}
+        }}
+    """
+    )
+    return store.select(sparql)
+
+
+def claims_disputing(store: Any, kb_name: str, target_iri: str) -> list[dict[str, str]]:
+    """Return claims that dispute the given claim IRI."""
+    g = cito_graph_iri(kb_name)
+    sparql = (
+        SPARQL_PREFIXES
+        + f"""
+        SELECT ?from ?confidence
+        FROM <{g}>
+        WHERE {{
+            ?meta rdf:object <{target_iri}> ;
+                  rdf:predicate cito:disputes ;
+                  rdf:subject ?from ;
+                  asb:confidence ?confidence .
+        }}
+    """
+    )
+    return store.select(sparql)
+
+
+def evidence_trace(
+    store: Any,
+    kb_name: str,
+    claim_iri: str,
+    *,
+    max_depth: int = 3,
+) -> list[dict[str, str]]:
+    """BFS along cito:supports + cito:qualifies, up to max_depth.
+
+    Returns a list of ``{"claim": iri, "depth": d}`` rows in BFS order.
+    Uses repeated SELECT calls in Python to avoid relying on SPARQL property
+    paths, which rdflib supports inconsistently across versions.
+    """
+    g = cito_graph_iri(kb_name)
+    visited: set[str] = {claim_iri}
+    frontier: list[str] = [claim_iri]
+    out: list[dict[str, str]] = [{"claim": claim_iri, "depth": "0"}]
+    for depth in range(1, max_depth + 1):
+        next_frontier: list[str] = []
+        for node in frontier:
+            sparql = (
+                SPARQL_PREFIXES
+                + f"""
+                SELECT ?o
+                FROM <{g}>
+                WHERE {{
+                    ?meta rdf:subject <{node}> ;
+                          rdf:predicate ?p ;
+                          rdf:object ?o .
+                    FILTER(?p IN (cito:supports, cito:qualifies))
+                }}
+            """
+            )
+            for row in store.select(sparql):
+                neighbour = row["o"]
+                if neighbour in visited:
+                    continue
+                visited.add(neighbour)
+                next_frontier.append(neighbour)
+                out.append({"claim": neighbour, "depth": str(depth)})
+        if not next_frontier:
+            break
+        frontier = next_frontier
+    return out
+
+
+def papers_with_claim_pattern(
+    store: Any,
+    kb_name: str,
+    *,
+    subject: str | None = None,
+    relation: str | None = None,
+    object: str | None = None,
+) -> list[dict[str, str]]:
+    """Return papers whose claims match a (subject, relation, object) pattern.
+
+    Slot filters use case-insensitive substring match on the literal.
+    """
+    filters: list[str] = []
+    if subject:
+        lit = subject.replace('"', '\\"')
+        filters.append(f'FILTER(CONTAINS(LCASE(STR(?subject)), LCASE("{lit}")))')
+    if relation:
+        lit = relation.replace('"', '\\"')
+        filters.append(f'FILTER(CONTAINS(LCASE(STR(?relation)), LCASE("{lit}")))')
+    if object:
+        lit = object.replace('"', '\\"')
+        filters.append(f'FILTER(CONTAINS(LCASE(STR(?object)), LCASE("{lit}")))')
+    filter_block = "\n            ".join(filters)
+    sparql = (
+        SPARQL_PREFIXES
+        + f"""
+        SELECT DISTINCT ?paper ?subject ?relation ?object WHERE {{
+            ?claim rdf:type asb:Claim ;
+                   prov:wasDerivedFrom ?paper .
+            OPTIONAL {{ ?claim asb:subject ?subject }}
+            OPTIONAL {{ ?claim asb:relation ?relation }}
+            OPTIONAL {{ ?claim asb:object ?object }}
+            {filter_block}
+        }}
+    """
+    )
+    return store.select(sparql)
+
+
+def neighbors(
+    store: Any,
+    kb_name: str,
+    claim_iri: str,
+    *,
+    edge_types: list[str] | None = None,
+) -> list[dict[str, str]]:
+    """Return CiTO-graph neighbours of a claim (both directions).
+
+    edge_types: e.g. ["supports", "qualifies"]. None = all CiTO edges.
+    """
+    g = cito_graph_iri(kb_name)
+    if edge_types:
+        type_iris = ", ".join(f"cito:{t}" for t in edge_types)
+        pred_filter = f"FILTER(?p IN ({type_iris}))"
+    else:
+        pred_filter = ""
+    sparql = (
+        SPARQL_PREFIXES
+        + f"""
+        SELECT ?neighbor ?direction ?predicate ?confidence
+        FROM <{g}>
+        WHERE {{
+            {{
+                ?meta rdf:subject <{claim_iri}> ;
+                      rdf:predicate ?p ;
+                      rdf:object ?neighbor ;
+                      asb:confidence ?confidence .
+                BIND("outgoing" AS ?direction)
+                BIND(STR(?p) AS ?predicate)
+                {pred_filter}
+            }} UNION {{
+                ?meta rdf:object <{claim_iri}> ;
+                      rdf:predicate ?p ;
+                      rdf:subject ?neighbor ;
+                      asb:confidence ?confidence .
+                BIND("incoming" AS ?direction)
+                BIND(STR(?p) AS ?predicate)
+                {pred_filter}
+            }}
+        }}
+    """
+    )
+    return store.select(sparql)

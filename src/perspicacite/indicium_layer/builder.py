@@ -38,6 +38,7 @@ from perspicacite.indicium_layer.manifest import (
 )
 from perspicacite.indicium_layer.pruner import build_candidate_pairs
 from perspicacite.indicium_layer.queries import (
+    ASB_NS,
     IRI_CLAIM,
     IRI_CONTEXT,
     IRI_CREATED,
@@ -262,6 +263,8 @@ async def build_claim_graph(
                 IRI_CREATED,
                 ("literal", t0.isoformat(), f"{XSD_NS}dateTime"),
             )
+            # Shortcut: ECO IRI directly on the claim for fast SPARQL filtering
+            store.add(c_iri, f"{ASB_NS}evidenceTypeIri", _eco_iri(ev_grade))
 
             claim_record = dict(claim)
             claim_record["_iri"] = c_iri
