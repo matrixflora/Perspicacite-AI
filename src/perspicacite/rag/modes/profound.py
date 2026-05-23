@@ -34,6 +34,8 @@ from perspicacite.search.screening import (
     screen_papers_llm,
     screen_papers_rerank,
 )
+from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
+from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     ASSESS_DOCUMENT_QUALITY_PROMPT,
     GENERATE_CONTEXTUAL_QUERIES_PROMPT,
@@ -2536,6 +2538,7 @@ Follow the system instructions for this situation."""
                         doi=doc.get("doi"),
                         relevance_score=doc.get("paper_score", 0.5),
                         kb_name=doc.get("kb_name"),
+                        metadata=doc.get("paper_metadata"),
                     )
                 )
                 continue
@@ -2573,6 +2576,7 @@ Follow the system instructions for this situation."""
                         url=doc.get("url") or None,
                         source=doc.get("source_provider") or None,
                         relevance_score=0.5,
+                        metadata=None,
                     )
                 )
                 continue
@@ -2584,6 +2588,8 @@ Follow the system instructions for this situation."""
                 authors = getattr(meta, "authors", [])
                 year = getattr(meta, "year", None)
                 doi = getattr(meta, "doi", None)
+                # Decode the ASB ``paper_metadata_json`` blob if present.
+                _pm_dict = decode_paper_metadata_json(meta)
             else:
                 continue
 
@@ -2610,6 +2616,7 @@ Follow the system instructions for this situation."""
                     doi=doi,
                     relevance_score=getattr(doc, "score", 0.0),
                     kb_name=getattr(doc, "kb_name", None),
+                    metadata=_pm_dict,
                 )
             )
 

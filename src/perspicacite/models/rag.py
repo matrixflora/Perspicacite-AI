@@ -77,6 +77,10 @@ class SourceReference(BaseModel):
         alias="sources_all",
         description="DBs that returned this paper (deduped). Multi-DB matches render as a chip group.",
     )
+    # Carries the underlying paper's ``Paper.metadata`` dict (or chunk
+    # metadata) as a free-form mapping. Surfaces ASB skill / workflow-card
+    # fields to the response builders (build_asb_response_metadata).
+    metadata: dict[str, Any] | None = None
 
     @field_validator("authors", mode="before")
     @classmethod

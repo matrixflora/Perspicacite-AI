@@ -27,9 +27,18 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 from typing import Any
 
 from perspicacite.logging import get_logger
+from perspicacite.pipeline.asb.response import build_asb_response_metadata
+from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
+from perspicacite.pipeline.github_kb import (
+    IngestSummary,
+    ingest_github_repo as ingest_github_repo_pipeline,
+    ingest_skill_bundle as ingest_skill_bundle_pipeline,
+)
+from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 
 logger = get_logger("perspicacite.mcp.server")
 
@@ -138,8 +147,18 @@ mcp_state = MCPState()
 
 
 def _json_ok(data: dict[str, Any]) -> str:
-    """Build a success JSON response."""
-    return json.dumps({"success": True, **data}, ensure_ascii=False, default=str)
+    """Emit a successful MCP envelope.
+
+    Carries both ``success: true`` (canonical, will remain) and
+    ``ok: true`` (deprecated alias for backwards compat with
+    pre-v3.x downstream clients). Plan to drop ``ok`` after the
+    Scriptorium-v0.13 migration completes — see docs/MCP.md.
+    """
+    return json.dumps(
+        {"success": True, "ok": True, **data},
+        ensure_ascii=False,
+        default=str,
+    )
 
 
 def _normalize_paper_id(paper_id: str) -> str:
@@ -150,8 +169,11 @@ def _normalize_paper_id(paper_id: str) -> str:
 
 
 def _json_error(message: str, **extra: Any) -> str:
-    """Build an error JSON response."""
-    return json.dumps({"success": False, "error": message, **extra}, default=str)
+    """Emit an error MCP envelope. See _json_ok for the dual-key rationale."""
+    return json.dumps(
+        {"success": False, "ok": False, "error": message, **extra},
+        default=str,
+    )
 
 
 async def _resolve_push_input(
@@ -362,6 +384,8 @@ async def search_literature(
     """
     Search academic databases for scientific papers matching a query.
 
+    **Latency:** ~5-15s with parallel 3-backend fan-out (Phase B2); 15-50s on legacy serial path. Use >=60s HTTP timeout in clients.
+
     Args:
         query: Search query (keywords, phrases, or natural language)
         max_results: Maximum number of results to return (1-50)
@@ -548,7 +572,7 @@ async def search_literature(
                 "abstract": p.abstract,
                 "journal": p.journal,
                 "citation_count": p.citation_count,
-                "source": str(p.source) if p.source else None,
+                "source": p.source.value if p.source else None,
                 "url": p.url,
             }
             if p.authors:
@@ -941,6 +965,9 @@ async def search_knowledge_base(
             for r in results:
                 meta_obj = r.get("metadata")
                 meta_dict = meta_obj.__dict__ if hasattr(meta_obj, "__dict__") else (meta_obj or {})
+                # Decode the ASB-style paper_metadata_json (if present)
+                # so the response helper can read it directly.
+                pm_dict = decode_paper_metadata_json(meta_obj)
                 chunks.append(
                     {
                         "paper_id": r.get("paper_id"),
@@ -952,14 +979,17 @@ async def search_knowledge_base(
                         "relevance_score": r.get("score"),
                         "doi": meta_dict.get("doi") if isinstance(meta_dict, dict) else None,
                         "kb_name": r.get("kb_name"),
+                        "metadata": pm_dict,
                     }
                 )
 
+            asb_md = build_asb_response_metadata(chunks)
             return _json_ok(
                 {
                     "query": query,
                     "kb_names": kb_names,
                     "results": chunks,
+                    "asb_metadata": asb_md,
                 }
             )
 
@@ -1019,6 +1049,7 @@ async def search_knowledge_base(
                     meta_obj.__dict__ if hasattr(meta_obj, "__dict__")
                     else dict(meta_obj) if isinstance(meta_obj, dict) else {}
                 )
+                pm_dict = decode_paper_metadata_json(meta_dict)
                 chunks.append(
                     {
                         "paper_id": r.get("paper_id") or meta_dict.get("paper_id"),
@@ -1030,12 +1061,16 @@ async def search_knowledge_base(
                         "kb_name": r.get("kb_name"),
                         "year": meta_dict.get("year"),
                         "content_type": meta_dict.get("content_type"),
+                        "metadata": pm_dict,
                     }
                 )
             else:
                 meta = getattr(r, "metadata", None) or {}
                 if hasattr(meta, "__dict__"):
                     meta = meta.__dict__
+                # Decode the ASB-style paper_metadata_json (if present)
+                # so the response helper can read it directly.
+                pm_dict = decode_paper_metadata_json(meta)
                 chunks.append(
                     {
                         "paper_id": meta.get("paper_id") if isinstance(meta, dict) else None,
@@ -1044,14 +1079,17 @@ async def search_knowledge_base(
                         "chunk_text": getattr(r, "text", str(r)),
                         "relevance_score": getattr(r, "score", None),
                         "doi": meta.get("doi") if isinstance(meta, dict) else None,
+                        "metadata": pm_dict,
                     }
                 )
 
+        asb_md = build_asb_response_metadata(chunks)
         return _json_ok(
             {
                 "query": query,
                 "kb_name": effective_kb_name,
                 "results": chunks,
+                "asb_metadata": asb_md,
             }
         )
 
@@ -1316,6 +1354,8 @@ async def generate_report(
     Uses Perspicacité's RAG pipeline (retrieval + LLM synthesis) to answer
     a research question using papers in the specified KB.
 
+    **Latency:** 30-120s depending on KB size + LLM. Use >=180s HTTP timeout.
+
     Args:
         query: Research question to answer
         kb_name: Knowledge base to query (single-KB path)
@@ -1576,6 +1616,7 @@ async def generate_report(
                         "relevance_score": src.get("relevance_score"),
                         "section": src.get("section"),
                         "kb_name": src.get("kb_name"),
+                        "metadata": src.get("metadata"),
                     }
                 )
             elif event.event == "error":
@@ -1590,6 +1631,13 @@ async def generate_report(
                 if _err.get("reason") == "cancelled":
                     cancelled_reason = "cancelled"
                     break
+
+        asb_md = build_asb_response_metadata(
+            [
+                {"metadata": s.get("metadata") if isinstance(s, dict) else None}
+                for s in sources
+            ]
+        )
 
         if cancelled_reason == "cancelled":
             logger.info(
@@ -1609,6 +1657,7 @@ async def generate_report(
                 "message_id": message_id,
                 "cancelled": True,
                 "task_id": task_id,
+                "asb_metadata": asb_md,
             }
             _cancelled_payload.update(_response_collector.as_response_extras())
             return _json_ok(_cancelled_payload)
@@ -1638,6 +1687,7 @@ async def generate_report(
             "sources": sources,
             "papers_used": len(sources),
             "message_id": message_id,
+            "asb_metadata": asb_md,
         }
         _final_payload.update(_response_collector.as_response_extras())
         if indicia is not None:
@@ -1782,6 +1832,8 @@ async def add_dois_to_kb(
 
     For each DOI the tool fetches full text via the unified download pipeline,
     deduplicates against existing KB content, and indexes the result.
+
+    **Latency:** 5-30s per DOI (resolve + fetch + embed). Scale with batch size; use >=120s for small batches.
 
     Args:
         kb_name: Target knowledge base name
@@ -3096,6 +3148,8 @@ async def build_capsule(
     Enumerates papers in ``kb_name``'s vector-store collection, finds the row
     matching ``paper_id``, reconstructs a Paper, locates a cached PDF (if any),
     and calls ``capsule_builder.build_capsule``.
+
+    **Latency:** 5-60s per paper (figures + SI + code fetch). Scale with paper artifact count.
     """
     from perspicacite.pipeline.capsule_builder import (
         build_capsule as _build,
@@ -3128,6 +3182,8 @@ async def build_capsules_for_kb(
     """Build capsules for every paper in ``kb_name``.
 
     Returns ``{total, built, skipped, errored, per_paper: [...]}``.
+
+    **Latency:** minutes for a full KB. Prefer async job dispatch.
     """
     from perspicacite.pipeline.capsule_builder import (
         build_capsule as _build,
@@ -3174,6 +3230,8 @@ async def fetch_paper_resources(
     Resources fetched per ``kinds`` (default = all supported: github/zenodo/doi).
     With ``ingest=True``, fetched text-like files are routed into the KB as
     ``is_external=True`` chunks tagged with ``parent_paper_id=<paper_id>``.
+
+    **Latency:** 5-30s (network-bound; PDF + figures + SI).
     """
     from perspicacite.pipeline.capsule_builder import (
         capsule_dir_for,
@@ -3242,6 +3300,8 @@ async def fetch_supplementary(
     fetches each file, writes them to
     ``<capsule>/supplementary/files/<filename>``, and records a summary
     at ``<capsule>/supplementary/fetched.json``.
+
+    **Latency:** 5-30s (publisher SI fetch).
 
     Args:
         kb_name: Knowledge base containing the paper.
@@ -3403,6 +3463,8 @@ async def build_kb_from_search(
     Use this when an agent wants to spin up a focused KB for a topic
     before doing real RAG over it — one tool call gets you from
     "query string" to "queryable KB" without manual DOI shuffling.
+
+    **Latency:** minutes to tens of minutes (fan-out + per-paper enrichment). Run async via /api/jobs/* or use long client timeouts.
 
     Args:
         query: Free-text research question (used verbatim by SciLEx).
@@ -3567,6 +3629,8 @@ async def expand_kb_via_citations(
     Optionally screens candidates by BM25 / LLM relevance against
     ``query`` (or the KB description) before ingest.
 
+    **Latency:** minutes (cite-graph traversal + per-paper fetching). Prefer async job dispatch.
+
     Args:
         kb_name: Target KB. Must already exist.
         direction: ``"forward"`` / ``"backward"`` / ``"both"``.
@@ -3696,6 +3760,8 @@ async def enrich_kb_from_cite_graph_tool(
 
     v1: dry-run only. Returns ranked CiteHit records as dicts.
 
+    **Latency:** minutes (cite-graph + per-paper fetch). Prefer async job dispatch.
+
     Args:
         kb_name: Target KB name (used for context; no ingest in v1).
         tool: Library/tool name to resolve to its canonical DOI.
@@ -3730,6 +3796,220 @@ async def enrich_kb_from_cite_graph_tool(
         }
         for h in hits
     ]}
+
+
+@mcp.tool()
+async def ingest_asb_run(
+    asb_run_dir: str,
+    kb_name: str | None = None,
+    include: list[str] | None = None,
+    mode: str = "composite",
+) -> str:
+    """
+    Ingest an Agent Skill Bundle (ASB) run directory into Perspicacité KBs.
+
+    The ASB run dir is expected to contain skills/_index.json and/or
+    cards/task_*.json+md pairs and optional workflow_dag.json. Both the
+    2026-05-15 (pair edges, executable=bool) and 2026-05-16+ (dict edges
+    with port labels, executable=dict) schemas are supported.
+
+    **Latency:** 30-300s depending on bundle size + backing-paper DOI
+    count. Each backing paper goes through the full DOI ingest path
+    (resolve + fetch + embed). Use >=300s HTTP timeout in clients;
+    prefer async dispatch for large bundles.
+
+    Args:
+        asb_run_dir: Absolute path to the ASB run directory.
+        kb_name: Target KB name. Defaults to the run-dir basename.
+        include: Subset of ["skills", "workflows"]. Defaults to both.
+        mode: "composite" (single KB) or "per-skill" (one KB per skill;
+            workflows still composite).
+
+    Returns:
+        JSON envelope with kb_names, skills_ingested, workflows_ingested,
+        papers_ingested, failed, workflow_dag.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state  # already _json_error
+
+    if not include:
+        include = ["skills", "workflows"]
+
+    try:
+        result = await ingest_asb_run_pipeline(
+            asb_run_dir=asb_run_dir,
+            kb_name=kb_name,
+            include=tuple(include),
+            mode=mode,
+            app_state=state,
+        )
+    except Exception as e:
+        logger.error("mcp_ingest_asb_run_error", error=str(e))
+        return _json_error(f"ASB ingest failed: {e}")
+
+    logger.info(
+        "mcp_ingest_asb_run",
+        kb_names=result.get("kb_names"),
+        skills=result.get("skills_ingested"),
+        workflows=result.get("workflows_ingested"),
+    )
+    return _json_ok(result)
+
+
+# =============================================================================
+# GitHub repo + skill-bundle ingest (Task 7 of 2026-05-15 plan)
+# =============================================================================
+
+
+def _summary_to_dict(summary: IngestSummary) -> dict[str, Any]:
+    """Flatten an :class:`IngestSummary` dataclass for the MCP envelope.
+
+    Using ``dataclasses.asdict`` keeps the JSON shape in sync with the
+    dataclass: when fields are added upstream they surface here without
+    a separate edit. (The ``Co-Authored-By`` linked-papers list of
+    ``(kind, value)`` tuples serializes as JSON arrays of two strings.)
+    """
+    import dataclasses
+
+    return dataclasses.asdict(summary)
+
+
+@mcp.tool()
+async def ingest_github_repo(
+    url: str,
+    kb_name: str,
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
+) -> str:
+    """Ingest a GitHub repository into a Perspicacité KB.
+
+    Walks the repo (filtered by include/exclude globs), chunks markdown,
+    Python (docstrings only), and Jupyter notebooks, and stores them in
+    ``kb_name``. Use ``ingest_skill_bundle`` instead when the repo
+    contains a ``bundle.yml`` you want parsed for paper refs.
+
+    **Latency:** 30-180s depending on repo size. Tarball is cached by
+    commit SHA so re-ingest is fast. Use >=240s HTTP timeout.
+
+    Args:
+        url: GitHub URL (https://github.com/<org>/<repo>[@ref]).
+        kb_name: Target KB name (created if missing).
+        include: Optional list of include globs (gitwildmatch).
+        exclude: Optional list of exclude globs.
+
+    Returns:
+        JSON envelope with kb_name, repo_org, repo_name, commit_sha,
+        files_added, chunks_added, mode.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state  # already _json_error
+
+    # Build a ContentSpec only when the caller supplied at least one
+    # override. ``None`` lets the orchestrator apply its own defaults.
+    content = None
+    if include or exclude:
+        from perspicacite.pipeline.github.bundle import ContentSpec
+
+        defaults = ContentSpec()
+        content = ContentSpec(
+            include=list(include) if include else list(defaults.include),
+            exclude=list(exclude) if exclude else list(defaults.exclude),
+        )
+
+    try:
+        summary = await ingest_github_repo_pipeline(
+            url=url,
+            kb_name=kb_name,
+            config=state.config,
+            vector_store=state.vector_store,
+            embedding_service=state.embedding_provider,
+            session_store=state.session_store,
+            content=content,
+        )
+    except Exception as e:
+        logger.error("mcp_ingest_github_repo_error", url=url, error=str(e))
+        return _json_error(f"GitHub repo ingest failed: {e}")
+
+    logger.info(
+        "mcp_ingest_github_repo",
+        url=url,
+        kb_name=summary.kb_name,
+        files_added=summary.files_added,
+        chunks_added=summary.chunks_added,
+    )
+    return _json_ok(_summary_to_dict(summary))
+
+
+@mcp.tool()
+async def ingest_skill_bundle(
+    source: str,
+    kb_name: str | None = None,
+    ingest_linked_papers: bool = True,
+) -> str:
+    """Ingest an agentic-science-builder skill bundle into Perspicacité.
+
+    The bundle source can be a local directory path OR a GitHub URL
+    pointing at a repo containing ``bundle.yml``. Linked papers (DOIs
+    in the manifest + README) are routed through the existing DOI
+    ingest path when ``ingest_linked_papers=True``.
+
+    **Latency:** 60-600s depending on bundle + linked-paper count.
+    Each linked DOI runs the full PDF-resolve + embed pipeline.
+    Use >=600s timeout for production runs.
+
+    Args:
+        source: Local path OR GitHub URL.
+        kb_name: Target KB name. None → derived from bundle.yml's name
+            via config.bundles.default_kb_name_template.
+        ingest_linked_papers: If True (default), DOIs mined from the
+            bundle are added to the same KB.
+
+    Returns:
+        JSON envelope with kb_name, bundle_name, files_added,
+        chunks_added, linked_papers_added,
+        linked_papers_skipped_non_doi.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state  # already _json_error
+
+    # Match the CLI's path-vs-URL detection: existing local path → Path,
+    # anything else (URL or non-existent path) → raw string. The
+    # orchestrator parses URL strings itself.
+    source_arg: Path | str
+    candidate = Path(source)
+    if candidate.exists():
+        source_arg = candidate
+    else:
+        source_arg = source
+
+    try:
+        summary = await ingest_skill_bundle_pipeline(
+            source=source_arg,
+            kb_name=kb_name,
+            config=state.config,
+            vector_store=state.vector_store,
+            embedding_service=state.embedding_provider,
+            session_store=state.session_store,
+            ingest_linked_papers=ingest_linked_papers,
+            app_state_for_doi_ingest=state if ingest_linked_papers else None,
+        )
+    except Exception as e:
+        logger.error("mcp_ingest_skill_bundle_error", source=source, error=str(e))
+        return _json_error(f"Skill bundle ingest failed: {e}")
+
+    logger.info(
+        "mcp_ingest_skill_bundle",
+        source=source,
+        kb_name=summary.kb_name,
+        bundle_name=summary.bundle_name,
+        files_added=summary.files_added,
+        chunks_added=summary.chunks_added,
+        linked_papers_added=summary.linked_papers_added,
+    )
+    return _json_ok(_summary_to_dict(summary))
 
 
 # =============================================================================
@@ -5230,6 +5510,7 @@ _TOOL_NAMES: list[str] = [
     "zotero_get_collection_items",
     "zotero_get_paper_resources",
     "zotero_ingest_collection_to_kb",
+    "ingest_asb_run",
     "ingest_github_repo",
     "ingest_skill_bundle",
     "web_search",

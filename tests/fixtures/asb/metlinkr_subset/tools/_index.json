@@ -1,0 +1,109 @@
+{
+  "count": 2,
+  "slugs": [
+    "metlinkr",
+    "r"
+  ],
+  "records": [
+    {
+      "slug": "metlinkr",
+      "name": "MetLinkR",
+      "canonical_url": null,
+      "install": null,
+      "related_skills": [
+        "heterogeneous-metabolomics-data-harmonization",
+        "mapping-rate-calculation-per-dataset",
+        "metabolite-identifier-mapping",
+        "multi-database-identifier-resolution",
+        "refmet-standardization",
+        "metabolite-identifier-linkage-comparison",
+        "mapping-failure-detection-in-identifier-resolution",
+        "entity-identification-rate-calculation",
+        "benchmark-evaluation-against-manual-curation",
+        "metabolite-linkage-categorization",
+        "metabolite-identifier-mapping-via-refmet-api",
+        "chemical-superclass-classification-of-metabolites",
+        "metabolomics-data-visualization-bar-chart",
+        "refmet-standardized-name-retrieval",
+        "r-based-metabolomics-workflow-execution",
+        "metabolite-identifier-standardization-refmet",
+        "cross-dataset-overlap-analysis",
+        "upset-plot-visualization",
+        "metabolite-set-intersection-computation",
+        "multi-dataset-benchmarking",
+        "refmet-standardization-and-conflict-detection",
+        "multi-identifier-ambiguity-flagging",
+        "metabolomics-data-quality-assessment",
+        "cross-identifier-reconciliation",
+        "mapping-failure-detection-and-classification",
+        "refmet-api-querying",
+        "ramp-db-synonym-resolution"
+      ],
+      "source_task_ids": [
+        "task_001",
+        "task_002",
+        "task_003",
+        "task_004",
+        "task_005",
+        "task_006"
+      ],
+      "source_paper_doi": "10.1021/acs.jproteome.4c01051",
+      "source_paper_title": "metLinkR: Facilitating Metaanalysis of Human Metabolomics Data through Automated Linking of Metabolite Identifiers",
+      "evidence_spans": [
+        "MetLinkR tracks instances where multiple IDs provided for a single metabolite result in different RefMet standardized names."
+      ],
+      "version_used": null,
+      "resolution_attempts": []
+    },
+    {
+      "slug": "r",
+      "name": "R",
+      "canonical_url": null,
+      "install": null,
+      "related_skills": [
+        "heterogeneous-metabolomics-data-harmonization",
+        "mapping-rate-calculation-per-dataset",
+        "metabolite-identifier-mapping",
+        "multi-database-identifier-resolution",
+        "refmet-standardization",
+        "metabolite-identifier-linkage-comparison",
+        "mapping-failure-detection-in-identifier-resolution",
+        "entity-identification-rate-calculation",
+        "benchmark-evaluation-against-manual-curation",
+        "metabolite-linkage-categorization",
+        "metabolite-identifier-mapping-via-refmet-api",
+        "chemical-superclass-classification-of-metabolites",
+        "metabolomics-data-visualization-bar-chart",
+        "refmet-standardized-name-retrieval",
+        "r-based-metabolomics-workflow-execution",
+        "metabolite-identifier-standardization-refmet",
+        "cross-dataset-overlap-analysis",
+        "upset-plot-visualization",
+        "metabolite-set-intersection-computation",
+        "multi-dataset-benchmarking",
+        "refmet-standardization-and-conflict-detection",
+        "multi-identifier-ambiguity-flagging",
+        "metabolomics-data-quality-assessment",
+        "cross-identifier-reconciliation",
+        "mapping-failure-detection-and-classification",
+        "refmet-api-querying",
+        "ramp-db-synonym-resolution"
+      ],
+      "source_task_ids": [
+        "task_001",
+        "task_002",
+        "task_003",
+        "task_004",
+        "task_005",
+        "task_006"
+      ],
+      "source_paper_doi": "10.1021/acs.jproteome.4c01051",
+      "source_paper_title": "metLinkR: Facilitating Metaanalysis of Human Metabolomics Data through Automated Linking of Metabolite Identifiers",
+      "evidence_spans": [
+        "The R code for metLinkR is available for download at https://github.com/ncats/MetLinkR"
+      ],
+      "version_used": null,
+      "resolution_attempts": []
+    }
+  ]
+}

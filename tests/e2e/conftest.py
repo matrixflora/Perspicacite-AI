@@ -8,73 +8,34 @@ The ``synthetic_paper`` / ``synthetic_corpus`` fixtures return real
 ``Paper`` instances so the tests can hand them directly to
 ``DynamicKnowledgeBase.add_papers`` — that method's signature takes
 list[Paper] (see src/perspicacite/rag/dynamic_kb.py).
+
+The deterministic embedding provider used by these tests lives at the
+top-level ``tests/conftest.py`` so the same fixture serves both this
+e2e suite and the integration suite without pytest raising a
+duplicate-registration ``ValueError``. The class is re-exported below
+so legacy ``from tests.e2e.conftest import DeterministicEmbeddingProvider``
+imports keep working.
 """
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-# Skip the entire e2e folder cleanly if chromadb / numpy aren't available.
+# Skip the entire e2e folder cleanly if chromadb isn't available.
+# (numpy is a hard project dep; ``_deterministic_vec`` itself lives at
+# ``tests/conftest.py`` so no numpy import is needed at this scope.)
 chromadb = pytest.importorskip("chromadb")
-np = pytest.importorskip("numpy")
 
 from perspicacite.models.papers import Author, Paper, PaperSource
 
-# ---------------------------------------------------------------------------
-# Deterministic mocks
-# ---------------------------------------------------------------------------
-
-def _deterministic_vec(text: str, dim: int) -> list[float]:
-    """SHA-256-derived vector — same text always returns same vector.
-
-    We hash the text, then repeat the digest bytes until we have ``dim``
-    floats in roughly [-1, 1]. Vectors are normalized to unit length so
-    cosine-distance ranking is well-defined (Chroma's hnsw:space=cosine
-    expects this).
-    """
-    h = hashlib.sha256(text.encode("utf-8")).digest()
-    floats: list[float] = []
-    while len(floats) < dim:
-        for b in h:
-            floats.append((b / 127.5) - 1.0)
-            if len(floats) >= dim:
-                break
-        # Re-hash so we get more entropy past 32 bytes
-        h = hashlib.sha256(h).digest()
-    arr = np.asarray(floats, dtype=np.float32)
-    norm = float(np.linalg.norm(arr))
-    if norm > 0:
-        arr = arr / norm
-    return arr.tolist()
-
-
-class DeterministicEmbeddingProvider:
-    """In-memory, deterministic, no-IO embedding provider.
-
-    Same text always returns the same vector. Cosine-normalised so it
-    plays well with Chroma's cosine collections.
-    """
-
-    def __init__(self, dim: int = 384) -> None:
-        self._dim = dim
-        self.calls = 0
-        self.total_texts = 0
-
-    @property
-    def dimension(self) -> int:
-        return self._dim
-
-    @property
-    def model_name(self) -> str:
-        return "deterministic-mock"
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        self.calls += 1
-        self.total_texts += len(texts)
-        return [_deterministic_vec(t, self._dim) for t in texts]
+# Re-export the canonical embedding provider so any older code path that
+# imports it from this module by name keeps resolving. The
+# ``deterministic_embedder`` fixture itself is registered at
+# ``tests/conftest.py`` — DO NOT redeclare it here (pytest would raise
+# ``ValueError: duplicate fixture name`` at collection time).
+from tests.conftest import DeterministicEmbeddingProvider  # noqa: F401
 
 
 class StagedLLM:
@@ -116,11 +77,9 @@ class StagedLLM:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def deterministic_embedder() -> DeterministicEmbeddingProvider:
-    """Fresh deterministic embedder per test (so .calls counters reset)."""
-    return DeterministicEmbeddingProvider()
+# ``deterministic_embedder`` lives at ``tests/conftest.py`` so it can be
+# consumed by both ``tests/e2e/`` and ``tests/integration/`` without
+# duplicate registration.
 
 
 @pytest.fixture

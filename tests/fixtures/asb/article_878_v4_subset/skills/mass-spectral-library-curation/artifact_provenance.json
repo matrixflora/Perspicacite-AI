@@ -1,0 +1,120 @@
+{
+  "schema_version": "v1",
+  "skill_slug": "mass-spectral-library-curation",
+  "skill_paper_doi": null,
+  "generated_at": "2026-05-15T20:43:36Z",
+  "artifacts": [
+    {
+      "path": "skill.md",
+      "source_task_ids": [
+        "task_001"
+      ],
+      "source": "card",
+      "kind": "narrative",
+      "external_refs": []
+    },
+    {
+      "path": "README.md",
+      "source_task_ids": [
+        "task_001"
+      ],
+      "source": "card",
+      "kind": "readme",
+      "external_refs": []
+    },
+    {
+      "path": "tools.json#tools/0",
+      "source_task_ids": [
+        "task_001"
+      ],
+      "source": "card",
+      "kind": "tool_entry",
+      "external_refs": []
+    },
+    {
+      "path": "tools.json#tools/1",
+      "source_task_ids": [
+        "task_001"
+      ],
+      "source": "card",
+      "kind": "tool_entry",
+      "external_refs": []
+    },
+    {
+      "path": "tools.json#tools/2",
+      "source_task_ids": [
+        "task_001"
+      ],
+      "source": "card",
+      "kind": "tool_entry",
+      "external_refs": []
+    },
+    {
+      "path": "tools.json#tools/3",
+      "source_task_ids": [
+        "task_001"
+      ],
+      "source": "card",
+      "kind": "tool_entry",
+      "external_refs": []
+    },
+    {
+      "path": "papers.json",
+      "source_task_ids": [],
+      "source": "heuristic",
+      "kind": "papers",
+      "external_refs": []
+    },
+    {
+      "path": "parameters.json",
+      "source_task_ids": [],
+      "source": "heuristic",
+      "kind": "parameters",
+      "external_refs": []
+    },
+    {
+      "path": "failure_modes.jsonl",
+      "source_task_ids": [],
+      "source": "heuristic",
+      "kind": "failure_modes",
+      "external_refs": []
+    },
+    {
+      "path": "ontology_refs.json",
+      "source_task_ids": [],
+      "source": "heuristic",
+      "kind": "ontology_refs",
+      "external_refs": []
+    },
+    {
+      "path": "environments.json",
+      "source_task_ids": [],
+      "source": "heuristic",
+      "kind": "environments",
+      "external_refs": []
+    },
+    {
+      "path": "examples.jsonl",
+      "source_task_ids": [],
+      "source": "heuristic",
+      "kind": "examples",
+      "external_refs": []
+    },
+    {
+      "path": "links.json",
+      "source_task_ids": [],
+      "source": "heuristic",
+      "kind": "links",
+      "external_refs": []
+    },
+    {
+      "path": "related_repos.json#0",
+      "source_task_ids": [],
+      "source": "github_search",
+      "kind": "related_repo",
+      "external_refs": [
+        "https://github.com/vinta/awesome-python"
+      ]
+    }
+  ]
+}

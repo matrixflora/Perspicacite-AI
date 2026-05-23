@@ -15,9 +15,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from perspicacite.models.rag import RAGMode
+from perspicacite.pipeline.asb.response import build_asb_response_metadata
 from perspicacite.provenance.collector import ProvenanceCollector
 from perspicacite.web.routers._grounding import extract_grounding_context
 from perspicacite.web.state import app_state
@@ -296,9 +297,24 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Request for chat endpoint - NOW WITH CONVERSATION SUPPORT."""
+    """Request for chat endpoint - NOW WITH CONVERSATION SUPPORT.
+
+    Accepts ``query`` (canonical) or ``message`` (Scriptorium-compat alias).
+    When both are supplied, ``query`` wins.
+    """
 
     query: str = Field(..., description="Current research question")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_message_alias(cls, data):
+        """Backward-compat with the legacy OpenAPI schema name ``message``.
+        If ``query`` is absent but ``message`` is supplied, promote it.
+        ``query`` always wins when both are present."""
+        if isinstance(data, dict) and "query" not in data and "message" in data:
+            data = {**data, "query": data["message"]}
+        return data
+
     messages: list[ChatMessage] = Field(default_factory=list, description="Conversation history")
     session_id: str | None = Field(default=None, description="Session ID for persistence")
     conversation_id: str | None = Field(
@@ -1051,6 +1067,34 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
                     "sources": sources,
                 }
                 yield f"data: {json.dumps(safe, separators=(',', ':'))}\n\n"
+                # Derive ASB skill/workflow metadata blocks from collected
+                # sources. Each source carries its underlying paper's
+                # ``metadata`` dict; the helper coalesces by skill_id /
+                # task_id and ignores non-ASB sources. Emit a separate
+                # SSE event only when at least one block is non-empty so
+                # non-ASB conversations don't get an extra noise frame.
+                try:
+                    asb_md = build_asb_response_metadata(
+                        [
+                            {"metadata": (s.get("metadata") if isinstance(s, dict) else None)}
+                            for s in sources
+                        ]
+                    )
+                    if asb_md.get("skill_metadata") or asb_md.get("workflow_metadata"):
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "type": "asb_metadata",
+                                    "message_id": assistant_message_id,
+                                    **asb_md,
+                                },
+                                separators=(",", ":"),
+                            )
+                            + "\n\n"
+                        )
+                except Exception as _exc:  # noqa: BLE001
+                    logger.warning(f"asb_metadata_emit_failed: {_exc}")
                 yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
                 return
 

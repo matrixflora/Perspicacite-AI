@@ -1,0 +1,62 @@
+[
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "2",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Repair-specific error rate: percentage of repaired SMILES that differ from original annotation when independently verified (target: <2% based on cited 1.62% err",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "1.62",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Repair-specific error rate: percentage of repaired SMILES that differ from original annotation when independently verified (target: <2% based on cited 1.62% err",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "0.05",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Adduct repair error rate: percentage of spectra with incorrect adduct after repair (target: <0.05% based on cited 0.024% rate).",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "0.024",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Adduct repair error rate: percentage of spectra with incorrect adduct after repair (target: <0.05% based on cited 0.024% rate).",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  },
+  {
+    "name": "threshold",
+    "type": "numeric",
+    "typical": "62.1",
+    "min": null,
+    "max": null,
+    "units": "%",
+    "source_citation": "Retention gain: count and percentage of spectra rescued from removal filters by successful repair (cited work: 52,084 / 83,843 = 62.1%).",
+    "source_url": null,
+    "provenance": null,
+    "source_doi": null
+  }
+]

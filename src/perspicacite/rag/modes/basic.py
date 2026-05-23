@@ -364,6 +364,7 @@ class BasicRAGMode(BaseRAGMode):
                     kb_name=p.get("kb_name"),
                     chunk_text=p.get("chunk_text"),
                     abstract=p.get("abstract") or p.get("chunk_text"),
+                    metadata=p.get("paper_metadata"),
                 )
             )
 
@@ -666,6 +667,7 @@ class BasicRAGMode(BaseRAGMode):
                     kb_name=p.get("kb_name"),
                     chunk_text=p.get("chunk_text"),
                     abstract=p.get("abstract") or p.get("chunk_text"),
+                    metadata=p.get("paper_metadata"),
                 )
             )
         for source in sources:

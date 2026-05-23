@@ -1,0 +1,31 @@
+{
+  "slug": "pubchem",
+  "name": "PubChem",
+  "canonical_url": null,
+  "install": null,
+  "related_skills": [
+    "adduct-assignment-and-parent-mass-validation",
+    "chemical-structure-annotation-repair",
+    "mass-spectral-library-curation",
+    "metadata-harmonization-and-validation",
+    "smiles-inchi-consistency-checking",
+    "spectral-peak-filtering-and-intensity-normalization",
+    "spectral-metadata-annotation-derivation",
+    "compound-name-structure-resolution",
+    "monoisotopic-mass-validation-against-smiles",
+    "pubchem-query-integration",
+    "annotation-quality-filtering-by-parent-mass-matching",
+    "metadata-curation-logging"
+  ],
+  "source_task_ids": [
+    "task_001",
+    "task_002"
+  ],
+  "source_paper_doi": "10.1186/s13321-024-00878-1",
+  "source_paper_title": "Reproducible MS/MS library cleaning pipeline in matchms",
+  "evidence_spans": [
+    "This filter derives the canonical SMILES, InChI and InChIKey from PubChem"
+  ],
+  "version_used": null,
+  "resolution_attempts": []
+}

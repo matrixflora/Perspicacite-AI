@@ -1,0 +1,20 @@
+{
+  "skills": [
+    {
+      "slug": "chemical-structure-annotation-repair",
+      "name": "chemical-structure-annotation-repair",
+      "description": "Identify and correct inconsistencies between chemical structure annotations (SMILES, InChI, InChIKey) and associated metadata (parent mass, adduct, precursor m/z, compound name) in mass spectrometry spectral libraries. This skill repairs annotation errors that would otherwise cause valid spectra to be discarded during library curation.",
+      "edam_operation": "http://edamontology.org/operation_3763",
+      "schema_version": "0.2.0",
+      "body_path": "skills/chemical-structure-annotation-repair/skill.md"
+    },
+    {
+      "slug": "mass-spectral-library-curation",
+      "name": "mass-spectral-library-curation",
+      "description": "Systematically repair and validate metadata, chemical structure annotations, and fragmentation data in public mass spectral libraries using a modular pipeline of harmonization, repair, and filtering steps. This skill reduces false annotations and improves library quality for downstream spectral matching and analogue searching.",
+      "edam_operation": "http://edamontology.org/operation_3695",
+      "schema_version": "0.2.0",
+      "body_path": "skills/mass-spectral-library-curation/skill.md"
+    }
+  ]
+}

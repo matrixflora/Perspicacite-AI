@@ -420,6 +420,7 @@ Sources:
                         doi=p.get("doi"),
                         relevance_score=p.get("paper_score", 0.0),
                         kb_name=p.get("kb_name") or request.kb_name,
+                        metadata=p.get("paper_metadata"),
                     )
                 )
         else:
@@ -822,6 +823,7 @@ Sources:
                         enrichment_sources=p.get("enrichment_sources"),
                         relevance_score=p.get("paper_score", 0.0),
                         kb_name=p.get("kb_name") or request.kb_name,
+                        metadata=p.get("paper_metadata"),
                     )
                 )
         else:

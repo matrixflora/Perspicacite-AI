@@ -1,0 +1,20 @@
+[
+  {
+    "ontology": "EDAM",
+    "term_id": "EDAM:operation_3763",
+    "label": null,
+    "link_role": "mentioned"
+  },
+  {
+    "ontology": "EDAM",
+    "term_id": "EDAM:topic_0593",
+    "label": null,
+    "link_role": "mentioned"
+  },
+  {
+    "ontology": "EDAM",
+    "term_id": "EDAM:topic_3520",
+    "label": null,
+    "link_role": "mentioned"
+  }
+]

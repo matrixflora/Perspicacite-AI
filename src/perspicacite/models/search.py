@@ -17,6 +17,10 @@ class SearchFilters(BaseModel):
     journals: list[str] | None = None
     sources: list[PaperSource] | None = None
     has_full_text: bool | None = None
+    # 2026-05-15: composite skill-bundle KBs tag each chunk with a
+    # `source_skill` metadata field. Set this to restrict retrieval to
+    # one skill inside a composite KB. See
+    # docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md.
     source_skill: str | None = None
 
     def __repr__(self) -> str:
@@ -29,6 +33,8 @@ class SearchFilters(BaseModel):
             filters.append(f"authors={self.authors}")
         if self.journals:
             filters.append(f"journals={self.journals}")
+        if self.source_skill:
+            filters.append(f"source_skill={self.source_skill}")
         return f"SearchFilters({', '.join(filters)})"
 
     def is_empty(self) -> bool:

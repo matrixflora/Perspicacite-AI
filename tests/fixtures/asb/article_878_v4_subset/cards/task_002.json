@@ -1,0 +1,340 @@
+{
+  "article_type": "software-tool",
+  "artifact_refs": [],
+  "available_artifacts": [
+    {
+      "indexable": true,
+      "path": "article.pdf",
+      "role": "main_article",
+      "sha256": "0dea8dc70be9009f1fa58deb60eea662cd930973f51688aa8bf974e71fc43d96"
+    }
+  ],
+  "created_at": "2026-05-15T20:28:15.943394+00:00",
+  "crossref_doi": "10.1186/s13321-024-00878-1",
+  "data_accessions": [],
+  "data_in": [
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "GNPS public library spectra in matchms format",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    },
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "PubChem compound database",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    }
+  ],
+  "data_out": [
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "Subset of spectra with newly derived SMILES, InChI, and InChIKey annotations where monoisotopic mass validation passed",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    },
+    {
+      "acquisition_mode": null,
+      "confidence": "none",
+      "content_signature": null,
+      "description": "Change log documenting compound names, newly added annotations, parent mass match validation, and error cases",
+      "detection_method": "none",
+      "file_extension": null,
+      "format_id": null,
+      "format_iri": null,
+      "instrument_class": null,
+      "ionization_polarity": null,
+      "ontology_class": null
+    }
+  ],
+  "domain": "mass-spectrometry / metabolomics",
+  "domain_knowledge": [
+    "Monoisotopic mass (exact mass calculated from exact atomic masses) differs from molar mass and must be computed from SMILES structure to validate parent mass assignments in MS/MS spectra.",
+    "PubChem API returns canonical SMILES and molecular formulas for compound names; multiple isomers may exist for a single name, requiring strict mass-based filtering to select the correct structure.",
+    "The GNPS library contains predominantly compound names without structure annotations; deriving SMILES from PubChem significantly expands machine-readable annotation coverage for downstream spectral matching.",
+    "Parent mass in MS/MS spectra refers to the monoisotopic mass of the molecular ion [M+H]\u207a or [M-H]\u207b (depending on ionization mode); validation must account for the ionization mode and assigned adduct to correctly calculate expected parent mass from neutral molecular mass."
+  ],
+  "evaluation_strategy": {
+    "direct_checks": [
+      "Verify file exists at zenodo.org/10.5281/zenodo.10160791 containing cleaned GNPS library and filter settings",
+      "Verify file exists at github.com/matchms/matchms containing matchms source code with 'derive annotation from compound name' filter implementation",
+      "Script runs without error: load matchms library, apply only the 'derive annotation from compound name' filter to spectra with compound name but no SMILES, query PubChem for each, validate returned monoisotopic mass against stored parent mass, output filtered spectrum subset",
+      "Output file format is valid structured spectrum record (MGF, JSON, or pickle format matching matchms Spectrum object serialization)",
+      "Output contains only spectra that: (a) had compound name in input, (b) lacked SMILES before filter, (c) received PubChem lookup result, (d) monoisotopic mass of PubChem result matched stored parent mass (within tolerance\u2014parameter-sensitive, requires specification of mass tolerance threshold)",
+      "Field 'SMILES' present in all output spectra records",
+      "Field 'compound_name' present in all output spectra records",
+      "For subset of output spectra, byte-for-byte compare derived SMILES against reference PubChem canonical SMILES to detect any transformation errors"
+    ],
+    "expert_review": [
+      "Chemist or metabolomics expert review: for random sample of output spectra, verify that PubChem-derived SMILES structures are chemically reasonable and correspond to the original compound names",
+      "Expert assessment: confirm that mass tolerance threshold chosen for monoisotopic mass validation is appropriate for the mass spectrometry instrument resolution typical in GNPS library acquisitions",
+      "Expert assessment: verify that the filter correctly handles edge cases such as isotope-labeled compounds, salt forms, and ambiguous compound names that may retrieve multiple PubChem hits"
+    ]
+  },
+  "evidence_snippets": [
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_001",
+      "source_path": "agent2_synthesis",
+      "text": "[results] What is the error rate when deriving SMILES annotations from compound names via PubChem lookup, filtering only spectra where the returned monoisotopic mass matches the stored parent mass?: 'After removing the SMILES annotation from the selected spectra the SMILES were derived from the compound name. For 27,6% of the spectra, the SMILES could not be derived from the compound name. Of the'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_002",
+      "source_path": "agent2_synthesis",
+      "text": "[results] When SMILES annotations are derived from compound names using PubChem lookup with parent mass validation, 1.62% of successfully annotated spectra receive an incorrect 2D structure annotation, while 27.6% cannot be annotated because the compound name is not found in PubChem.: 'For 27,6% of the spectra, the SMILES could not be derived from the compound name. Of the spectra that were annotated (72,4%), 1,62% were annotated with a different 2D structure than the original'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_003",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] GNPS public library spectra in matchms format: 'As an example the newly developed pipeline was run on a current version of the GNPS library'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_004",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] PubChem compound database: 'This filter derives the canonical SMILES, InChI and InChIKey from PubChem'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_005",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] Subset of spectra with newly derived SMILES, InChI, and InChIKey annotations where monoisotopic mass validation passed: 'Many annotations in the GNPS library are only compound names without SMILES. This filter derives the canonical SMILES, InChI and InChIKey from PubChem'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_006",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] Change log documenting compound names, newly added annotations, parent mass match validation, and error cases: 'This filter derives the canonical SMILES, InChI and InChIKey from PubChem. It will'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_007",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] matchms: 'machine learning algorithms in mass spectrometry. Public libraries of mass spectrometry data that are open to user submission often suffer from limited metadata curation'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_008",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] Python: 'The pipeline is designed with ease of use, flexibility, and reproducibility as leading principles'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_009",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] RDKit: 'SMILES, InChI and InChIKey are loaded by RDKit'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_010",
+      "source_path": "agent2_synthesis",
+      "text": "[abstract] PubChem: 'This filter derives the canonical SMILES, InChI and InChIKey from PubChem'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_011",
+      "source_path": "agent2_synthesis",
+      "text": "[discussion] Mass tolerance threshold (in Da or ppm) for accepting PubChem monoisotopic mass match against stored parent mass is not specified: 'This filter derives the canonical SMILES, InChI and InChIKey from PubChem. It will'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_012",
+      "source_path": "agent2_synthesis",
+      "text": "[discussion] Strategy for handling multiple PubChem hits returned for a single compound name query is not specified: 'This filter derives the canonical SMILES, InChI and InChIKey from PubChem. It will'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_013",
+      "source_path": "agent2_synthesis",
+      "text": "[discussion] Number of spectra in test datasets that have compound name but lack SMILES annotation (eligible input for this filter) is not reported: 'combined the newly introduced repair functions repaired the metadata of 52,084 spectra'"
+    },
+    {
+      "reason": "agent2_traced",
+      "snippet_id": "ev_014",
+      "source_path": "agent2_synthesis",
+      "text": "[discussion] Quantitative success rate (proportion of eligible spectra receiving new annotation via PubChem lookup where monoisotopic mass matched) is not reported: 'combined the newly introduced repair functions repaired the metadata of 52,084 spectra'"
+    }
+  ],
+  "executable": {
+    "cmd": [
+      "python",
+      "-c",
+      "import matchms; import requests; import json; from rdkit import Chem; from rdkit.Chem import Descriptors; import sys; spectra = matchms.importing.load_from_msp('{inputs.0}'); annotated = []; changelog = []; for spec in spectra:\n  if spec.get('compound_name') and not spec.get('smiles'):\n    try:\n      resp = requests.get(f'https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{spec[\"compound_name\"]}/JSON').json()\n      if 'PC_Compounds' in resp and len(resp['PC_Compounds']) > 0:\n        compound = resp['PC_Compounds'][0]\n        smiles = next((p['value']['sval'] for p in compound.get('props', []) if p.get('urn', {}).get('label') == 'SMILES'), None)\n        inchi = next((p['value']['sval'] for p in compound.get('props', []) if p.get('urn', {}).get('label') == 'InChI'), None)\n        inchi_key = next((p['value']['sval'] for p in compound.get('props', []) if p.get('urn', {}).get('label') == 'InChIKey'), None)\n        if smiles:\n          mol = Chem.MolFromSmiles(smiles); mono_mass = Descriptors.MolWt(mol)\n          parent_mass = float(spec.get('parent_mass', -1))\n          if abs(mono_mass - parent_mass) < 0.01:\n            spec.set('smiles', smiles); spec.set('inchi', inchi); spec.set('inchi_key', inchi_key)\n            annotated.append(spec)\n            changelog.append({'compound_name': spec['compound_name'], 'smiles': smiles, 'inchi': inchi, 'inchi_key': inchi_key, 'parent_mass': parent_mass, 'monoisotopic_mass': mono_mass, 'status': 'PASS'})\n          else:\n            changelog.append({'compound_name': spec['compound_name'], 'status': 'MASS_MISMATCH', 'parent_mass': parent_mass, 'monoisotopic_mass': mono_mass})\n    except Exception as e:\n      changelog.append({'compound_name': spec.get('compound_name'), 'status': 'ERROR', 'error': str(e)})\nif annotated:\n  matchms.exporting.save_as_msp(annotated, 'annotated_spectra.msp')\nwith open('changelog.json', 'w') as f:\n  json.dump(changelog, f, indent=2)"
+    ],
+    "env": {
+      "PYTHONUNBUFFERED": "1"
+    },
+    "timeout_s": 3600,
+    "working_dir": null
+  },
+  "execution_environment": null,
+  "execution_profile": {
+    "commercial_software": [],
+    "compute_tier": "light",
+    "open_source_alternatives": []
+  },
+  "expected_artifact_name": "annotated_spectra_pubchem_derived.mgf",
+  "expected_outputs": [
+    "Subset of spectra with newly derived SMILES, InChI, and InChIKey annotations where monoisotopic mass validation passed",
+    "Change log documenting compound names, newly added annotations, parent mass match validation, and error cases"
+  ],
+  "finding": "When SMILES annotations are derived from compound names using PubChem lookup with parent mass validation, 1.62% of successfully annotated spectra receive an incorrect 2D structure annotation, while 27.6% cannot be annotated because the compound name is not found in PubChem.",
+  "github_name": null,
+  "input_from": "task_001",
+  "inputs": [
+    "GNPS public library spectra in matchms format",
+    "PubChem compound database"
+  ],
+  "keywords": [],
+  "landmark_outputs": [
+    "spectra_with_compound_names_only.mgf",
+    "pubchem_query_results.csv",
+    "mass_validation_results.csv",
+    "annotation_change_log.tsv"
+  ],
+  "linked_result_ids": [
+    "result_018"
+  ],
+  "methodology_summary": [
+    "Filter library to spectra with compound name metadata but lacking SMILES/InChI/InChIKey annotations",
+    "Query PubChem API for each compound name to retrieve canonical structure descriptors and compute monoisotopic mass",
+    "Validate returned monoisotopic mass against stored parent mass; accept annotation only if masses match within tolerance",
+    "Write annotated spectra and detailed change log documenting derivation source, matched structures, and validation outcomes"
+  ],
+  "missing_information": [
+    "Mass tolerance threshold (in Da or ppm) for accepting PubChem monoisotopic mass match against stored parent mass is not specified",
+    "Strategy for handling multiple PubChem hits returned for a single compound name query is not specified",
+    "Number of spectra in test datasets that have compound name but lack SMILES annotation (eligible input for this filter) is not reported",
+    "Quantitative success rate (proportion of eligible spectra receiving new annotation via PubChem lookup where monoisotopic mass matched) is not reported"
+  ],
+  "parameters": [],
+  "primary_domain": "cheminformatics",
+  "project_id": null,
+  "prov": {
+    "used": [],
+    "was_influenced_by": []
+  },
+  "provenance_source": "published",
+  "reproducibility_tier": "type-checked",
+  "research_question": "What is the error rate when deriving SMILES annotations from compound names via PubChem lookup, filtering only spectra where the returned monoisotopic mass matches the stored parent mass?",
+  "resumption_contract": null,
+  "review_questions": [
+    "Is the research question correctly identified and scoped?",
+    "Does the connected finding have enough supporting evidence?",
+    "Which artifacts are required before this can become an executable benchmark task?",
+    "What direct, visual, textual, or expert-review checks should be used for evaluation?"
+  ],
+  "run_command": null,
+  "run_cwd": null,
+  "run_timeout_seconds": 60.0,
+  "scenario_id": null,
+  "schema_version": "0.17.0",
+  "script_refs": [],
+  "skills": [
+    "spectral-metadata-annotation-derivation",
+    "compound-name-structure-resolution",
+    "monoisotopic-mass-validation-against-smiles",
+    "pubchem-query-integration",
+    "annotation-quality-filtering-by-parent-mass-matching",
+    "metadata-curation-logging"
+  ],
+  "source_package": "/Users/holobiomicslab/git/AgenticScienceBuilder/examples/article_878_package",
+  "subdomains": [
+    "computational-metabolomics"
+  ],
+  "subtask_categories": [
+    "data-processing",
+    "information-extraction"
+  ],
+  "synthesized_from": null,
+  "task_description": "Apply the 'derive annotation from compound name' filter to GNPS library spectra lacking SMILES annotations, querying PubChem for each compound name and accepting only results where the returned monoisotopic mass matches the stored parent mass; output the subset of spectra that received new SMILES, InChI, and InChIKey annotations.",
+  "task_id": "task_002",
+  "task_inputs": [
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "GNPS public library spectra in matchms format",
+      "port_id": "gnps_library",
+      "resolved_via": null,
+      "source": "task_001/cleaned_library",
+      "source_dataset": null
+    },
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "PubChem compound database access",
+      "port_id": "pubchem_db",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    }
+  ],
+  "task_objective": "Apply PubChem-based SMILES derivation to spectra lacking SMILES but containing compound names, validate hits by parent mass matching, and output the subset of spectra that received new valid annotations.",
+  "task_outputs": [
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "Spectra with newly derived SMILES/InChI/InChIKey where mass validation passed",
+      "port_id": "annotated_spectra",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    },
+    {
+      "edam_format_uri": null,
+      "edam_operation_uri": null,
+      "evidence_id": null,
+      "label": "Change log with compound names, new annotations, and validation results",
+      "port_id": "annotation_log",
+      "resolved_via": null,
+      "source": null,
+      "source_dataset": null
+    }
+  ],
+  "techniques": [
+    "tandem-ms",
+    "spectral-library-matching",
+    "metabolite-identification",
+    "database-annotation",
+    "machine-learning",
+    "quality-control"
+  ],
+  "title": "Filter: derive SMILES/InChI/InChIKey annotation from compound name via PubChem lookup with parent mass validation",
+  "tools": [
+    "matchms",
+    "Python",
+    "RDKit",
+    "PubChem"
+  ],
+  "uncertainty_notes": [
+    "This card was generated by the LLM-assisted pipeline and needs scientific expert review.",
+    "Each TracedClaim's evidence_span has been substring-checked against its source section; see logs/llm_calls.jsonl and capsules/<task_id>/quality_report.json for groundedness results."
+  ],
+  "workflow_description": "1. Load GNPS library spectra filtered to those with a compound name field but no existing SMILES/InChI/InChIKey using matchms. 2. For each spectrum, query PubChem using the compound name to retrieve canonical SMILES, InChI, and InChIKey. 3. Calculate the monoisotopic mass from the returned SMILES using RDKit. 4. Retain the PubChem-derived annotation only if the calculated monoisotopic mass matches the spectrum's stored parent mass within tolerance. 5. Write the annotated spectra to output, recording metadata changes (original compound name, new SMILES, new InChI, new InChIKey, parent mass match status) in a change log."
+}
