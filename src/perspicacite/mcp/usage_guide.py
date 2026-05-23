@@ -28,7 +28,14 @@ _TOOL_ENTRIES: list[dict] = [
         "name": "search_literature",
         "purpose": "Live multi-database academic search with enrichment and rerank.",
         "when_to_use": "Find candidate papers for a topic from the open literature.",
-        "key_knobs": ["databases", "max_results", "optimize_query", "year_min", "year_max", "min_relevance"],
+        "key_knobs": [
+            "databases",
+            "max_results",
+            "optimize_query",
+            "year_min",
+            "year_max",
+            "min_relevance",
+        ],
     },
     {
         "name": "web_search",
@@ -118,7 +125,15 @@ _TOOL_ENTRIES: list[dict] = [
         "name": "generate_report",
         "purpose": "Run a full RAG report over a KB (basic/advanced/profound/agentic/literature_survey/contradiction).",
         "when_to_use": "Synthesise an answer with citations from KB content.",
-        "key_knobs": ["mode", "kb_names", "max_papers", "recency_weight", "screen_method", "screen_threshold", "databases"],
+        "key_knobs": [
+            "mode",
+            "kb_names",
+            "max_papers",
+            "recency_weight",
+            "screen_method",
+            "screen_threshold",
+            "databases",
+        ],
     },
     {
         "name": "screen_papers",
@@ -148,7 +163,15 @@ _TOOL_ENTRIES: list[dict] = [
         "name": "add_local_papers_to_kb",
         "purpose": "Ingest local files into a KB with user-provided metadata (title, authors, year, abstract).",
         "when_to_use": "Use instead of ingest_local_documents when you have metadata to attach — proposal PDFs, preprints without DOIs, lab reports. Gives proper titles in search results rather than raw filenames.",
-        "key_knobs": ["file (required)", "title (required)", "authors", "year", "abstract", "keywords", "doi"],
+        "key_knobs": [
+            "file (required)",
+            "title (required)",
+            "authors",
+            "year",
+            "abstract",
+            "keywords",
+            "doi",
+        ],
     },
     {
         "name": "ingest_asb_run",
@@ -270,6 +293,66 @@ _TOOL_ENTRIES: list[dict] = [
         "purpose": "Project indicium claims to ASTRA Insights for interoperable analysis records.",
         "when_to_use": "After extracting claims, to hand them to an ASTRA-consuming tool.",
         "key_knobs": ["claims"],
+    },
+    {
+        "name": "build_claim_graph",
+        "purpose": "Build/refresh the indicium claim graph for a KB (oxigraph-backed).",
+        "when_to_use": "Run before first RAGMode.REASONING query or after new papers.",
+        "key_knobs": ["kb_name (required)", "refresh", "max_pairs_per_claim", "model"],
+    },
+    {
+        "name": "claim_graph_status",
+        "purpose": "Return the per-KB claim-graph manifest + last build summary.",
+        "when_to_use": "Check KB claim-graph freshness before reasoning; detects schema drift.",
+        "key_knobs": ["kb_name (required)"],
+    },
+    {
+        "name": "query_claim_graph",
+        "purpose": (
+            "Run a typed traversal query (claims_supporting / disputing / "
+            "trace / pattern / neighbors) against a KB's claim graph."
+        ),
+        "when_to_use": (
+            "Direct graph queries when reasoning mode's planner isn't "
+            "suitable or for tool composition."
+        ),
+        "key_knobs": ["kb_name (required)", "query_name (required)", "kwargs"],
+    },
+    {
+        "name": "claim_graph_export",
+        "purpose": (
+            "Export a KB's indicium claim graph as Turtle, JSON-LD, or RO-Crate."
+        ),
+        "when_to_use": (
+            "Archive or hand off a KB's claim graph to an external triple-store, "
+            "analysis pipeline, or research-object archive."
+        ),
+        "key_knobs": ["kb_name (required)", "format (turtle|jsonld|rocrate)"],
+    },
+    {
+        "name": "get_claim_figures",
+        "purpose": (
+            "Return Figure nodes (microscopy, plots, diagrams) associated with "
+            "a claim IRI in the KB claim graph."
+        ),
+        "when_to_use": (
+            "After build_claim_graph, when you need the visual evidence behind "
+            "a specific claim — e.g. to surface supporting figures in a report."
+        ),
+        "key_knobs": ["kb_name (required)", "claim_iri (required)"],
+    },
+    {
+        "name": "get_claim_links",
+        "purpose": (
+            "Return ClaimLink nodes (supports, contradicts, refines, etc.) "
+            "for a claim IRI in the KB claim graph."
+        ),
+        "when_to_use": (
+            "After build_claim_graph, when you need the full typed-edge context "
+            "around a specific claim — e.g. to surface contradicting claims, "
+            "argument chains, or methodological refinements in a report."
+        ),
+        "key_knobs": ["kb_name (required)", "claim_iri (required)"],
     },
 ]
 

@@ -33,6 +33,7 @@ RAG_MODE_MAP = {
     "profound": RAGMode.PROFOUND,
     "literature_survey": RAGMode.LITERATURE_SURVEY,
     "contradiction": RAGMode.CONTRADICTION,
+    "reasoning": RAGMode.REASONING,
 }
 
 router = APIRouter()

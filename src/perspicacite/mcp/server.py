@@ -35,7 +35,11 @@ from perspicacite.pipeline.asb.response import build_asb_response_metadata
 from perspicacite.pipeline.asb.run_ingest import ingest_asb_run as ingest_asb_run_pipeline
 from perspicacite.pipeline.github_kb import (
     IngestSummary,
+)
+from perspicacite.pipeline.github_kb import (
     ingest_github_repo as ingest_github_repo_pipeline,
+)
+from perspicacite.pipeline.github_kb import (
     ingest_skill_bundle as ingest_skill_bundle_pipeline,
 )
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
@@ -176,9 +180,7 @@ def _json_error(message: str, **extra: Any) -> str:
     )
 
 
-async def _resolve_push_input(
-    inp: dict, *, http_client: Any
-) -> tuple[dict, str, str]:
+async def _resolve_push_input(inp: dict, *, http_client: Any) -> tuple[dict, str, str]:
     """Normalize a push_to_zotero input dict into a ``paper`` dict ready for
     :meth:`ZoteroClient.create_item`.
 
@@ -196,10 +198,9 @@ async def _resolve_push_input(
         try:
             import bibtexparser
         except ImportError as exc:
-            raise RuntimeError(
-                "bibtexparser not installed; pip install bibtexparser"
-            ) from exc
+            raise RuntimeError("bibtexparser not installed; pip install bibtexparser") from exc
         import re as _re
+
         bib = bibtexparser.loads(inp["bibtex"])
         if not bib.entries:
             raise RuntimeError("bibtex string contained no entries")
@@ -225,7 +226,9 @@ async def _resolve_push_input(
         eprint = (e.get("eprint") or "").strip()
         archive_prefix = (e.get("archiveprefix") or e.get("archivePrefix") or "").lower()
         arxiv_id: str | None = None
-        if (archive_prefix == "arxiv" and _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint)) or _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint):
+        if (
+            archive_prefix == "arxiv" and _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint)
+        ) or _re.match(r"^[0-9]{4}\.[0-9]{4,6}$", eprint):
             arxiv_id = eprint
         elif e.get("url"):
             m = _re.search(
@@ -240,9 +243,7 @@ async def _resolve_push_input(
 
         promoted_title = _unbrace(e.get("title", ""))
         promoted_authors = [
-            _unbrace(a.strip())
-            for a in (e.get("author") or "").split(" and ")
-            if a.strip()
+            _unbrace(a.strip()) for a in (e.get("author") or "").split(" and ") if a.strip()
         ]
 
         # Last-resort: if the bib entry has no DOI and no usable URL
@@ -264,15 +265,18 @@ async def _resolve_push_input(
             from perspicacite.pipeline.download.title_resolver import (
                 resolve_doi_from_title,
             )
+
             # Headless Chromium tier 5 is opt-in via env var. Avoids
             # ImportError + 150MB Chromium download for the common
             # case where the four HTTP tiers are enough. Agents with
             # a browser MCP available (e.g. ``claude-in-chrome``)
             # can pre-resolve the title themselves and pass the DOI
             # to ``push_to_zotero`` directly — see tool docstring.
-            enable_browser = (
-                _os.getenv("PERSPICACITE_HEADLESS_BROWSER", "").strip().lower()
-                in ("1", "true", "yes", "on")
+            enable_browser = _os.getenv("PERSPICACITE_HEADLESS_BROWSER", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
             )
             try:
                 resolved_doi = await resolve_doi_from_title(
@@ -300,6 +304,7 @@ async def _resolve_push_input(
     # DOI route: full metadata + abstract fetch via the unified pipeline.
     if inp.get("doi"):
         from perspicacite.pipeline.download import retrieve_paper_content
+
         doi = inp["doi"].strip().replace("https://doi.org/", "")
         content = await retrieve_paper_content(
             doi,
@@ -310,8 +315,18 @@ async def _resolve_push_input(
         paper["doi"] = doi
         paper["abstract"] = content.abstract or paper.get("abstract")
         # Caller-supplied fields take precedence over auto-discovered ones
-        for k in ("title", "authors", "year", "journal", "item_type",
-                   "url", "tags", "abstract", "repository", "archive_id"):
+        for k in (
+            "title",
+            "authors",
+            "year",
+            "journal",
+            "item_type",
+            "url",
+            "tags",
+            "abstract",
+            "repository",
+            "archive_id",
+        ):
             if inp.get(k):
                 paper[k] = inp[k]
         url = paper.get("url") or ""
@@ -326,6 +341,7 @@ async def _resolve_push_input(
         derived_item_type = inp.get("item_type")
         if not derived_item_type:
             from perspicacite.pipeline.download.youtube import is_youtube_url
+
             if is_youtube_url(url):
                 derived_item_type = "videoRecording"
         paper = {
@@ -343,9 +359,8 @@ async def _resolve_push_input(
             # Last-ditch: derive a title from the URL path so the Zotero
             # item isn't blank.
             from urllib.parse import urlparse
-            paper["title"] = (
-                urlparse(url).path.strip("/").split("/")[-1] or url
-            )
+
+            paper["title"] = urlparse(url).path.strip("/").split("/")[-1] or url
         return paper, "", url
 
     raise RuntimeError(
@@ -440,9 +455,9 @@ async def search_literature(
     if isinstance(state, str):
         return state
 
+    from perspicacite.rag.telemetry import ResponseMetadataCollector
     from perspicacite.search.domain_aggregator import build_aggregator
     from perspicacite.search.scilex_adapter import KNOWN_DATABASES
-    from perspicacite.rag.telemetry import ResponseMetadataCollector
 
     # Response-level metadata collector. Mirrors the wiring in generate_report:
     # any telemetry events emitted during this call (tokens / cost from the
@@ -459,9 +474,7 @@ async def search_literature(
         filtered_databases = [d for d in databases if d in KNOWN_DATABASES]
         dropped = sorted(set(databases) - KNOWN_DATABASES)
         if dropped:
-            logger.warning(
-                "mcp_search_literature_unknown_db", dropped=dropped
-            )
+            logger.warning("mcp_search_literature_unknown_db", dropped=dropped)
         if not filtered_databases:
             filtered_databases = None  # fall back to defaults
 
@@ -470,11 +483,12 @@ async def search_literature(
         if not aggregator.available:
             return _json_error(
                 "No search providers are available. Install SciLEx with: "
-                "`uv pip install -e \".[scilex]\"` from the Perspicacité repo, "
+                '`uv pip install -e ".[scilex]"` from the Perspicacité repo, '
                 "or configure at least one search provider in config.yml.",
                 scilex_available=False,
             )
         import perspicacite.search.query_optimizer as _qo_mod
+
         try:
             opt = await _qo_mod.optimize_query(
                 query=query,
@@ -486,12 +500,13 @@ async def search_literature(
         except Exception as _qo_exc:
             # The optimizer fails closed: any unexpected error (bad config,
             # missing LLM client, etc.) degrades to "use the verbatim query".
-            logger.warning(
-                "mcp_search_literature_optimizer_error", error=str(_qo_exc)
-            )
+            logger.warning("mcp_search_literature_optimizer_error", error=str(_qo_exc))
             opt = _qo_mod.OptimizationResult(
-                searched_query=query, enabled=False, applied=False,
-                context_used=False, fallback_reason="optimizer_error",
+                searched_query=query,
+                enabled=False,
+                applied=False,
+                context_used=False,
+                fallback_reason="optimizer_error",
             )
 
         # When filtering by relevance, overfetch ~3x so the post-filter
@@ -518,17 +533,20 @@ async def search_literature(
         mcp_warnings: list[dict] = []
         try:
             from perspicacite.search.scilex_adapter import SciLExAdapter
+
             for _prov in getattr(aggregator, "_providers", []):
                 if isinstance(_prov, SciLExAdapter):
                     if _prov._last_dropped_apis:
-                        mcp_warnings.append({
-                            "kind": "unknown_apis_dropped",
-                            "apis": list(_prov._last_dropped_apis),
-                            "advice": (
-                                "Use the web_search MCP tool for non-SciLEx providers "
-                                "(google_scholar, europepmc, etc.)."
-                            ),
-                        })
+                        mcp_warnings.append(
+                            {
+                                "kind": "unknown_apis_dropped",
+                                "apis": list(_prov._last_dropped_apis),
+                                "advice": (
+                                    "Use the web_search MCP tool for non-SciLEx providers "
+                                    "(google_scholar, europepmc, etc.)."
+                                ),
+                            }
+                        )
                     if _prov._last_quota_warning is not None:
                         mcp_warnings.append(_prov._last_quota_warning)
                     break
@@ -538,6 +556,7 @@ async def search_literature(
         # Crossref-enrich the returned papers (fills missing abstracts etc.).
         if enrich and papers:
             from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
+
             try:
                 papers = await enrich_papers(papers)
             except Exception as _ee:
@@ -546,13 +565,15 @@ async def search_literature(
         # ── Dedup against existing KB (optional) ───────────────────────
         if exclude_kb:
             from perspicacite.models.kb import chroma_collection_name_for_kb
+
             collection = chroma_collection_name_for_kb(exclude_kb)
             filtered_papers = []
             for paper in papers:
                 if paper.doi:
                     try:
                         already = await state.vector_store.paper_exists(
-                            collection, paper.doi,
+                            collection,
+                            paper.doi,
                         )
                         if already:
                             continue
@@ -595,18 +616,25 @@ async def search_literature(
                 screen_papers_llm,
                 screen_papers_rerank,
             )
+
             method = (relevance_method or "bm25").lower()
             if method == "bm25":
                 scored = screen_papers(
-                    results, reference=query, threshold=min_relevance,
+                    results,
+                    reference=query,
+                    threshold=min_relevance,
                 )
             elif method == "rerank":
                 scored = await screen_papers_rerank(
-                    results, query=query, threshold=min_relevance,
+                    results,
+                    query=query,
+                    threshold=min_relevance,
                 )
             elif method == "llm":
                 scored = await screen_papers_llm(
-                    results, query=query, llm=state.llm_client,
+                    results,
+                    query=query,
+                    llm=state.llm_client,
                     threshold=min_relevance,
                 )
             else:
@@ -641,13 +669,9 @@ async def search_literature(
         # PubMed leads the default fan-out (no key, reliable); Semantic Scholar
         # is last (rate-limited). Keep in sync with the SciLEx adapter's
         # default ``apis`` list in ``_scilex_search_sync``.
-        databases_queried = (
-            filtered_databases or ["pubmed", "openalex", "semantic_scholar"]
-        )
+        databases_queried = filtered_databases or ["pubmed", "openalex", "semantic_scholar"]
         all_dbs_failed = (
-            bool(errors_by_db)
-            and len(errors_by_db) >= len(databases_queried)
-            and not results
+            bool(errors_by_db) and len(errors_by_db) >= len(databases_queried) and not results
         )
         # F-34: always include errors_by_database (even when empty) so callers
         # can distinguish "this DB returned 0 results" from "this DB silently
@@ -656,7 +680,9 @@ async def search_literature(
         errors_full.update(errors_by_db)
 
         payload: dict[str, Any] = {
-            "query": query, "total_results": len(results), "papers": results,
+            "query": query,
+            "total_results": len(results),
+            "papers": results,
             "warnings": mcp_warnings,
             "errors_by_database": errors_full,
             "original_query": query,
@@ -674,9 +700,7 @@ async def search_literature(
         payload.update(_response_collector.as_response_extras())
         if all_dbs_failed:
             payload["success"] = False
-            payload["error"] = (
-                "All queried databases failed; see errors_by_database for details."
-            )
+            payload["error"] = "All queried databases failed; see errors_by_database for details."
             return _json_error(
                 payload["error"],
                 **{k: v for k, v in payload.items() if k != "error"},
@@ -941,7 +965,8 @@ async def search_knowledge_base(
             if year_min is not None or year_max is not None:
                 logger.warning(
                     "search_kb_multi_year_filter_ignored",
-                    year_min=year_min, year_max=year_max,
+                    year_min=year_min,
+                    year_max=year_max,
                     note="multi-KB filter passthrough is a Wave 4.2 followup",
                 )
             from perspicacite.retrieval.multi_kb import MultiKBRetriever, check_embedding_compat
@@ -1014,10 +1039,9 @@ async def search_knowledge_base(
         # Split on "|" in case the stored name is a legacy composite like
         # "text-embedding-3-small|all-MiniLM-L6-v2"; use the first entry.
         from perspicacite.llm.embeddings import create_embedding_provider
+
         _kb_model_name = kb_meta.embedding_model.split("|")[0].strip()
-        _kb_embedding = create_embedding_provider(
-            _kb_model_name, use_local_fallback=False
-        )
+        _kb_embedding = create_embedding_provider(_kb_model_name, use_local_fallback=False)
         dkb = DynamicKnowledgeBase(
             state.vector_store,
             _kb_embedding,
@@ -1030,6 +1054,7 @@ async def search_knowledge_base(
 
         # Build year-bounded filters (Wave 4.2).
         from perspicacite.models.search import SearchFilters
+
         filters = None
         if year_min is not None or year_max is not None:
             filters = SearchFilters(year_min=year_min, year_max=year_max)
@@ -1046,8 +1071,11 @@ async def search_knowledge_base(
             if isinstance(r, dict):
                 meta_obj = r.get("metadata") or {}
                 meta_dict = (
-                    meta_obj.__dict__ if hasattr(meta_obj, "__dict__")
-                    else dict(meta_obj) if isinstance(meta_obj, dict) else {}
+                    meta_obj.__dict__
+                    if hasattr(meta_obj, "__dict__")
+                    else dict(meta_obj)
+                    if isinstance(meta_obj, dict)
+                    else {}
                 )
                 pm_dict = decode_paper_metadata_json(meta_dict)
                 chunks.append(
@@ -1413,6 +1441,7 @@ async def generate_report(
         return state
 
     import uuid as _uuid
+
     if not task_id:
         task_id = f"mcp-{_uuid.uuid4().hex[:12]}"
 
@@ -1420,7 +1449,8 @@ async def generate_report(
     if ctx is not None:
         try:
             await ctx.report_progress(
-                progress=0, total=100,
+                progress=0,
+                total=100,
                 message=f"Task started — task_id={task_id}",
             )
         except Exception:
@@ -1430,6 +1460,7 @@ async def generate_report(
     # contextvar token directly here (rather than the `with` form) to
     # avoid re-indenting this tool's large body.
     from perspicacite.llm.mcp_sampling import _mcp_ctx as _sampling_ctx
+
     _sampling_token = _sampling_ctx.set(ctx) if ctx is not None else None
     try:
         message_id = str(uuid.uuid4())
@@ -1508,9 +1539,7 @@ async def generate_report(
             screen_threshold = max(0.0, min(1.0, float(screen_threshold)))
         if max_papers_to_download is not None:
             max_papers_to_download = max(1, min(50, int(max_papers_to_download)))
-        if screen_method is not None and screen_method not in (
-            "bm25", "rerank", "llm"
-        ):
+        if screen_method is not None and screen_method not in ("bm25", "rerank", "llm"):
             logger.warning(
                 "mcp_generate_report_unknown_screen_method",
                 method=screen_method,
@@ -1558,11 +1587,13 @@ async def generate_report(
         # the final JSON response carries attempts/query_rephrasings/usage
         # even when MCP progress notifications get dropped.
         from perspicacite.rag.telemetry import ResponseMetadataCollector
+
         _response_collector = ResponseMetadataCollector()
 
         if ctx is not None:
             from perspicacite.mcp.progress_adapter import MCPProgressAdapter
             from perspicacite.rag.telemetry import CallbackTelemetrySink
+
             _progress_adapter = MCPProgressAdapter(ctx)
             _progress_sink = CallbackTelemetrySink(_progress_adapter.on_event)
 
@@ -1638,10 +1669,7 @@ async def generate_report(
                     break
 
         asb_md = build_asb_response_metadata(
-            [
-                {"metadata": s.get("metadata") if isinstance(s, dict) else None}
-                for s in sources
-            ]
+            [{"metadata": s.get("metadata") if isinstance(s, dict) else None} for s in sources]
         )
 
         if cancelled_reason == "cancelled":
@@ -1676,8 +1704,10 @@ async def generate_report(
             try:
                 from perspicacite.pipeline.claims import extract_claims as _extract_claims, validate_claims
                 _passages = [
-                    {"chunk_text": s.get("section") or s.get("title", ""),
-                     "source": {"doi": s.get("doi"), "title": s.get("title")}}
+                    {
+                        "chunk_text": s.get("section") or s.get("title", ""),
+                        "source": {"doi": s.get("doi"), "title": s.get("title")},
+                    }
                     for s in sources
                 ]
 
@@ -1782,14 +1812,18 @@ async def screen_papers(
 
         # Accept user-supplied metadata dicts as-is.
         for d in dicts_already:
-            items.append({
-                "doi": (d.get("doi") or "").strip().replace("https://doi.org/", "") or None,
-                "title": d.get("title") or d.get("doi") or "(untitled)",
-                "abstract": d.get("abstract") or "",
-            })
+            items.append(
+                {
+                    "doi": (d.get("doi") or "").strip().replace("https://doi.org/", "") or None,
+                    "title": d.get("title") or d.get("doi") or "(untitled)",
+                    "abstract": d.get("abstract") or "",
+                }
+            )
 
         # Only spin up an HTTP client if at least one string looks like a DOI.
-        doi_like = [c for c in strings_only if c.strip().lower().startswith("10.") or "doi.org/" in c]
+        doi_like = [
+            c for c in strings_only if c.strip().lower().startswith("10.") or "doi.org/" in c
+        ]
         if doi_like:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 for c in strings_only:
@@ -1817,11 +1851,16 @@ async def screen_papers(
         if method == "llm":
             from perspicacite.llm.client import resolve_stage_model
             from perspicacite.llm.mcp_sampling import use_mcp_context
+
             sp, sm = resolve_stage_model(state.config, "screening")
             with use_mcp_context(ctx):
                 results = await _llm(
-                    items, query=query, llm=state.llm_client,
-                    threshold=threshold, model=sm, provider=sp,
+                    items,
+                    query=query,
+                    llm=state.llm_client,
+                    threshold=threshold,
+                    model=sm,
+                    provider=sp,
                 )
         else:
             results = _bm25(items, reference=query, method="bm25", threshold=threshold)
@@ -1944,11 +1983,14 @@ async def add_dois_to_kb(
 
                 if not result or not result.success:
                     attempts = list(getattr(result, "attempts", []) or [])
-                    failed.append({
-                        "doi": doi,
-                        "reason": "; ".join(f"{a['source']}:{a['status']}" for a in attempts) or "no content",
-                        "attempts": attempts,
-                    })
+                    failed.append(
+                        {
+                            "doi": doi,
+                            "reason": "; ".join(f"{a['source']}:{a['status']}" for a in attempts)
+                            or "no content",
+                            "attempts": attempts,
+                        }
+                    )
                     dl["failed"] += 1
                     continue
 
@@ -1969,11 +2011,13 @@ async def add_dois_to_kb(
                     dl["success"] += 1
                 else:
                     dl["metadata_only"] += 1
-                    metadata_only.append({
-                        "doi": doi,
-                        "content_type": paper.content_type,
-                        "attempts": list(getattr(result, "attempts", []) or []),
-                    })
+                    metadata_only.append(
+                        {
+                            "doi": doi,
+                            "content_type": paper.content_type,
+                            "attempts": list(getattr(result, "attempts", []) or []),
+                        }
+                    )
                 papers_to_add.append(paper)
 
         added_with_full_text = sum(1 for p in papers_to_add if getattr(p, "full_text", None))
@@ -2135,9 +2179,7 @@ async def push_to_zotero(
         collection_key if collection_key is not None else (cfg.collection_key or "")
     )
     if not effective_library_id:
-        return _json_error(
-            "library_id required (pass via argument or set zotero.library_id)"
-        )
+        return _json_error("library_id required (pass via argument or set zotero.library_id)")
 
     # Normalize the two input shapes (dois shortcut, items list) into a
     # uniform list of input dicts.
@@ -2187,9 +2229,7 @@ async def push_to_zotero(
                 url: str = ""
                 paper: dict[str, Any] = {}
                 try:
-                    paper, doi, url = await _resolve_push_input(
-                        inp, http_client=http_client
-                    )
+                    paper, doi, url = await _resolve_push_input(inp, http_client=http_client)
                 except Exception as exc:
                     route_err = str(exc)
                 if route_err is not None:
@@ -2216,9 +2256,7 @@ async def push_to_zotero(
                     pdf_path = None
                     pdf_too_large = False
                     if attach_pdf and doi:
-                        pdf_path = (
-                            cached_pdf_path(doi, cache_dir) if cache_dir else None
-                        )
+                        pdf_path = cached_pdf_path(doi, cache_dir) if cache_dir else None
                         if pdf_path is None and state.pdf_parser is not None:
                             # Trigger a full fetch (which also populates the
                             # cache for next time) before uploading.
@@ -2233,9 +2271,7 @@ async def push_to_zotero(
                                 springer_api_key=pdf_config.springer_api_key,
                                 pdf_cache_dir=cache_dir,
                             )
-                            pdf_path = (
-                                cached_pdf_path(doi, cache_dir) if cache_dir else None
-                            )
+                            pdf_path = cached_pdf_path(doi, cache_dir) if cache_dir else None
                         if pdf_path is None and cache_dir:
                             # retrieve_paper_content returned at the
                             # structured-text tier (e.g. arXiv HTML) before
@@ -2245,6 +2281,7 @@ async def push_to_zotero(
                             from perspicacite.pipeline.download.unified import (
                                 download_paper_pdf,
                             )
+
                             await download_paper_pdf(
                                 doi,
                                 http_client=http_client,
@@ -2301,11 +2338,12 @@ async def push_to_zotero(
                     # content with [mm:ss] timestamps. Falls through to
                     # the HTML path on any error.
                     attached_transcript = False
-                    if (paper.get("url") or url):
+                    if paper.get("url") or url:
                         from perspicacite.pipeline.download.youtube import (
                             fetch_youtube_transcript,
                             is_youtube_url,
                         )
+
                         target_url = paper.get("url") or url
                         if is_youtube_url(target_url):
                             try:
@@ -2317,16 +2355,15 @@ async def push_to_zotero(
                                 )
                                 import re as _re_yt
                                 from pathlib import Path as _Path
+
                                 if cache_dir:
                                     yt_dir = _Path(cache_dir).expanduser() / "youtube"
                                 else:
-                                    yt_dir = (
-                                        _Path.home() / ".cache" / "perspicacite"
-                                        / "youtube"
-                                    )
+                                    yt_dir = _Path.home() / ".cache" / "perspicacite" / "youtube"
                                 yt_dir.mkdir(parents=True, exist_ok=True)
                                 slug = _re_yt.sub(
-                                    r"[^a-zA-Z0-9.-]+", "_",
+                                    r"[^a-zA-Z0-9.-]+",
+                                    "_",
                                     target_url.lower(),
                                 )[:120]
                                 yt_path = yt_dir / f"{slug}.md"
@@ -2350,17 +2387,15 @@ async def push_to_zotero(
                     # bibliographic stub when the live page is blocked.
                     # Skipped for YouTube items that already got a
                     # transcript attachment above.
-                    need_html = (
-                        not attached_transcript and (
-                            (not doi)
-                            or (attach_pdf and (pdf_path is None or pdf_too_large))
-                        )
+                    need_html = not attached_transcript and (
+                        (not doi) or (attach_pdf and (pdf_path is None or pdf_too_large))
                     )
                     if need_html:
                         try:
                             from perspicacite.pipeline.download.html_capture import (
                                 capture_landing_html,
                             )
+
                             html_attach = await capture_landing_html(
                                 doi=doi,
                                 landing_url=paper.get("url") or url,
@@ -2386,10 +2421,12 @@ async def push_to_zotero(
                     # DOI route only — URL-route items don't have a capsule path.
                     if attach_supplementary and doi:
                         from pathlib import Path
+
                         si_dir = (
                             Path(state.config.capsule.root)
                             / doi.replace("/", "_")
-                            / "supplementary" / "files"
+                            / "supplementary"
+                            / "files"
                         )
                         attached_si: list[str] = []
                         si_errors: list[dict] = []
@@ -2406,9 +2443,7 @@ async def push_to_zotero(
                                     if att_key:
                                         attached_si.append(f.name)
                                 except Exception as exc:
-                                    si_errors.append(
-                                        {"file": f.name, "error": str(exc)}
-                                    )
+                                    si_errors.append({"file": f.name, "error": str(exc)})
                         entry["attached_supplementary"] = attached_si
                         if si_errors:
                             entry["si_attach_errors"] = si_errors
@@ -2419,8 +2454,10 @@ async def push_to_zotero(
 
         logger.info(
             "mcp_push_to_zotero",
-            created=len(created), failed=len(failed),
-            attach_pdf=attach_pdf, attach_supplementary=attach_supplementary,
+            created=len(created),
+            failed=len(failed),
+            attach_pdf=attach_pdf,
+            attach_supplementary=attach_supplementary,
         )
         return _json_ok({"created": created, "skipped": [], "failed": failed})
 
@@ -2478,8 +2515,7 @@ async def push_notes_to_zotero(
         zotero_cfg = cfg.zotero if cfg else None
         if not zotero_cfg or not zotero_cfg.api_key:
             return _json_error(
-                "Zotero is not configured. Set zotero.api_key and "
-                "zotero.library_id in config.yml."
+                "Zotero is not configured. Set zotero.api_key and zotero.library_id in config.yml."
             )
 
         from perspicacite.integrations.zotero import ZoteroClient
@@ -2510,17 +2546,21 @@ async def push_notes_to_zotero(
             # Resolve parent key via DOI when item_key not provided
             if not item_key:
                 if not doi:
-                    failed.append({
-                        "input": entry,
-                        "reason": "must supply item_key or doi to identify the parent item",
-                    })
+                    failed.append(
+                        {
+                            "input": entry,
+                            "reason": "must supply item_key or doi to identify the parent item",
+                        }
+                    )
                     continue
                 item_key = await client._find_existing_by_doi(doi)
                 if not item_key:
-                    failed.append({
-                        "input": entry,
-                        "reason": f"DOI {doi!r} not found in library {lib_id}",
-                    })
+                    failed.append(
+                        {
+                            "input": entry,
+                            "reason": f"DOI {doi!r} not found in library {lib_id}",
+                        }
+                    )
                     continue
 
             try:
@@ -2621,6 +2661,7 @@ async def ingest_url(
             if not effective_library_id:
                 return _json_error("library_id required for Zotero push")
             from perspicacite.integrations.zotero import ZoteroClient
+
             zotero = ZoteroClient(
                 api_key=cfg.api_key,
                 library_id=effective_library_id,
@@ -2769,7 +2810,6 @@ async def ingest_local_documents(
     Files must be absolute paths under one of `local_docs.allowed_roots`.
     If allowed_roots is empty, this tool refuses all calls.
     """
-    from pathlib import Path
 
     from perspicacite.integrations.local_docs import (
         LocalDocsDisabledError,
@@ -2791,9 +2831,14 @@ async def ingest_local_documents(
         return {"error": str(exc)}
 
     class _Reg:
-        async def publish(self, jid, ev): pass
-        async def finish(self, jid, res): self._res = res
-        async def fail(self, jid, err): self._err = err
+        async def publish(self, jid, ev):
+            pass
+
+        async def finish(self, jid, res):
+            self._res = res
+
+        async def fail(self, jid, err):
+            self._err = err
 
     reg = _Reg()
     return await _ingest(
@@ -2860,6 +2905,7 @@ async def add_local_papers_to_kb(
         return _json_error(f"Knowledge base '{kb_name}' not found")
 
     from perspicacite.models.kb import chroma_collection_name_for_kb
+
     collection_name = chroma_collection_name_for_kb(kb_name)
     dkb_config = KnowledgeBaseConfig(
         vector_size=state.embedding_provider.dimension,
@@ -2894,6 +2940,7 @@ async def add_local_papers_to_kb(
 
         # Parse full text from the local file.
         from perspicacite.integrations.local_docs import infer_content_type
+
         content_type, _ = infer_content_type(fp)
         full_text: str | None = None
         if content_type == "pdf":
@@ -2902,22 +2949,24 @@ async def add_local_papers_to_kb(
                     parsed = await state.pdf_parser.parse(fp)
                     full_text = parsed.text or None
                 except Exception as exc:
-                    results.append({"file": raw_file, "status": "error",
-                                    "reason": f"PDF parse failed: {exc}"})
+                    results.append(
+                        {"file": raw_file, "status": "error", "reason": f"PDF parse failed: {exc}"}
+                    )
                     continue
         else:
             try:
                 full_text = fp.read_text(encoding="utf-8", errors="replace") or None
             except Exception as exc:
-                results.append({"file": raw_file, "status": "error", "reason": f"Read failed: {exc}"})  # noqa: E501
+                results.append(
+                    {"file": raw_file, "status": "error", "reason": f"Read failed: {exc}"}
+                )
                 continue
 
         doi = pd.get("doi")
         paper_id = doi if doi else f"generated:{hashlib.md5(title.encode()).hexdigest()[:12]}"
 
         authors = [
-            Author(name=a) if isinstance(a, str) else Author(**a)
-            for a in pd.get("authors", [])
+            Author(name=a) if isinstance(a, str) else Author(**a) for a in pd.get("authors", [])
         ]
         abstract = pd.get("abstract")
         # Prepend abstract to full text so it's always retrievable even for
@@ -2944,8 +2993,9 @@ async def add_local_papers_to_kb(
             total_chunks += n
             results.append({"file": raw_file, "title": title, "status": "ok", "chunks": n})
         except Exception as exc:
-            results.append({"file": raw_file, "title": title, "status": "error",
-                            "reason": str(exc)})
+            results.append(
+                {"file": raw_file, "title": title, "status": "error", "reason": str(exc)}
+            )
 
     papers_ok = sum(1 for r in results if r["status"] == "ok")
     kb_meta.chunk_count = (kb_meta.chunk_count or 0) + total_chunks
@@ -3036,7 +3086,8 @@ async def ingest_urls_to_kb(
     written_paths: list[Path] = []
     arxiv_dois: list[tuple[str, str]] = []  # (original_url, arxiv_doi)
     async with httpx.AsyncClient(
-        timeout=30.0, follow_redirects=True,
+        timeout=30.0,
+        follow_redirects=True,
     ) as http_client:
         for url in urls:
             # Route arxiv URLs through the structured-fulltext DOI pipeline
@@ -3047,17 +3098,21 @@ async def ingest_urls_to_kb(
                 aid = _arxiv_id_from_url(url)
                 if aid:
                     arxiv_dois.append((url, f"10.48550/arxiv.{aid}"))
-                    results.append({
-                        "url": url, "status": "arxiv_routed",
-                        "doi": f"10.48550/arxiv.{aid}",
-                    })
+                    results.append(
+                        {
+                            "url": url,
+                            "status": "arxiv_routed",
+                            "doi": f"10.48550/arxiv.{aid}",
+                        }
+                    )
                     continue
 
             slug = _re.sub(r"[^a-zA-Z0-9.]+", "_", url.lower())[:120] or "url"
             dest = cache_dir / f"{slug}.md"
             try:
                 md, title = await fetch_url_as_markdown(
-                    url, http_client=http_client,
+                    url,
+                    http_client=http_client,
                     llm_client=state.llm_client,
                     youtube_correct=youtube_correct,
                 )
@@ -3067,15 +3122,22 @@ async def ingest_urls_to_kb(
                     md = f"# {title}\n\n{md}"
                 dest.write_text(md, encoding="utf-8")
                 written_paths.append(dest)
-                results.append({
-                    "url": url, "status": "ok",
-                    "chars": len(md), "path": str(dest),
-                })
+                results.append(
+                    {
+                        "url": url,
+                        "status": "ok",
+                        "chars": len(md),
+                        "path": str(dest),
+                    }
+                )
             except Exception as exc:
-                results.append({
-                    "url": url, "status": "fetch_failed",
-                    "error": str(exc)[:200],
-                })
+                results.append(
+                    {
+                        "url": url,
+                        "status": "fetch_failed",
+                        "error": str(exc)[:200],
+                    }
+                )
 
     # Process arxiv URLs via the structured-fulltext DOI ingest path.
     arxiv_chunks = 0
@@ -3096,7 +3158,9 @@ async def ingest_urls_to_kb(
             for original_url, doi in arxiv_dois:
                 try:
                     pc = await retrieve_paper_content(
-                        doi, pdf_parser=state.pdf_parser, url=original_url,
+                        doi,
+                        pdf_parser=state.pdf_parser,
+                        url=original_url,
                     )
                 except Exception as exc:
                     for r in results:
@@ -3145,9 +3209,14 @@ async def ingest_urls_to_kb(
         }
 
     class _Reg:
-        async def publish(self, jid, ev): pass
-        async def finish(self, jid, res): self._res = res
-        async def fail(self, jid, err): self._err = err
+        async def publish(self, jid, ev):
+            pass
+
+        async def finish(self, jid, res):
+            self._res = res
+
+        async def fail(self, jid, err):
+            self._err = err
 
     reg = _Reg()
     ingest_result = await _ingest(
@@ -3197,8 +3266,11 @@ async def build_capsule(
     paper = resolve_paper_from_metadata(row)
     pdf_path = locate_cached_pdf(row)
     return await _build(
-        paper=paper, pdf_path=pdf_path, kb_name=kb_name,
-        app_state=mcp_state, force=force,
+        paper=paper,
+        pdf_path=pdf_path,
+        kb_name=kb_name,
+        app_state=mcp_state,
+        force=force,
     )
 
 
@@ -3223,8 +3295,14 @@ async def build_capsules_for_kb(
 
     kb = await mcp_state.session_store.get_kb_metadata(kb_name)
     if kb is None:
-        return {"error": f"KB '{kb_name}' not found", "total": 0,
-                "built": 0, "skipped": 0, "errored": 0, "per_paper": []}
+        return {
+            "error": f"KB '{kb_name}' not found",
+            "total": 0,
+            "built": 0,
+            "skipped": 0,
+            "errored": 0,
+            "per_paper": [],
+        }
     rows = await mcp_state.vector_store.list_paper_metadata(kb.collection_name)
     per_paper = []
     counts = {"built": 0, "skipped": 0, "errored": 0}
@@ -3233,8 +3311,11 @@ async def build_capsules_for_kb(
         pdf_path = locate_cached_pdf(row)
         try:
             res = await _build(
-                paper=paper, pdf_path=pdf_path,
-                kb_name=kb_name, app_state=mcp_state, force=force,
+                paper=paper,
+                pdf_path=pdf_path,
+                kb_name=kb_name,
+                app_state=mcp_state,
+                force=force,
             )
             status = res.get("status", "errored")
             counts[status] = counts.get(status, 0) + 1
@@ -3285,24 +3366,38 @@ async def fetch_paper_resources(
         class _LocalReg:
             def __init__(self):
                 self.events: list[dict] = []
+
             async def publish(self, _job_id, payload):
                 self.events.append(payload)
+
             async def finish(self, _job_id, payload):
                 self.events.append({"type": "done", **payload})
+
             async def fail(self, _job_id, msg):
                 self.events.append({"type": "error", "error": msg})
+
         reg = _LocalReg()
         result = await _fetch(
-            paper=paper, capsule_dir=cap_dir, kinds=kinds,
-            app_state=mcp_state, registry=reg, job_id="local",
-            ingest=ingest, force=force,
+            paper=paper,
+            capsule_dir=cap_dir,
+            kinds=kinds,
+            app_state=mcp_state,
+            registry=reg,
+            job_id="local",
+            ingest=ingest,
+            force=force,
         )
         return result
     job_id = await mcp_state.job_registry.create("external_fetch", total=0)
     result = await _fetch(
-        paper=paper, capsule_dir=cap_dir, kinds=kinds,
-        app_state=mcp_state, registry=mcp_state.job_registry, job_id=job_id,
-        ingest=ingest, force=force,
+        paper=paper,
+        capsule_dir=cap_dir,
+        kinds=kinds,
+        app_state=mcp_state,
+        registry=mcp_state.job_registry,
+        job_id=job_id,
+        ingest=ingest,
+        force=force,
     )
     return {"job_id": job_id, **result}
 
@@ -3369,7 +3464,7 @@ async def fetch_supplementary(
     if not index_path.exists():
         return {
             "error": "no supplementary/index.json — build the capsule first "
-                     "(build_capsule or build_capsules_for_kb)",
+            "(build_capsule or build_capsules_for_kb)",
             "capsule_dir": str(cap),
         }
     fetched_path = cap / "supplementary" / "fetched.json"
@@ -3439,6 +3534,7 @@ async def route_kbs(
 
     from perspicacite.llm.client import resolve_stage_model
     from perspicacite.llm.mcp_sampling import use_mcp_context
+
     route_provider, route_model = resolve_stage_model(state.config, "routing")
     with use_mcp_context(ctx):
         hits = await auto_route_kbs(
@@ -3554,15 +3650,19 @@ async def build_kb_from_search(
             )
         logger.info(
             "mcp_build_kb_from_search",
-            query=query, kb=kb_name,
-            searched=report.searched, candidates=report.candidates,
+            query=query,
+            kb=kb_name,
+            searched=report.searched,
+            candidates=report.candidates,
             added=report.added_papers,
         )
         return _json_ok(report.to_dict())
     except Exception as e:
         logger.error(
             "mcp_build_kb_from_search_error",
-            query=query, kb=kb_name, error=str(e),
+            query=query,
+            kb=kb_name,
+            error=str(e),
         )
         return _json_error(f"build_kb_from_search failed: {e}")
 
@@ -3618,8 +3718,11 @@ async def export_kb(
             overwrite=overwrite,
         )
         logger.info(
-            "mcp_export_kb", kb=kb_name, out=out_dir,
-            papers=report.papers, pdfs=report.pdfs_copied,
+            "mcp_export_kb",
+            kb=kb_name,
+            out=out_dir,
+            papers=report.papers,
+            pdfs=report.pdfs_copied,
         )
         return _json_ok(report.to_dict())
     except FileExistsError as exc:
@@ -3686,22 +3789,31 @@ async def expand_kb_via_citations(
         from perspicacite.pipeline.snowball import expand_kb_via_citations as _expand
 
         flt = SearchFilter(
-            min_year=min_year, max_year=max_year,
-            min_citations=min_citations, require_doi=True,
+            min_year=min_year,
+            max_year=max_year,
+            min_citations=min_citations,
+            require_doi=True,
             require_abstract=require_abstract,
         )
         with use_mcp_context(ctx):
             report = await _expand(
-                app_state=state, kb_name=kb_name,
-                direction=direction, max_per_seed=max_per_seed,
-                seed_dois=seed_dois, flt=flt,
-                screen_method=screen_method, screen_threshold=screen_threshold,
-                query=query, dry_run=dry_run,
+                app_state=state,
+                kb_name=kb_name,
+                direction=direction,
+                max_per_seed=max_per_seed,
+                seed_dois=seed_dois,
+                flt=flt,
+                screen_method=screen_method,
+                screen_threshold=screen_threshold,
+                query=query,
+                dry_run=dry_run,
             )
         logger.info(
             "mcp_expand_kb_via_citations",
-            kb=kb_name, direction=direction,
-            raw_hits=report.raw_hits, added=report.added_papers,
+            kb=kb_name,
+            direction=direction,
+            raw_hits=report.raw_hits,
+            added=report.added_papers,
         )
         return _json_ok(report.to_dict())
     except Exception as e:
@@ -3752,15 +3864,19 @@ async def delete_knowledge_base(
                 collection_error = str(exc)
         deleted = await state.session_store.delete_kb_metadata(name)
         logger.info(
-            "mcp_delete_kb", name=name, deleted=deleted,
+            "mcp_delete_kb",
+            name=name,
+            deleted=deleted,
             collection_dropped=collection_dropped,
         )
-        return _json_ok({
-            "name": name,
-            "deleted": deleted,
-            "collection_dropped": collection_dropped,
-            "collection_error": collection_error,
-        })
+        return _json_ok(
+            {
+                "name": name,
+                "deleted": deleted,
+                "collection_dropped": collection_dropped,
+                "collection_error": collection_error,
+            }
+        )
     except Exception as e:
         logger.error("mcp_delete_kb_error", name=name, error=str(e))
         return _json_error(f"delete_knowledge_base failed: {e}")
@@ -3811,19 +3927,28 @@ async def enrich_kb_from_cite_graph_tool(
     if max_papers is not None:
         kb_cfg.cite_graph.max_papers = max_papers
     hits = await enrich_kb_from_cite_graph(
-        tool=tool, doi=doi, openalex_id=openalex_id,
-        kb_config=kb_cfg, existing_dois=set(),
+        tool=tool,
+        doi=doi,
+        openalex_id=openalex_id,
+        kb_config=kb_cfg,
+        existing_dois=set(),
         dry_run=dry_run,
     )
-    return {"hits": [
-        {
-            "doi": h.doi, "title": h.title, "year": h.year,
-            "citation_count": h.citation_count, "is_oa": h.is_oa,
-            "venue": h.venue, "score": h.score,
-            "score_breakdown": h.score_breakdown,
-        }
-        for h in hits
-    ]}
+    return {
+        "hits": [
+            {
+                "doi": h.doi,
+                "title": h.title,
+                "year": h.year,
+                "citation_count": h.citation_count,
+                "is_oa": h.is_oa,
+                "venue": h.venue,
+                "score": h.score,
+                "score_breakdown": h.score_breakdown,
+            }
+            for h in hits
+        ]
+    }
 
 
 @mcp.tool()
@@ -4048,22 +4173,22 @@ _zotero_collections_cache: dict[str, tuple[list, float]] = {}
 _COLLECTION_CACHE_TTL = 3600.0  # 1 hour
 
 
-def _build_collection_tree(
-    flat: list[dict], parent_key: str | None = None
-) -> list[dict]:
+def _build_collection_tree(flat: list[dict], parent_key: str | None = None) -> list[dict]:
     result = []
     for coll in flat:
         data = coll.get("data") or {}
         pc = data.get("parentCollection")
         coll_parent = None if (pc is False or not pc) else pc
         if coll_parent == parent_key:
-            result.append({
-                "id": coll["key"],
-                "name": data.get("name") or "",
-                "parent_id": parent_key,
-                "item_count": None,
-                "subcollections": _build_collection_tree(flat, parent_key=coll["key"]),
-            })
+            result.append(
+                {
+                    "id": coll["key"],
+                    "name": data.get("name") or "",
+                    "parent_id": parent_key,
+                    "item_count": None,
+                    "subcollections": _build_collection_tree(flat, parent_key=coll["key"]),
+                }
+            )
     return result
 
 
@@ -4091,7 +4216,10 @@ async def zotero_list_collections(
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
     if not (cfg and cfg.enabled and cfg.api_key):
-        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "Zotero not enabled or api_key missing"}
+        return {
+            "error": "ZOTERO_NOT_CONFIGURED",
+            "message": "Zotero not enabled or api_key missing",
+        }
 
     eff_library_id = library_id or cfg.library_id
     if not eff_library_id:
@@ -4120,7 +4248,10 @@ async def zotero_list_collections(
                 ra = exc.response.headers.get("retry-after") or "60"
                 return {"error": "ZOTERO_RATE_LIMITED", "retry_after_s": float(ra)}
             if status == 404:
-                return {"error": "LIBRARY_NOT_FOUND", "message": f"Library {eff_library_id} not found"}
+                return {
+                    "error": "LIBRARY_NOT_FOUND",
+                    "message": f"Library {eff_library_id} not found",
+                }
             return {"error": "ZOTERO_ERROR", "message": str(exc)}
         _zotero_collections_cache[cache_key] = (flat, time.time() + _COLLECTION_CACHE_TTL)
 
@@ -4128,8 +4259,13 @@ async def zotero_list_collections(
         collections = _build_collection_tree(flat, parent_key=None)
     else:
         collections = [
-            {"id": c["key"], "name": (c.get("data") or {}).get("name") or "",
-             "parent_id": None, "item_count": None, "subcollections": []}
+            {
+                "id": c["key"],
+                "name": (c.get("data") or {}).get("name") or "",
+                "parent_id": None,
+                "item_count": None,
+                "subcollections": [],
+            }
             for c in flat
             if not (c.get("data") or {}).get("parentCollection")
         ]
@@ -4190,7 +4326,10 @@ async def zotero_get_collection_items(
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
     if not (cfg and cfg.enabled and cfg.api_key):
-        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "Zotero not enabled or api_key missing"}
+        return {
+            "error": "ZOTERO_NOT_CONFIGURED",
+            "message": "Zotero not enabled or api_key missing",
+        }
 
     eff_library_id = library_id or cfg.library_id
     if not eff_library_id:
@@ -4205,7 +4344,9 @@ async def zotero_get_collection_items(
     )
 
     try:
-        all_items = await client.list_items_in_collection(collection_id, include_subcollections=True)
+        all_items = await client.list_items_in_collection(
+            collection_id, include_subcollections=True
+        )
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
         if status == 403:
@@ -4214,7 +4355,10 @@ async def zotero_get_collection_items(
             ra = exc.response.headers.get("retry-after") or "60"
             return {"error": "ZOTERO_RATE_LIMITED", "retry_after_s": float(ra)}
         if status == 404:
-            return {"error": "COLLECTION_NOT_FOUND", "message": f"Collection {collection_id} not found"}
+            return {
+                "error": "COLLECTION_NOT_FOUND",
+                "message": f"Collection {collection_id} not found",
+            }
         return {"error": "ZOTERO_ERROR", "message": str(exc)}
 
     total = len(all_items)
@@ -4222,18 +4366,21 @@ async def zotero_get_collection_items(
     start = _decode_cursor(cursor) if cursor else 0
     if start < 0 or start > total:
         return {"error": "INVALID_CURSOR", "message": "Cursor is stale or invalid"}
-    page = all_items[start: start + limit]
+    page = all_items[start : start + limit]
     next_start = start + len(page)
     next_cursor = _encode_cursor(next_start) if next_start < total else None
 
     clf = LicenseClassifier()
     async with httpx.AsyncClient() as http:
+
         async def _classify_item(it: dict) -> dict:
             data = it.get("data") or {}
             doi = data.get("DOI") or None
             creators = data.get("creators") or []
             authors = [
-                ((cr.get("firstName") or "") + " " + (cr.get("lastName") or cr.get("name") or "")).strip()
+                (
+                    (cr.get("firstName") or "") + " " + (cr.get("lastName") or cr.get("name") or "")
+                ).strip()
                 for cr in creators
             ]
             year_str = str(data.get("date") or "")[:4]
@@ -4320,7 +4467,10 @@ async def zotero_get_paper_resources(
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
     if not (cfg and cfg.enabled and cfg.api_key):
-        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "Zotero not enabled or api_key missing"}
+        return {
+            "error": "ZOTERO_NOT_CONFIGURED",
+            "message": "Zotero not enabled or api_key missing",
+        }
 
     eff_library_id = library_id or cfg.library_id
     if not eff_library_id:
@@ -4343,7 +4493,8 @@ async def zotero_get_paper_resources(
         else:
             items = await client._paginated("/items", params={"q": doi, "qmode": "everything"})
             matched = [
-                it for it in items
+                it
+                for it in items
                 if (it.get("data") or {}).get("DOI", "").lower().strip() == doi.lower().strip()
             ]
             if not matched:
@@ -4425,14 +4576,16 @@ async def zotero_get_attachment_bytes(
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
     if not (cfg and cfg.enabled and cfg.api_key):
-        return {"error": "ZOTERO_NOT_CONFIGURED",
-                "message": "Zotero not enabled or api_key missing"}
+        return {
+            "error": "ZOTERO_NOT_CONFIGURED",
+            "message": "Zotero not enabled or api_key missing",
+        }
     eff_library_id = library_id or cfg.library_id
     if not eff_library_id:
-        return {"error": "ZOTERO_NOT_CONFIGURED",
-                "message": "library_id required"}
+        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "library_id required"}
 
     from perspicacite.integrations.zotero import ZoteroClient
+
     client = ZoteroClient(
         api_key=cfg.api_key,
         library_id=eff_library_id,
@@ -4451,11 +4604,15 @@ async def zotero_get_attachment_bytes(
     except httpx.HTTPError as exc:
         return {"error": "ZOTERO_FETCH_FAILED", "message": str(exc)}
     if meta_r.status_code == 404:
-        return {"error": "ATTACHMENT_NOT_FOUND",
-                "message": f"No attachment with key {attachment_key!r}"}
+        return {
+            "error": "ATTACHMENT_NOT_FOUND",
+            "message": f"No attachment with key {attachment_key!r}",
+        }
     if meta_r.status_code != 200:
-        return {"error": "ZOTERO_ERROR",
-                "message": f"HTTP {meta_r.status_code} fetching attachment metadata"}
+        return {
+            "error": "ZOTERO_ERROR",
+            "message": f"HTTP {meta_r.status_code} fetching attachment metadata",
+        }
     meta = (meta_r.json() or {}).get("data") or {}
     filename = meta.get("filename") or meta.get("title") or attachment_key
     content_type = meta.get("contentType") or "application/octet-stream"
@@ -4463,18 +4620,20 @@ async def zotero_get_attachment_bytes(
     # Then the binary content.
     data = await client.download_attachment_bytes(attachment_key)
     if data is None:
-        return {"error": "ATTACHMENT_BYTES_UNAVAILABLE",
-                "message": (
-                    "Attachment exists but bytes couldn't be fetched. "
-                    "Common causes: linked file (not uploaded to Zotero), "
-                    "snapshot-only, or storage quota exceeded."
-                )}
+        return {
+            "error": "ATTACHMENT_BYTES_UNAVAILABLE",
+            "message": (
+                "Attachment exists but bytes couldn't be fetched. "
+                "Common causes: linked file (not uploaded to Zotero), "
+                "snapshot-only, or storage quota exceeded."
+            ),
+        }
 
     # Surface optional metadata if Zotero tags encode it
     # (convention: role:main_article, license:CC-BY-4.0, etc.)
     role_hint = None
     license_spdx = None
-    for t in (meta.get("tags") or []):
+    for t in meta.get("tags") or []:
         tag = (t.get("tag") or "").strip()
         low = tag.lower()
         if low.startswith("role:"):
@@ -4535,7 +4694,10 @@ async def zotero_ingest_collection_to_kb(
 
     cfg = getattr(getattr(mcp_state, "config", None), "zotero", None)
     if not (cfg and cfg.enabled and cfg.api_key):
-        return {"error": "ZOTERO_NOT_CONFIGURED", "message": "Zotero not enabled or api_key missing"}
+        return {
+            "error": "ZOTERO_NOT_CONFIGURED",
+            "message": "Zotero not enabled or api_key missing",
+        }
 
     eff_library_id = library_id or cfg.library_id
     if not eff_library_id:
@@ -4564,11 +4726,17 @@ async def zotero_ingest_collection_to_kb(
             ra = exc.response.headers.get("retry-after") or "60"
             return {"error": "ZOTERO_RATE_LIMITED", "retry_after_s": float(ra)}
         if status == 404:
-            return {"error": "COLLECTION_NOT_FOUND", "message": f"Collection {collection_id} not found"}
+            return {
+                "error": "COLLECTION_NOT_FOUND",
+                "message": f"Collection {collection_id} not found",
+            }
         return {"error": "ZOTERO_ERROR", "message": str(exc)}
 
     if not plan:
-        return {"error": "COLLECTION_NOT_FOUND", "message": f"Collection {collection_id} produced no plan entries"}
+        return {
+            "error": "COLLECTION_NOT_FOUND",
+            "message": f"Collection {collection_id} produced no plan entries",
+        }
 
     entry = plan[0]
     effective_kb = kb_name or entry.kb_name
@@ -4686,10 +4854,11 @@ async def web_search(
                       "telemetry_summary": {"by_provider": {...}}}
     """
     import json as _json
+
     from perspicacite.rag.resolve_papers import resolve_papers_pipeline
     from perspicacite.rag.telemetry import (
-        ListTelemetrySink,
         CallbackTelemetrySink,
+        ListTelemetrySink,
     )
 
     # Choose a sink that buffers events for the telemetry_summary.
@@ -4697,6 +4866,7 @@ async def web_search(
     # notifications via MCPProgressAdapter.
     if ctx is not None:
         from perspicacite.mcp.progress_adapter import MCPProgressAdapter
+
         _adapter = MCPProgressAdapter(ctx)
         sink: Any = CallbackTelemetrySink(_adapter.on_event)
     else:
@@ -4718,39 +4888,45 @@ async def web_search(
             optimize_query=bool(optimize_query),
         )
     except Exception as exc:
-        return _json.dumps({
-            "papers": [],
-            "warnings": [],
-            "error": f"web_search_failed: {exc}",
-        })
+        return _json.dumps(
+            {
+                "papers": [],
+                "warnings": [],
+                "error": f"web_search_failed: {exc}",
+            }
+        )
 
     # Build response payload — scan buffered events for per-provider hit counts
     by_provider: dict[str, int] = {}
-    for ev in (getattr(sink, "events", []) or []):
+    for ev in getattr(sink, "events", []) or []:
         if ev.get("kind") == "provider_progress" and ev.get("phase") == "done":
             by_provider.update(ev.get("by_provider", {}) or {})
 
     serialised: list[dict] = []
     for p in papers:
-        serialised.append({
-            "title": p.title,
-            "authors": [a.name for a in (p.authors or [])],
-            "year": p.year,
-            "journal": p.journal,
-            "doi": p.doi,
-            "url": p.url,
-            "abstract": p.abstract,
-            "discovery_sources": list(p.discovery_sources or []),
-            "enrichment_sources": list(p.enrichment_sources or []),
-        })
+        serialised.append(
+            {
+                "title": p.title,
+                "authors": [a.name for a in (p.authors or [])],
+                "year": p.year,
+                "journal": p.journal,
+                "doi": p.doi,
+                "url": p.url,
+                "abstract": p.abstract,
+                "discovery_sources": list(p.discovery_sources or []),
+                "enrichment_sources": list(p.enrichment_sources or []),
+            }
+        )
 
-    return _json.dumps({
-        "papers": serialised,
-        "warnings": [],  # provider-level warnings flow via search_with_warnings;
-                        # for direct web_search the aggregator surfaces them
-                        # in logs, not in the payload (yet).
-        "telemetry_summary": {"by_provider": by_provider},
-    })
+    return _json.dumps(
+        {
+            "papers": serialised,
+            "warnings": [],  # provider-level warnings flow via search_with_warnings;
+            # for direct web_search the aggregator surfaces them
+            # in logs, not in the payload (yet).
+            "telemetry_summary": {"by_provider": by_provider},
+        }
+    )
 
 
 # =============================================================================
@@ -4776,15 +4952,19 @@ async def cancel_task(task_id: str) -> str:
         a task that already finished from one that never existed.
     """
     import json as _json
+
     from perspicacite.rag.cancellation import mark_cancelled
+
     if not task_id:
         return _json.dumps({"ok": False, "error": "missing task_id"})
     await mark_cancelled(task_id)
-    return _json.dumps({
-        "ok": True,
-        "task_id": task_id,
-        "was_running": True,  # see docstring — best-effort
-    })
+    return _json.dumps(
+        {
+            "ok": True,
+            "task_id": task_id,
+            "was_running": True,  # see docstring — best-effort
+        }
+    )
 
 
 # =============================================================================
@@ -4846,9 +5026,7 @@ async def search_by_passage(
                 check_embedding_compat,
             )
 
-            metas = [
-                await state.session_store.get_kb_metadata(n) for n in kb_names
-            ]
+            metas = [await state.session_store.get_kb_metadata(n) for n in kb_names]
             for i, meta in enumerate(metas):
                 if meta is None:
                     return _json_error(f"Knowledge base not found: {kb_names[i]}")
@@ -4868,9 +5046,7 @@ async def search_by_passage(
                 KnowledgeBaseConfig,
             )
 
-            effective_kb = (
-                kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
-            )
+            effective_kb = kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
             kb_meta = await state.session_store.get_kb_metadata(effective_kb)
             if not kb_meta:
                 return _json_error(f"Knowledge base '{effective_kb}' not found")
@@ -4881,14 +5057,10 @@ async def search_by_passage(
                     vector_size=state.embedding_provider.dimension,
                 ),
             )
-            retriever.collection_name = chroma_collection_name_for_kb(
-                effective_kb
-            )
+            retriever.collection_name = chroma_collection_name_for_kb(effective_kb)
             retriever._initialized = True
 
-        matches = await search_passages(
-            retriever, text=text, k=k, min_score=min_score
-        )
+        matches = await search_passages(retriever, text=text, k=k, min_score=min_score)
 
         return _json_ok(
             {
@@ -5015,14 +5187,10 @@ async def get_relevant_passages(
                 check_embedding_compat,
             )
 
-            metas = [
-                await state.session_store.get_kb_metadata(n) for n in kb_names
-            ]
+            metas = [await state.session_store.get_kb_metadata(n) for n in kb_names]
             for i, meta in enumerate(metas):
                 if meta is None:
-                    return _json_error(
-                        f"Knowledge base not found: {kb_names[i]}"
-                    )
+                    return _json_error(f"Knowledge base not found: {kb_names[i]}")
             compat_msg = check_embedding_compat(metas)
             if compat_msg:
                 return _json_error(compat_msg)
@@ -5038,14 +5206,10 @@ async def get_relevant_passages(
                 KnowledgeBaseConfig,
             )
 
-            effective_kb = (
-                kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
-            )
+            effective_kb = kb_names[0] if (kb_names and len(kb_names) == 1) else kb_name
             kb_meta = await state.session_store.get_kb_metadata(effective_kb)
             if not kb_meta:
-                return _json_error(
-                    f"Knowledge base '{effective_kb}' not found"
-                )
+                return _json_error(f"Knowledge base '{effective_kb}' not found")
             retriever = DynamicKnowledgeBase(
                 state.vector_store,
                 state.embedding_provider,
@@ -5053,9 +5217,7 @@ async def get_relevant_passages(
                     vector_size=state.embedding_provider.dimension,
                 ),
             )
-            retriever.collection_name = chroma_collection_name_for_kb(
-                effective_kb
-            )
+            retriever.collection_name = chroma_collection_name_for_kb(effective_kb)
             retriever._initialized = True
 
         attempts: list[dict] = []
@@ -5170,8 +5332,12 @@ async def extract_parameters_from_passages(
         ]
 
         families = parameter_families or [
-            "threshold", "concentration", "pH",
-            "temperature", "time", "rate",
+            "threshold",
+            "concentration",
+            "pH",
+            "temperature",
+            "time",
+            "rate",
         ]
         prompt = _PARAM_EXTRACTION_PROMPT.format(context=context or "general")
         prompt += f"\nFocus on these families when relevant: {', '.join(families)}."
@@ -5395,6 +5561,389 @@ async def export_astra(claims: list[dict]) -> str:
 
 
 @mcp.tool()
+async def build_claim_graph(
+    kb_name: str,
+    *,
+    refresh: bool = False,
+    max_pairs_per_claim: int = 20,
+    model: str | None = None,
+) -> str:
+    """Build (or incrementally refresh) the claim graph for a KB.
+
+    Extracts indicium claims from every passage, SHACL-validates, upserts
+    Claim/Evidence/Passage/Paper nodes, prunes candidate pairs, then runs a
+    CiTO classification pass. Outputs go to ``data/claim_graphs/<kb_name>/``.
+
+    Args:
+        kb_name: KB to build.
+        refresh: When True, ignore manifest and rebuild every paper.
+        max_pairs_per_claim: Cap on per-claim CiTO fan-out (default 20).
+        model: Optional LLM override (default: server's configured model).
+
+    Returns:
+        JSON: ``{success, kb_name, claims_added, edges_added,
+                 pairs_classified, papers_processed, duration_seconds}``.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+
+    import pathlib
+
+    from perspicacite.indicium_layer.builder import build_claim_graph as _build
+    from perspicacite.indicium_layer.store import ClaimGraphStore
+    from perspicacite.models.kb import chroma_collection_name_for_kb
+
+    collection = chroma_collection_name_for_kb(kb_name)
+
+    # Fetch all papers and chunks async, then expose via sync providers to builder.
+    papers_list = await state.vector_store.list_paper_metadata(collection)
+    papers_dict = {p["paper_id"]: p for p in papers_list}
+    paper_ids = list(papers_dict.keys())
+    chunks_list = await state.vector_store.get_chunks_by_paper_ids(collection, paper_ids)
+
+    passages_by_pid: dict[str, list[dict]] = {pid: [] for pid in paper_ids}
+    for chunk in chunks_list:
+        pid = chunk.metadata.paper_id
+        cs = chunk.metadata.char_span
+        passages_by_pid.setdefault(pid, []).append(
+            {
+                "chunk_idx": chunk.metadata.chunk_index,
+                "text": chunk.text,
+                "char_start": cs[0] if cs else None,
+                "char_end": cs[1] if cs else None,
+            }
+        )
+
+    data_dir = pathlib.Path("data/claim_graphs") / kb_name
+    store = ClaimGraphStore(kb_name, data_dir=data_dir, backend="oxigraph")
+    try:
+        result = await _build(
+            kb_name=kb_name,
+            store=store,
+            llm_client=state.llm_client,
+            papers_provider=lambda: papers_dict,
+            passages_provider=lambda pid: passages_by_pid.get(pid, []),
+            refresh=refresh,
+            max_pairs_per_claim=max_pairs_per_claim,
+            model=model,
+        )
+    finally:
+        store.close()
+
+    return _json_ok(
+        {
+            "kb_name": result.kb_name,
+            "claims_added": result.claims_added,
+            "edges_added": result.edges_added,
+            "pairs_classified": result.pairs_classified,
+            "papers_processed": result.papers_processed,
+            "duration_seconds": result.duration_seconds,
+        }
+    )
+
+
+@mcp.tool()
+async def claim_graph_status(kb_name: str) -> str:
+    """Return the claim-graph manifest + last build summary for a KB.
+
+    Returns:
+        JSON: ``{success, kb_name, paper_count, indicium_schema_version,
+                 builder_version, last_build_iso, schema_drift}``.
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+    from perspicacite.indicium_layer.invalidation import schema_version_changed
+    from perspicacite.indicium_layer.manifest import read_manifest
+
+    m = read_manifest(kb_name)
+    return _json_ok(
+        {
+            "kb_name": m.kb_name,
+            "paper_count": len(m.paper_hashes),
+            "indicium_schema_version": m.indicium_schema_version,
+            "builder_version": m.builder_version,
+            "last_build_iso": m.last_build_iso,
+            "schema_drift": schema_version_changed(m),
+        }
+    )
+
+
+def _open_claim_graph_store_for_kb(kb_name: str):
+    """Test seam: lets tests substitute an in-memory store."""
+    import pathlib
+
+    from perspicacite.indicium_layer.store import ClaimGraphStore
+
+    data_dir = pathlib.Path("data/claim_graphs") / kb_name
+    return ClaimGraphStore(kb_name, data_dir=data_dir, backend="oxigraph")
+
+
+@mcp.tool()
+async def query_claim_graph(
+    kb_name: str,
+    query_name: str,
+    kwargs: dict | None = None,
+) -> str:
+    """Run a typed query against a KB's claim graph.
+
+    Available queries (see indicium_layer.queries):
+      - claims_supporting(subject_or_iri, min_eco_grade=None)
+      - claims_disputing(target_iri)
+      - evidence_trace(claim_iri, max_depth=3)
+      - papers_with_claim_pattern(subject=None, relation=None, object=None)
+      - neighbors(claim_iri, edge_types=None)
+
+    Args:
+        kb_name: KB whose claim graph to query.
+        query_name: One of the five typed queries above.
+        kwargs: Query-specific keyword arguments (see signatures).
+
+    Returns:
+        JSON: ``{success, query, kb_name, rows: [{...}, ...]}``.
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+
+    from perspicacite.indicium_layer import queries as _q
+
+    _query_table = {
+        "claims_supporting": _q.claims_supporting,
+        "claims_disputing": _q.claims_disputing,
+        "evidence_trace": _q.evidence_trace,
+        "papers_with_claim_pattern": _q.papers_with_claim_pattern,
+        "neighbors": _q.neighbors,
+    }
+    fn = _query_table.get(query_name)
+    if fn is None:
+        return _json_error(f"unknown query_name: {query_name}; valid: {sorted(_query_table)}")
+    store = _open_claim_graph_store_for_kb(kb_name)
+    try:
+        rows = fn(store, kb_name, **(kwargs or {}))
+    finally:
+        store.close()
+    return _json_ok(
+        {
+            "query": query_name,
+            "kb_name": kb_name,
+            "rows": rows,
+        }
+    )
+
+
+@mcp.tool()
+async def get_claim_figures(
+    kb_name: str,
+    claim_iri: str,
+) -> str:
+    """Return Figure nodes associated with a claim in the KB's claim graph.
+
+    Traverses the claim graph for Figure nodes linked to the given claim
+    IRI via prov:wasDerivedFrom.  Useful for surfacing the visual evidence
+    behind a claim (microscopy plates, data plots, etc.) when the claim was
+    grounded in a figure rather than a text passage.
+
+    Args:
+        kb_name:   KB whose claim graph to query.
+        claim_iri: IRI of the claim (e.g. ``kb://my_kb/claim/abc123``).
+
+    Returns:
+        JSON ``{success, kb_name, claim_iri, figures: [{figure, figure_id,
+        caption, figure_type, source_doi}]}``
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+
+    from perspicacite.indicium_layer.queries import figures_for_claim
+
+    store = _open_claim_graph_store_for_kb(kb_name)
+    try:
+        rows = figures_for_claim(store, kb_name, claim_iri)
+    finally:
+        store.close()
+
+    return _json_ok({
+        "kb_name": kb_name,
+        "claim_iri": claim_iri,
+        "figures": rows,
+    })
+
+
+@mcp.tool()
+async def get_claim_links(
+    kb_name: str,
+    claim_iri: str,
+) -> str:
+    """Return ClaimLink nodes where the given claim is from_claim or to_claim.
+
+    Queries the KB's claim graph for all ClaimLink nodes (typed cito:Citation
+    per Indicium v1.3) where from_claim or to_claim equals claim_iri. Returns
+    both outgoing edges (where this claim makes an assertion about another) and
+    incoming edges (where another claim references this one).
+
+    Requires build_claim_graph to have been run on the KB first. ClaimLinks are
+    written using the full 13-predicate CiTO vocabulary: supports, disputes,
+    qualifies, citesForInformation, contradicts, refines, extends, agreesWith,
+    disagreesWith, updates, corrects, usesDataFrom, usesMethodIn.
+
+    Args:
+        kb_name:   KB whose claim graph to query.
+        claim_iri: IRI of the claim (e.g. ``kb://my_kb/claim/abc123``).
+
+    Returns:
+        JSON ``{success, kb_name, claim_iri, links: [{link_iri, from_claim,
+        to_claim, link_type, direction}]}`` where direction is "outgoing" or
+        "incoming".
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+
+    from perspicacite.indicium_layer.queries import claim_links_for_claim
+
+    store = _open_claim_graph_store_for_kb(kb_name)
+    try:
+        rows = claim_links_for_claim(store, kb_name, claim_iri)
+    finally:
+        store.close()
+
+    return _json_ok({
+        "kb_name": kb_name,
+        "claim_iri": claim_iri,
+        "links": rows,
+    })
+
+
+@mcp.tool()
+async def claim_graph_export(
+    kb_name: str,
+    format: str = "turtle",
+) -> str:
+    """Export a KB's claim graph as Turtle, JSON-LD, or RO-Crate.
+
+    Serialises every triple in the KB's indicium claim graph to the requested
+    format and returns the result inline. Useful for archiving a KB's claim
+    graph, feeding it to an external triple-store, or packaging it as an
+    RO-Crate research object.
+
+    Args:
+        kb_name: KB whose claim graph to export.
+        format: Serialisation format — one of ``"turtle"``, ``"jsonld"``,
+            ``"rocrate"`` (default: ``"turtle"``).
+
+    Returns:
+        JSON ``{success, kb_name, format, data}`` where ``data`` is a string
+        (turtle) or a list/dict (jsonld/rocrate).
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+
+    _valid_formats = ("turtle", "jsonld", "rocrate")
+    if format not in _valid_formats:
+        return _json_error(
+            f"unsupported format '{format}'; choose one of: {list(_valid_formats)}"
+        )
+
+    store = _open_claim_graph_store_for_kb(kb_name)
+    try:
+        if store._backend == "memory":
+            # rdflib ConjunctiveGraph — full serialisation support
+            assert store._g is not None
+            if format == "turtle":
+                serialised = store._g.serialize(format="turtle")
+                result: Any = serialised
+            else:
+                raw_jld = store._g.serialize(format="json-ld")
+                try:
+                    jld_list = json.loads(raw_jld) if isinstance(raw_jld, str) else raw_jld
+                except Exception:
+                    jld_list = []
+                if format == "jsonld":
+                    result = jld_list
+                else:  # rocrate
+                    result = {
+                        "@context": "https://w3id.org/ro/crate/1.1/context",
+                        "@graph": [
+                            {
+                                "@type": "CreativeWork",
+                                "@id": "ro-crate-metadata.json",
+                                "about": {"@id": "./"},
+                                "conformsTo": {
+                                    "@id": "https://w3id.org/ro/crate/1.1"
+                                },
+                            },
+                            {
+                                "@type": "Dataset",
+                                "@id": "./",
+                                "name": f"Perspicacite claim graph: {kb_name}",
+                                "hasPart": [{"@id": "claim-graph.jsonld"}],
+                            },
+                        ]
+                        + (jld_list if isinstance(jld_list, list) else []),
+                    }
+        else:
+            # oxigraph backend — Store only supports quad formats (N-Quads/TriG); round-trip
+            # via N-Quads→rdflib for all three output formats since pyoxigraph has no JSON-LD
+            # serialiser and text/turtle / n-triples are triples-only formats that raise
+            # "A RDF format supporting datasets was expected" on a named-graph Store.
+            import io
+
+            from rdflib import ConjunctiveGraph as _CG
+
+            buf = io.BytesIO()
+            store._oxistore.dump(buf, "application/n-quads")
+            g = _CG()
+            g.parse(data=buf.getvalue().decode("utf-8"), format="nquads")
+
+            if format == "turtle":
+                result = g.serialize(format="turtle")
+            else:
+                raw_jld = g.serialize(format="json-ld")
+                try:
+                    jld_list = json.loads(raw_jld) if isinstance(raw_jld, str) else raw_jld
+                except Exception:
+                    jld_list = []
+                if format == "jsonld":
+                    result = jld_list
+                else:  # rocrate
+                    result = {
+                        "@context": "https://w3id.org/ro/crate/1.1/context",
+                        "@graph": [
+                            {
+                                "@type": "CreativeWork",
+                                "@id": "ro-crate-metadata.json",
+                                "about": {"@id": "./"},
+                                "conformsTo": {"@id": "https://w3id.org/ro/crate/1.1"},
+                            },
+                            {
+                                "@type": "Dataset",
+                                "@id": "./",
+                                "name": f"Perspicacite claim graph: {kb_name}",
+                                "hasPart": [{"@id": "claim-graph.jsonld"}],
+                            },
+                        ]
+                        + (jld_list if isinstance(jld_list, list) else []),
+                    }
+    finally:
+        store.close()
+
+    return _json_ok({"kb_name": kb_name, "format": format, "data": result})
+
+
+@mcp.tool()
 async def suggest_databases(query: str, hints: list[str] | None = None) -> str:
     """
     Recommend which literature databases to search for a given query.
@@ -5493,6 +6042,12 @@ _TOOL_NAMES: list[str] = [
     "web_search",
     "cancel_task",
     "suggest_databases",
+    "build_claim_graph",
+    "claim_graph_status",
+    "query_claim_graph",
+    "get_claim_figures",
+    "get_claim_links",
+    "claim_graph_export",
     "get_usage_guide",
     "extract_claims_from_passages",
     "export_astra",
@@ -5560,9 +6115,7 @@ def literature_review(
 
 
 @mcp.prompt()
-def compare_papers(
-    paper_a: str, paper_b: str, kb_name: str | None = None
-) -> list[dict[str, Any]]:
+def compare_papers(paper_a: str, paper_b: str, kb_name: str | None = None) -> list[dict[str, Any]]:
     """Compare two papers side-by-side."""
     return _prompts.compare_papers(paper_a, paper_b, kb_name)
 
@@ -5580,8 +6133,6 @@ def ingest_dois(kb_name: str, dois: list[str]) -> list[dict[str, Any]]:
 
 
 @mcp.prompt()
-def screen_topic(
-    topic: str, kb_name: str, threshold: float = 0.6
-) -> list[dict[str, Any]]:
+def screen_topic(topic: str, kb_name: str, threshold: float = 0.6) -> list[dict[str, Any]]:
     """Screen a KB for papers relevant to a topic."""
     return _prompts.screen_topic(topic, kb_name, threshold)
