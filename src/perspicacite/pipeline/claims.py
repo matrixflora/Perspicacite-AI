@@ -13,7 +13,7 @@ _QUALIFIERS = {
     "has_property", "is_part_of", "is_a", "consistent_with",
 }
 _EVIDENCE_TYPES = {"data", "citation", "knowledge", "inference", "speculation"}
-_SOURCE_TYPES = {"text", "figure", "table", "image"}
+_SOURCE_TYPES = {"text", "figure", "table", "image", "code", "data"}
 
 _PROMPT = """You extract structured scientific claims from passages.
 For each well-supported claim, output the 5-slot pattern:
