@@ -1346,7 +1346,7 @@ async def generate_report(
     max_papers_to_download: int | None = None,
     databases: list[str] | None = None,
     extract_claims: bool = False,
-    domain: str | None = None,
+    domains: list[str] | None = None,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1398,10 +1398,10 @@ async def generate_report(
             over the cited sources after the report is generated and attach the
             result as an ``indicia`` list in the response payload. Defaults to
             False so existing callers are unaffected.
-        domain: Optional domain adapter ID (e.g. "metabolomics"). When provided
-            alongside ``extract_claims=True``, claims are enriched with ontology
-            terms and validated against domain-specific SHACL shapes. Requires
-            indicium-adapters to be installed; silently ignored if not available.
+        domains: Optional list of domain adapter IDs (e.g. ["metabolomics"]).
+            Multiple IDs are composed into a CompositeAdapter; applies when
+            ``extract_claims=True``. Requires indicium-adapters; silently ignored
+            if not available.
 
     Returns:
         JSON with the report text, cited sources, and metadata.
@@ -1681,12 +1681,14 @@ async def generate_report(
                     for s in sources
                 ]
 
-                # Resolve domain adapter (best-effort; silently skip if indicium-adapters not installed)
+                # Resolve domain adapter(s) — compose if multiple (best-effort)
                 domain_adapter = None
-                if domain:
+                if domains:
                     try:
-                        from indicium_adapters import discover_adapters
-                        domain_adapter = discover_adapters().get(domain)
+                        from indicium_adapters import discover_adapters, compose_adapters
+                        discovered = discover_adapters()
+                        valid = [discovered[d] for d in domains if d in discovered]
+                        domain_adapter = compose_adapters(valid) if valid else None
                     except ImportError:
                         pass  # indicium-adapters not installed — proceed without adapter
 
@@ -5319,7 +5321,7 @@ async def extract_claims_from_passages(
     passages: list[dict],
     context: str | None = None,
     model: str | None = None,
-    domain: str | None = None,
+    domains: list[str] | None = None,
 ) -> str:
     """Extract typed scientific claims (Bucur 5-slot SuperPattern + ECO-typed
     evidence) from retrieved passages, validated against the indicium standard.
@@ -5334,10 +5336,10 @@ async def extract_claims_from_passages(
         passages: List of passage dicts (as returned by get_relevant_passages).
         context: Optional extraction context appended to the LLM prompt.
         model: Optional LLM model override.
-        domain: Optional domain adapter ID (e.g. "metabolomics"). When provided,
-            claims are enriched with ontology terms and domain-specific SHACL
-            shapes are merged into validation. Requires indicium-adapters to be
-            installed; silently ignored if not available.
+        domains: Optional list of domain adapter IDs (e.g. ["metabolomics"]).
+            Multiple IDs are composed into a single CompositeAdapter so all
+            adapters' enrichment and SHACL shapes are applied together.
+            Requires indicium-adapters to be installed; silently ignored if not.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -5347,12 +5349,14 @@ async def extract_claims_from_passages(
     except ImportError:
         return _json_error("indicium not installed; reinstall with the 'indicia' extra")
 
-    # Resolve domain adapter (best-effort; silently skip if indicium-adapters not installed)
+    # Resolve domain adapter(s) — compose if multiple (best-effort; skip if not installed)
     adapter = None
-    if domain:
+    if domains:
         try:
-            from indicium_adapters import discover_adapters
-            adapter = discover_adapters().get(domain)
+            from indicium_adapters import discover_adapters, compose_adapters
+            discovered = discover_adapters()
+            valid = [discovered[d] for d in domains if d in discovered]
+            adapter = compose_adapters(valid) if valid else None
         except ImportError:
             pass  # indicium-adapters not installed — proceed without adapter
 

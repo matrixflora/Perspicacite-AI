@@ -57,6 +57,22 @@ class _MockAdapter:
         return claim
 
 
+class _MockAdapterB:
+    """Second minimal adapter for composition tests."""
+    domain_id = "test_b"
+    api_version = 1
+    qualifiers = frozenset({"qualifier_b"})
+    ontology_prefixes: ClassVar[dict[str, str]] = {"TST_B": "http://testb.example.org/"}
+
+    def extraction_context(self) -> str:
+        return "Domain: test_b. Extra qualifier: qualifier_b."
+
+    def enrich_claim(self, claim: dict) -> dict:
+        claim = dict(claim)
+        claim["enriched_by_b"] = True
+        return claim
+
+
 @pytest.mark.unit
 async def test_extract_claims_with_adapter_appends_domain_context():
     """domain_adapter.extraction_context() must appear in the LLM prompt."""
@@ -372,3 +388,92 @@ def test_claims_to_graph_skips_none_ontology_terms():
     object_terms = list(g.objects(None, asb.object_ontology_term))
     assert len(object_terms) == 1
     assert str(object_terms[0]) == "CHEBI:00001"
+
+
+# ---------------------------------------------------------------------------
+# Multi-domain composition (CompositeAdapter integration)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.unit
+async def test_extract_claims_with_composite_adapter_chains_enrichments():
+    """CompositeAdapter must chain both adapters' enrich_claim() calls."""
+    from indicium_adapters.composite import compose_adapters
+
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value=json.dumps({"claims": [{
+        "context": "in vitro", "subject": "compound A",
+        "qualifier": "inhibits", "relation": "inhibits growth of",
+        "object": "cell line B", "claim_type": "explicit",
+        "evidence_type": "data", "source_type": "text",
+        "quote": "A inhibited B", "source_doi": "10.1/x",
+    }]}))
+
+    adapter_a = _MockAdapter()      # sets enriched_by_adapter=True
+    adapter_b = _MockAdapterB()     # sets enriched_by_b=True
+    composite = compose_adapters([adapter_a, adapter_b])
+
+    claims = await extract_claims(
+        llm_client=llm,
+        passages=[{"chunk_text": "A inhibited B", "source": {"doi": "10.1/x"}}],
+        context="test",
+        domain_adapter=composite,
+    )
+
+    assert len(claims) == 1
+    assert claims[0].get("enriched_by_adapter") is True, "Adapter A enrichment missing"
+    assert claims[0].get("enriched_by_b") is True, "Adapter B enrichment missing"
+
+
+@pytest.mark.unit
+async def test_extract_claims_composite_accepts_union_of_qualifiers():
+    """Qualifiers from both adapters must be accepted by extract_claims()."""
+    from indicium_adapters.composite import compose_adapters
+
+    llm = AsyncMock()
+    # Claim uses qualifier_b, which is only in _MockAdapterB
+    llm.complete = AsyncMock(return_value=json.dumps({"claims": [{
+        "context": "in vitro", "subject": "compound A",
+        "qualifier": "qualifier_b",   # only in adapter B
+        "relation": "inhibits", "object": "cell line B",
+    }]}))
+
+    composite = compose_adapters([_MockAdapter(), _MockAdapterB()])
+
+    claims = await extract_claims(
+        llm_client=llm,
+        passages=[{"chunk_text": "test", "source": {"doi": "10.1/x"}}],
+        context="test",
+        domain_adapter=composite,
+    )
+
+    assert len(claims) == 1, (
+        "qualifier_b should be accepted by composite adapter's union qualifier set"
+    )
+    assert claims[0]["qualifier"] == "qualifier_b"
+
+
+@pytest.mark.unit
+def test_compose_adapters_filters_unknown_domains():
+    """resolve logic: unknown domain IDs are silently dropped."""
+    from indicium_adapters.composite import compose_adapters
+
+    adapter_a = _MockAdapter()
+    discovered = {"test": adapter_a}   # only "test" is known
+
+    valid = [discovered[d] for d in ["test", "unknown_domain"] if d in discovered]
+    result = compose_adapters(valid) if valid else None
+
+    # Only one valid adapter found → returned directly (not wrapped)
+    assert result is adapter_a
+
+
+@pytest.mark.unit
+def test_compose_adapters_all_unknown_gives_none():
+    """If all requested domains are unknown, adapter must resolve to None."""
+    from indicium_adapters.composite import compose_adapters
+
+    discovered: dict = {}   # nothing installed
+    valid = [discovered[d] for d in ["foo", "bar"] if d in discovered]
+    result = compose_adapters(valid) if valid else None
+
+    assert result is None
