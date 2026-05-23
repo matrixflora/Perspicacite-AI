@@ -976,11 +976,23 @@ async def search_knowledge_base(
         if not kb_meta:
             return _json_error(f"Knowledge base '{effective_kb_name}' not found")
 
+        # Use the embedding model the KB was indexed with.  If the server's
+        # current default has a different dimension (e.g. after switching from
+        # text-embedding-3-small to all-MiniLM) ChromaDB rejects the query
+        # with a dimension-mismatch error.  Matching on kb_meta.embedding_model
+        # means old 1536-dim KBs automatically use OpenAI for the query vector.
+        # Split on "|" in case the stored name is a legacy composite like
+        # "text-embedding-3-small|all-MiniLM-L6-v2"; use the first entry.
+        from perspicacite.llm.embeddings import create_embedding_provider
+        _kb_model_name = kb_meta.embedding_model.split("|")[0].strip()
+        _kb_embedding = create_embedding_provider(
+            _kb_model_name, use_local_fallback=False
+        )
         dkb = DynamicKnowledgeBase(
             state.vector_store,
-            state.embedding_provider,
+            _kb_embedding,
             config=KnowledgeBaseConfig(
-                vector_size=state.embedding_provider.dimension,
+                vector_size=_kb_embedding.dimension,
             ),
         )
         dkb.collection_name = collection_name

@@ -36,17 +36,26 @@ def _client_from_state(
     cfg = getattr(getattr(app_state, "config", None), "zotero", None)
     if not (cfg and cfg.enabled):
         raise HTTPException(status_code=503, detail="Zotero not configured")
-    eff_library_id = library_id or cfg.library_id
     eff_library_type = library_type or cfg.library_type
-    if not eff_library_id:
-        raise HTTPException(
-            status_code=400,
-            detail="library_id required (query/body arg or zotero.library_id in config)",
-        )
     base_url = getattr(cfg, "base_url", "") or None
-    is_local = base_url and ("localhost" in base_url or "127.0.0.1" in base_url)
+    is_local = bool(base_url) and ("localhost" in base_url or "127.0.0.1" in base_url)
     if not cfg.api_key and not is_local:
-        raise HTTPException(status_code=503, detail="Zotero api_key required for non-local base_url")
+        raise HTTPException(
+            status_code=503,
+            detail="Zotero api_key required for cloud access. Set zotero.api_key (or switch base_url to a local Zotero).",
+        )
+    # Local loopback: library_id is optional — the desktop API exposes a
+    # default library when the user is signed in. We pass "0" as a
+    # placeholder, which the local API treats as "the current library".
+    eff_library_id = library_id or cfg.library_id
+    if not eff_library_id:
+        if is_local:
+            eff_library_id = "0"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="library_id required for cloud Zotero. Set zotero.library_id in config.",
+            )
     return ZoteroClient(
         api_key=cfg.api_key,
         library_id=eff_library_id,

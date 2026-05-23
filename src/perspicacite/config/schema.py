@@ -725,10 +725,12 @@ class RAGModesConfig(BaseModel):
         )
     )
 
-    # Profound: Multi-cycle research with planning (from v1)
+    # Profond: Multi-cycle research with planning (from v1).
+    # Default 1 cycle — users opt in to deeper research via the
+    # per-request override in the composer.
     profound: RAGModeSettings = Field(
         default_factory=lambda: RAGModeSettings(
-            max_iterations=3,
+            max_iterations=1,
             tools=["kb_search", "web_search"],
             rerank=True,
             query_expansion=True,
@@ -810,21 +812,32 @@ class WebSearchConfig(BaseModel):
 
 
 class ZoteroConfig(BaseModel):
-    """Zotero integration configuration."""
+    """Zotero integration configuration.
+
+    Minimal config to enable: just ``enabled: true``. By default we talk
+    to the desktop app's local API (no api_key needed). For the Zotero
+    cloud API, set ``api_key`` and ``library_id`` and switch ``base_url``
+    back to empty.
+    """
 
     enabled: bool = False
+    # API key — REQUIRED for cloud (api.zotero.org), OPTIONAL for the
+    # local desktop API (base_url on loopback).
     api_key: str = ""
+    # Library id — REQUIRED for cloud, OPTIONAL for the local API where
+    # the client can auto-discover. Provide a specific id to scope to a
+    # particular group library.
     library_id: str = ""
     library_type: str = "user"  # "user" or "group"
     collection_key: str = ""
-    # Base URL for the Zotero API. Empty = cloud (api.zotero.org). To use
-    # the desktop app's local API (which serves attachments from local
-    # storage — including Linked Files), set to
-    # "http://localhost:23119/api" and enable
-    # "Allow other applications on this computer to communicate with Zotero"
-    # in Zotero's Settings → Advanced. api_key may be omitted when base_url
-    # is on loopback.
-    base_url: str = ""
+    # Base URL for the Zotero API. Empty means cloud (api.zotero.org).
+    # The default below targets the desktop app's local API so that
+    # ``enabled: true`` alone is enough on a typical workstation. Set to
+    # empty (``""``) to switch back to the cloud API; in that case
+    # ``api_key`` and ``library_id`` become required.
+    # The desktop checkbox is in Zotero → Settings → Advanced →
+    # "Allow other applications on this computer to communicate with Zotero".
+    base_url: str = "http://localhost:23119/api"
 
 
 class LocalDocsConfig(BaseModel):
@@ -1136,6 +1149,20 @@ class SearchConfig(BaseModel):
     )
 
 
+class CustomDatabase(BaseModel):
+    """A user-defined database entry, surfaced in the composer DB picker.
+
+    Display-only — favicon is fetched from `homepage` via the existing
+    DatabaseGlyph component. Search integration is not auto-wired.
+    """
+
+    id: str = Field(..., description="Stable id used in selection lists.")
+    label: str = Field(..., description="Human-readable name shown in tooltips.")
+    short: str = Field(default="", description="Optional 2-char abbreviation for the glyph fallback.")
+    homepage: str = Field(..., description="Base URL — favicon is auto-fetched from this domain.")
+    blurb: str = Field(default="", description="Optional one-line description.")
+
+
 class GoogleScholarConfig(BaseModel):
     """Google Scholar search via headless Chromium (optional [browser] dep)."""
 
@@ -1258,6 +1285,19 @@ class Config(BaseModel):
     github: GitHubConfig = Field(default_factory=GitHubConfig)
     bundles: BundlesConfig = Field(default_factory=BundlesConfig)
     google_scholar: GoogleScholarConfig = Field(default_factory=GoogleScholarConfig)
+    # User-defined databases shown in the composer's DB picker. These
+    # are display-only: the frontend renders them with a favicon pulled
+    # from `homepage`. Wiring a custom DB into the search pipeline is
+    # a separate, provider-implementation concern.
+    custom_databases: list["CustomDatabase"] = Field(
+        default_factory=list,
+        description=(
+            "User-defined databases that appear in the composer DB picker. "
+            "Each entry needs an id, label, and homepage URL — the favicon "
+            "is auto-fetched from the homepage. Searches are not yet wired "
+            "to custom entries; they're for visual/config presence only."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":

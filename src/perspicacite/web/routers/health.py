@@ -29,3 +29,28 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "llm": provider_info,
     }
+
+
+@router.get("/api/databases/custom")
+async def list_custom_databases() -> dict[str, list[dict]]:
+    """Return user-defined databases from config.custom_databases.
+
+    The frontend merges this list with its built-in DATABASES so custom
+    entries appear in the composer's DB picker. Favicon is fetched
+    client-side from the homepage domain.
+    """
+    if not app_state.initialized or app_state.config is None:
+        return {"databases": []}
+    customs = getattr(app_state.config, "custom_databases", None) or []
+    return {
+        "databases": [
+            {
+                "id": db.id,
+                "label": db.label,
+                "short": db.short or db.label[:2].upper(),
+                "homepage": db.homepage,
+                "blurb": db.blurb,
+            }
+            for db in customs
+        ],
+    }

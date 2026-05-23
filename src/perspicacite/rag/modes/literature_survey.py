@@ -333,11 +333,18 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     _provs = ", ".join(
                         p.replace("_", " ").title() for p in _ev.get("providers", [])
                     )
+                    _sq = _ev.get("searched_query") or ""
+                    _msg = (
+                        f"Querying databases: {_provs} — keywords: '{_sq}'"
+                        if _sq
+                        else f"Querying databases: {_provs}…"
+                    )
                     yield StreamEvent.status_kind(
-                        f"Querying databases: {_provs}…",
+                        _msg,
                         kind="provider_progress",
                         phase="start",
                         providers=_ev.get("providers", []),
+                        searched_query=_sq,
                     )
                 elif _k == "provider_progress" and _ev.get("phase") == "done":
                     _bp = _ev.get("by_provider", {}) or {}
@@ -474,6 +481,12 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     stage_label="survey.broad_search",
                 )
             _c.add_trace("cluster", detail={"themes": len(session.themes)})
+
+        # Emit per-paper source events so the frontend renders the
+        # source-pill grid like other modes (Basic, Advanced, Profond).
+        # We cap at 20 to match what's actually shown in the UI.
+        for _src in self._convert_to_sources(session.papers[:20]):
+            yield StreamEvent.source(_src)
 
         # Phase 3: Recommendations (deepen)
         emit_phase(_phase_sink, phase="deepen", state="running")

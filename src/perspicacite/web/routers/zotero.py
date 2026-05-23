@@ -21,12 +21,26 @@ class PushRequest(BaseModel):
 
 @router.get("/status")
 async def zotero_status() -> dict[str, Any]:
-    """Return whether Zotero is configured and reachable."""
+    """Return whether Zotero is configured.
+
+    Reports ``enabled`` when ``zotero.enabled`` is true — that alone is
+    sufficient when talking to the desktop API on loopback. ``mode`` is
+    "local" / "cloud" so the UI can hint at the credentials needed for
+    write operations.
+    """
     from perspicacite.web.state import app_state
 
     cfg = getattr(getattr(app_state, "config", None), "zotero", None)
-    enabled = bool(cfg and cfg.enabled and cfg.api_key and cfg.library_id)
-    return {"enabled": enabled}
+    if not (cfg and cfg.enabled):
+        return {"enabled": False, "mode": None}
+    base_url = (getattr(cfg, "base_url", "") or "").strip()
+    is_local = bool(base_url) and ("localhost" in base_url or "127.0.0.1" in base_url)
+    return {
+        "enabled": True,
+        "mode": "local" if is_local else "cloud",
+        "has_api_key": bool(cfg.api_key),
+        "has_library_id": bool(cfg.library_id),
+    }
 
 
 @router.post("/push")

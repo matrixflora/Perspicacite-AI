@@ -551,11 +551,18 @@ class BasicRAGMode(BaseRAGMode):
                         _provs = ", ".join(
                             p.replace("_", " ").title() for p in _ev.get("providers", [])
                         )
+                        _sq = _ev.get("searched_query") or ""
+                        _msg = (
+                            f"Querying databases: {_provs} — keywords: '{_sq}'"
+                            if _sq
+                            else f"Querying databases: {_provs}…"
+                        )
                         yield StreamEvent.status_kind(
-                            f"Querying databases: {_provs}…",
+                            _msg,
                             kind="provider_progress",
                             phase="start",
                             providers=_ev.get("providers", []),
+                            searched_query=_sq,
                         )
                     elif _k == "provider_progress" and _ev.get("phase") == "done":
                         _bp = _ev.get("by_provider", {}) or {}

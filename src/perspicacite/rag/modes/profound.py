@@ -442,7 +442,17 @@ class ProfoundRAGMode(BaseRAGMode):
 
         Ported from: core/profonde.py::ProfondeChain.process()
         """
-        logger.info("profound_rag_start", query=request.query, max_cycles=self.max_cycles)
+        # Per-request override: ChatRequest may set max_iterations.
+        _req_max = getattr(request, "max_iterations", None)
+        if _req_max is not None:
+            try:
+                max_cycles = max(1, min(int(_req_max), 5))
+            except (TypeError, ValueError):
+                max_cycles = self.max_cycles
+        else:
+            max_cycles = self.max_cycles
+
+        logger.info("profound_rag_start", query=request.query, max_cycles=max_cycles)
 
         # Reset state
         self.iterations = 0
@@ -469,7 +479,7 @@ class ProfoundRAGMode(BaseRAGMode):
         )
 
         # Main research loop
-        for cycle in range(self.max_cycles):
+        for cycle in range(max_cycles):
             # Cancellation check — respect MCP cancel_task requests
             from perspicacite.rag.cancellation import is_cancelled
             _tid = getattr(request, "task_id", None)
@@ -614,7 +624,7 @@ class ProfoundRAGMode(BaseRAGMode):
             )
 
             should_continue = (
-                bool(summary.get("should_continue", False)) and cycle < self.max_cycles - 1
+                bool(summary.get("should_continue", False)) and cycle < max_cycles - 1
             )
             if not should_continue:
                 logger.info("profound_iteration_summary_stop", cycle=self.iterations)
@@ -652,13 +662,57 @@ class ProfoundRAGMode(BaseRAGMode):
 
         _phase_sink = getattr(request, "telemetry_sink", None)
         emit_phase(_phase_sink, phase="rewrite", state="running")
-        yield StreamEvent.status("Profound RAG: Initializing deep research...")
+
+        # Per-request override: ChatRequest may set max_iterations to let
+        # the user pick a number of cycles from the composer. Bound to
+        # the same safe range used at __init__ (1-5).
+        _req_max = getattr(request, "max_iterations", None)
+        if _req_max is not None:
+            try:
+                max_cycles = max(1, min(int(_req_max), 5))
+            except (TypeError, ValueError):
+                max_cycles = self.max_cycles
+        else:
+            max_cycles = self.max_cycles
+
+        yield StreamEvent.status(
+            f"Profond RAG: Initializing deep research ({max_cycles} cycle{'s' if max_cycles != 1 else ''})..."
+        )
 
         # Reset state
         self.iterations = 0
         self.consecutive_failures = 0
         self.research_history = []
         self._iteration_summaries = []
+
+        # Live token counters. Each LLM call this Profond run makes goes
+        # through the wrapper below, which accumulates into these dicts;
+        # we yield a `usage` status frame between research steps so the
+        # status bar's tokens-in / tokens-out counters tick up live
+        # instead of jumping from 0 to a big number only after the final
+        # synthesis streams.
+        _tok = {"in": 0, "out": 0}
+
+        class _CountingLLM:
+            __slots__ = ("_real", "_acc")
+
+            def __init__(self, real: Any, acc: dict[str, int]) -> None:
+                object.__setattr__(self, "_real", real)
+                object.__setattr__(self, "_acc", acc)
+
+            async def complete(self, *args: Any, **kwargs: Any) -> Any:
+                resp = await self._real.complete(*args, **kwargs)
+                try:
+                    self._acc["in"] += int(getattr(resp, "input_tokens", 0) or 0)
+                    self._acc["out"] += int(getattr(resp, "output_tokens", 0) or 0)
+                except Exception:
+                    pass
+                return resp
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._real, name)
+
+        llm = _CountingLLM(llm, _tok)
 
         all_steps: list[ResearchStep] = []
         all_documents: list[Any] = []
@@ -693,7 +747,7 @@ class ProfoundRAGMode(BaseRAGMode):
 
         emit_phase(_phase_sink, phase="rewrite", state="done")
         emit_phase(_phase_sink, phase="retrieve", state="running")
-        for cycle in range(self.max_cycles):
+        for cycle in range(max_cycles):
             from perspicacite.rag.cancellation import is_cancelled
             _tid = getattr(request, "task_id", None)
             if _tid and is_cancelled(_tid):
@@ -703,14 +757,17 @@ class ProfoundRAGMode(BaseRAGMode):
 
             self.iterations = cycle + 1
             yield StreamEvent.status(
-                f"Profound RAG: Research cycle {self.iterations}/{self.max_cycles}..."
+                f"Profond RAG: Research cycle {self.iterations}/{max_cycles}..."
             )
 
             plan = await self._create_plan(query=request.query, llm=llm)
-            yield StreamEvent.status(f"Profound RAG: Executing {len(plan)} research steps...")
+            yield StreamEvent.status_kind(
+                "tokens", kind="usage", tokens_in=_tok["in"], tokens_out=_tok["out"],
+            )
+            yield StreamEvent.status(f"Profond RAG: Executing {len(plan)} research steps...")
             if self.use_websearch and "web_search" in tools.list_tools():
                 yield StreamEvent.status(
-                    "Profound RAG: Web search is available — will consult live "
+                    "Profond RAG: Web search is available — will consult live "
                     "databases when KB coverage is insufficient."
                 )
             _c_plan_s = get_collector()
@@ -752,11 +809,18 @@ class ProfoundRAGMode(BaseRAGMode):
                         _provs = ", ".join(
                             p.replace("_", " ").title() for p in _ev.get("providers", [])
                         )
+                        _sq = _ev.get("searched_query") or ""
+                        _msg = (
+                            f"Cycle {self.iterations}: querying databases — {_provs} (keywords: '{_sq}')"
+                            if _sq
+                            else f"Cycle {self.iterations}: querying databases — {_provs}…"
+                        )
                         yield StreamEvent.status_kind(
-                            f"Cycle {self.iterations}: querying databases — {_provs}…",
+                            _msg,
                             kind="provider_progress",
                             phase="start",
                             providers=_ev.get("providers", []),
+                            searched_query=_sq,
                         )
                     elif _k == "provider_progress" and _ev.get("phase") == "done":
                         _bp = _ev.get("by_provider", {}) or {}
@@ -782,7 +846,7 @@ class ProfoundRAGMode(BaseRAGMode):
             ]
             if _web_docs:
                 yield StreamEvent.status(
-                    f"Profound RAG: Cycle {self.iterations} consulted the web "
+                    f"Profond RAG: Cycle {self.iterations} consulted the web "
                     f"({len(_web_docs)} document{'s' if len(_web_docs) != 1 else ''} from live search)."
                 )
 
@@ -824,11 +888,18 @@ class ProfoundRAGMode(BaseRAGMode):
             all_steps.extend(cycle_steps)
             all_documents.extend(cycle_documents)
 
+            # Surface cumulative LLM token usage for this cycle so the
+            # status bar updates live instead of waiting for the final
+            # synthesis to stream.
+            yield StreamEvent.status_kind(
+                "tokens", kind="usage", tokens_in=_tok["in"], tokens_out=_tok["out"],
+            )
+
             if early_exit:
                 emit_phase(_phase_sink, phase="retrieve", state="done")
                 emit_phase(_phase_sink, phase="reason", state="done")
                 emit_phase(_phase_sink, phase="synthesize", state="running")
-                yield StreamEvent.status("Profound RAG: Early exit — synthesizing final answer...")
+                yield StreamEvent.status("Profond RAG: Early exit — synthesizing final answer...")
                 async for event in self._stream_final_response(
                     query=request.query,
                     steps=all_steps,
@@ -845,7 +916,7 @@ class ProfoundRAGMode(BaseRAGMode):
             if plan_limit_reason:
                 completion_reason = plan_limit_reason
                 yield StreamEvent.status(
-                    f"Profound RAG: Plan review ended research ({plan_limit_reason})"
+                    f"Profond RAG: Plan review ended research ({plan_limit_reason})"
                 )
                 if plan_limit_reason in (
                     "unanswerable",
@@ -894,17 +965,17 @@ class ProfoundRAGMode(BaseRAGMode):
             )
 
             should_continue = (
-                bool(summary.get("should_continue", False)) and cycle < self.max_cycles - 1
+                bool(summary.get("should_continue", False)) and cycle < max_cycles - 1
             )
             if not should_continue:
-                yield StreamEvent.status("Profound RAG: Research complete based on iteration summary")
+                yield StreamEvent.status("Profond RAG: Research complete based on iteration summary")
                 break
 
             cycle_successes = sum(1 for s in cycle_steps if s.success)
             if cycle_successes == 0:
                 self.consecutive_failures += 1
                 if self.consecutive_failures >= self.max_consecutive_failures:
-                    yield StreamEvent.status("Profound RAG: Max consecutive failures reached")
+                    yield StreamEvent.status("Profond RAG: Max consecutive failures reached")
                     break
             else:
                 self.consecutive_failures = 0
@@ -912,7 +983,10 @@ class ProfoundRAGMode(BaseRAGMode):
         emit_phase(_phase_sink, phase="retrieve", state="done")
         emit_phase(_phase_sink, phase="reason", state="done")
         emit_phase(_phase_sink, phase="synthesize", state="running")
-        yield StreamEvent.status("Profound RAG: Synthesizing final answer...")
+        yield StreamEvent.status_kind(
+            "tokens", kind="usage", tokens_in=_tok["in"], tokens_out=_tok["out"],
+        )
+        yield StreamEvent.status("Profond RAG: Synthesizing final answer...")
         async for event in self._stream_final_response(
             query=request.query,
             steps=all_steps,
