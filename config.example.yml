@@ -24,6 +24,19 @@ llm:
   default_provider: "anthropic"
   default_model: "claude-sonnet-4-5"
 
+  # ── Free-tier auto-rotation (zero-cost alternative) ──────────────────────
+  # Set free_auto_mode: true + add your OPENROUTER_API_KEY (free account at
+  # openrouter.ai — no credits needed) to rotate through free models instead.
+  # See config.example.openrouter-free.yml for a full zero-cost preset.
+  # free_auto_mode: false
+  # free_tier_fallback_models:
+  #   - "deepseek/deepseek-v4-flash:free"
+  #   - "qwen/qwen3-coder:free"
+  #   - "nvidia/nemotron-3-super-120b-a12b:free"
+  #   - "meta-llama/llama-3.3-70b-instruct:free"
+  #   - "openrouter/free"
+  # ─────────────────────────────────────────────────────────────────────────
+
   providers:
     anthropic:
       base_url: "https://api.anthropic.com"

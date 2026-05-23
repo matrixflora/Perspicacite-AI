@@ -564,23 +564,43 @@ class LLMConfig(BaseModel):
         ),
     )
 
-    # Free-tier fallback chain — tried sequentially when the primary model
-    # fails with a quota-exceeded, bad-model-ID, or auth error. All entries
-    # are routed via the 'openrouter' provider so an API key is still needed
-    # (free-tier OpenRouter accounts require a (free) key for rate-limiting).
-    # Leave empty to disable (default). Recommended starting point:
-    #   free_tier_fallback_models:
-    #     - "deepseek/deepseek-v4-flash:free"
-    #     - "meta-llama/llama-3.3-70b-instruct:free"
-    #     - "openrouter/free"
+    # ---- free-tier auto-mode -------------------------------------------
+    # When free_auto_mode=True and the caller does not specify an explicit
+    # model/provider, complete() uses free_tier_fallback_models as the
+    # *primary* chain rather than default_model. Models are tried in order;
+    # on any error the next model in the list is attempted automatically.
+    # Callers that pass an explicit model= still use that model (no override).
+    # Requires OPENROUTER_API_KEY (a free account at openrouter.ai is enough
+    # — no credits needed for :free-suffix models).
+    free_auto_mode: bool = Field(
+        default=False,
+        description=(
+            "When True, complete() without an explicit model uses "
+            "free_tier_fallback_models as the primary rotation chain instead "
+            "of default_model. Ideal for zero-cost deployments or as a safe "
+            "default when no paid API key is available."
+        ),
+    )
+    # Free-tier model pool — used in two ways:
+    #  1. As the primary chain when free_auto_mode=True (tried in order, rotate on error).
+    #  2. As a fallback chain when free_auto_mode=False and the primary fails with a
+    #     quota-exceeded, invalid-model-ID, or auth error.
+    # All entries are called via the 'openrouter' provider.
+    # Requires OPENROUTER_API_KEY (free account is sufficient).
+    # Recommended pool (best quality → broadest availability):
+    #   - "deepseek/deepseek-v4-flash:free"           1M ctx, scientific text
+    #   - "qwen/qwen3-coder:free"                     1M ctx, reasoning/code
+    #   - "nvidia/nemotron-3-super-120b-a12b:free"    1M ctx, strong general
+    #   - "meta-llama/llama-3.3-70b-instruct:free"   131K ctx, reliable
+    #   - "openrouter/free"                           auto-picks best available
     free_tier_fallback_models: list[str] = Field(
         default_factory=list,
         description=(
-            "Ordered list of OpenRouter free-tier model IDs tried sequentially "
-            "when the primary model fails with a quota, invalid-model-ID, or "
-            "auth error. All entries are called via the 'openrouter' provider. "
-            "Requires OPENROUTER_API_KEY (free account is sufficient). "
-            "Example: ['deepseek/deepseek-v4-flash:free', 'openrouter/free']."
+            "Ordered list of OpenRouter free-tier model IDs. Used as the "
+            "primary rotation chain when free_auto_mode=True, or as a "
+            "fallback chain when the primary model fails with a quota, "
+            "invalid-model-ID, or auth error. All entries routed via "
+            "'openrouter'. Requires OPENROUTER_API_KEY (free account ok)."
         ),
     )
 

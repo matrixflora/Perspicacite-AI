@@ -971,16 +971,26 @@ class AsyncLLMClient:
     ) -> str:
         """Complete a conversation with the LLM.
 
-        Tries the configured primary model first (with automatic retries on
-        transient errors). If the primary fails with a quota-exceeded,
-        invalid-model-ID, or auth error **and** ``llm.free_tier_fallback_models``
-        is configured, it tries each free-tier model in order via OpenRouter
-        before giving up.
+        **Free-auto mode** (``llm.free_auto_mode: true`` in config):
+        When the caller does not pass an explicit ``model``/``provider``,
+        ``free_tier_fallback_models`` is used as the *primary* rotation chain
+        via OpenRouter. Models are tried in order; on any error the next model
+        is attempted automatically. No credits are needed — a free
+        openrouter.ai account (``OPENROUTER_API_KEY``) is sufficient.
+
+        **Normal mode** (``free_auto_mode: false``, default):
+        The configured ``default_model`` / ``default_provider`` is tried first
+        (with automatic retries on transient errors). If it fails with a
+        quota-exceeded, invalid-model-ID, or auth error *and*
+        ``free_tier_fallback_models`` is set, those models are tried next.
+
+        Callers that pass an explicit ``model=`` always use that model
+        regardless of ``free_auto_mode``.
 
         Args:
             messages: List of message dicts with 'role' and 'content'.
-            model: Model name. Uses ``default_model`` when None.
-            provider: Provider name. Uses ``default_provider`` when None.
+            model: Model name. Uses the free chain or ``default_model`` when None.
+            provider: Provider name. Uses the chain or ``default_provider`` when None.
             temperature: Sampling temperature.
             max_tokens: Maximum tokens to generate.
             **kwargs: Forwarded to the provider (e.g. ``stage``, ``cache``).
@@ -989,8 +999,29 @@ class AsyncLLMClient:
             Generated text.
 
         Raises:
-            Exception: Primary + all free-tier fallbacks failed.
+            Exception: All attempted models (primary + fallbacks) failed.
         """
+        free_models: list[str] = getattr(
+            self.config, "free_tier_fallback_models", []
+        ) or []
+        free_auto: bool = getattr(self.config, "free_auto_mode", False)
+
+        # ---- free-auto mode: no explicit model → use free chain as primary ----
+        # complete_with_chain() calls self.complete(model=X, provider=Y) with
+        # explicit values, so the free_auto block will NOT recurse.
+        if free_auto and free_models and model is None and provider is None:
+            chain = [("openrouter", m) for m in free_models]
+            logger.info(
+                "llm_free_auto_chain",
+                chain_length=len(chain),
+                first_model=free_models[0],
+            )
+            return await self.complete_with_chain(
+                messages, chain=chain,
+                temperature=temperature, max_tokens=max_tokens, **kwargs,
+            )
+
+        # ---- normal path: primary model with retry, then free fallback --------
         try:
             return await self._complete_primary(
                 messages, model=model, provider=provider,
