@@ -17,6 +17,7 @@ class RAGMode(str, Enum):
     AGENTIC: Intent-based agentic RAG with tool use
     LITERATURE_SURVEY: Systematic field mapping with theme identification and structured output
     CONTRADICTION: Identify agreement / disagreement / open questions across papers
+    REASONING: Indicium claim-graph reasoning (knob: reasoning_strategy)
     """
 
     BASIC = "basic"
@@ -25,6 +26,7 @@ class RAGMode(str, Enum):
     AGENTIC = "agentic"
     LITERATURE_SURVEY = "literature_survey"
     CONTRADICTION = "contradiction"
+    REASONING = "reasoning"
 
 
 class SourceReference(BaseModel):
@@ -169,6 +171,16 @@ class RAGRequest(BaseModel):
     recency_weight: float | None = Field(default=None, ge=0.0, le=1.0)
     recency_half_life_years: float | None = Field(default=None, gt=0.0)
     kb_names: list[str] | None = None
+    reasoning_strategy: (
+        Literal["provenance", "contradiction", "graph", "evidence_graded"] | None
+    ) = Field(
+        default=None,
+        description=(
+            "Strategy for RAGMode.REASONING. None = strongest shipped layer "
+            "(see rag/modes/reasoning/__init__.py). Unshipped strategies raise "
+            "NotImplementedError pointing to the planned sprint."
+        ),
+    )
     task_id: str | None = Field(
         default=None,
         description="Optional task ID for MCP cancellation tracking",

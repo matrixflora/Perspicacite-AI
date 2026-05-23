@@ -130,6 +130,7 @@ browser = [
 #   uv sync --extra indicia
 indicia = [
   "indicium",
+  "pyoxigraph>=0.4",
 ]
 
 [project.scripts]
