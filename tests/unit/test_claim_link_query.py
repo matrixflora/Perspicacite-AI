@@ -15,8 +15,9 @@ def test_claim_link_iri_constants_exist():
         IRI_LINK_TYPE, IRI_CLAIM_STATUS, IRI_ASSERTED_BY, IRI_DECISION_CONTEXT,
         INDICIUM_NS,
     )
-    assert IRI_CLAIM_LINK.startswith("http://purl.org/spar/cito/"), (
-        f"IRI_CLAIM_LINK should be cito:Citation IRI, got {IRI_CLAIM_LINK!r}"
+    assert IRI_CLAIM_LINK == "https://w3id.org/indicium/ClaimLink", (
+        f"IRI_CLAIM_LINK must be indicium:ClaimLink (https://w3id.org/indicium/ClaimLink), "
+        f"got {IRI_CLAIM_LINK!r}. The ClaimLink class_uri was fixed in indicium v1.4."
     )
     assert IRI_FROM_CLAIM       == f"{INDICIUM_NS}from_claim"
     assert IRI_TO_CLAIM         == f"{INDICIUM_NS}to_claim"

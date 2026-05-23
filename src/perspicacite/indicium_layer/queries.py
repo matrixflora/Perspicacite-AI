@@ -70,8 +70,8 @@ IRI_WAS_GENERATED_BY = f"{PROV_NS}wasGeneratedBy"
 IRI_CREATED = f"{DCT_NS}created"
 IRI_RDF_TYPE = f"{RDF_NS}type"
 
-# Indicium v1.3 ClaimLink property IRIs
-IRI_CLAIM_LINK       = f"{CITO_NS}Citation"         # class_uri: cito:Citation per LinkML schema
+# Indicium v1.4 ClaimLink property IRIs
+IRI_CLAIM_LINK       = f"{INDICIUM_NS}ClaimLink"    # indicium:ClaimLink (v1.4: class_uri removed from schema)
 IRI_FROM_CLAIM       = f"{INDICIUM_NS}from_claim"
 IRI_TO_CLAIM         = f"{INDICIUM_NS}to_claim"
 IRI_LINK_TYPE        = f"{INDICIUM_NS}link_type"
@@ -368,8 +368,8 @@ def claim_links_for_claim(
 ) -> list[dict]:
     """Return ClaimLink nodes where claim_iri is from_claim or to_claim.
 
-    Queries the cito graph for all ClaimLink nodes (typed cito:Citation per
-    the Indicium v1.3 schema) where the given claim IRI appears as either
+    Queries the cito graph for all ClaimLink nodes (typed indicium:ClaimLink per
+    the Indicium v1.4 schema) where the given claim IRI appears as either
     from_claim (outgoing edge) or to_claim (incoming edge).
 
     Args:
