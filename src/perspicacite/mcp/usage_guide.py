@@ -329,6 +329,18 @@ _TOOL_ENTRIES: list[dict] = [
         ),
         "key_knobs": ["kb_name (required)", "format (turtle|jsonld|rocrate)"],
     },
+    {
+        "name": "get_claim_figures",
+        "purpose": (
+            "Return Figure nodes (microscopy, plots, diagrams) associated with "
+            "a claim IRI in the KB claim graph."
+        ),
+        "when_to_use": (
+            "After build_claim_graph, when you need the visual evidence behind "
+            "a specific claim — e.g. to surface supporting figures in a report."
+        ),
+        "key_knobs": ["kb_name (required)", "claim_iri (required)"],
+    },
 ]
 
 _CAPABILITIES: list[str] = [

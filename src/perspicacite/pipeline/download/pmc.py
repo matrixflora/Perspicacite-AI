@@ -247,6 +247,77 @@ def _extract_sections_from_xml(xml_bytes: bytes) -> dict[str, str] | None:
     return sections if sections else None
 
 
+def _all_text(el) -> str:
+    """Recursively collect all text content from an XML element."""
+    parts = []
+    if el.text:
+        parts.append(el.text)
+    for child in el:
+        parts.append(_all_text(child))
+        if child.tail:
+            parts.append(child.tail)
+    return " ".join(p.strip() for p in parts if p.strip())
+
+
+def _extract_figures_from_xml(xml_bytes: bytes) -> list[dict]:
+    """Extract <fig> and <table-wrap> elements from JATS/NLM XML.
+
+    Returns a list of dicts with keys:
+        fig_id, label, caption, fig_type, page (None for JATS)
+    """
+    try:
+        root = ElementTree.fromstring(xml_bytes)
+    except ElementTree.ParseError:
+        return []
+
+    body = None
+    for xpath in _BODY_XPATHS:
+        body = root.find(xpath)
+        if body is not None:
+            break
+
+    if body is None:
+        return []
+
+    out: list[dict] = []
+    index = 0
+    for el in body.iter():
+        raw_tag = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+        if raw_tag not in ("fig", "table-wrap"):
+            continue
+
+        fig_type = "table" if raw_tag == "table-wrap" else el.attrib.get("fig-type") or "figure"
+
+        fig_id = el.attrib.get("id") or f"{raw_tag}_{index}"
+
+        label_el = None
+        caption_el = None
+        for child in el:
+            ctag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            if ctag == "label" and label_el is None:
+                label_el = child
+            elif ctag == "caption" and caption_el is None:
+                caption_el = child
+
+        label = (label_el.text or "").strip() if label_el is not None else ""
+        caption = _all_text(caption_el)[:500] if caption_el is not None else ""
+
+        if not label and not caption:
+            index += 1
+            continue
+
+        out.append({
+            "fig_id": fig_id,
+            "label": label or None,
+            "caption": caption or None,
+            "fig_type": fig_type,
+            "page": None,
+        })
+        index += 1
+
+    return out
+
+
 def _extract_supplementary_from_xml(xml_bytes: bytes, pmcid: str) -> list[dict] | None:
     """Extract supplementary-material entries from a PMC JATS XML.
 

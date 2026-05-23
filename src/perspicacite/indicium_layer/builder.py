@@ -39,6 +39,7 @@ from perspicacite.indicium_layer.manifest import (
 from perspicacite.indicium_layer.pruner import build_candidate_pairs
 from perspicacite.indicium_layer.queries import (
     ASB_NS,
+    IRI_CAPTION,
     IRI_CLAIM,
     IRI_CONTEXT,
     IRI_CREATED,
@@ -46,12 +47,16 @@ from perspicacite.indicium_layer.queries import (
     IRI_EVIDENCE,
     IRI_EVIDENCE_PROP,
     IRI_EVIDENCE_TYPE,
+    IRI_FIGURE,
+    IRI_FIGURE_ID,
+    IRI_FIGURE_TYPE,
     IRI_OBJECT,
     IRI_QUALIFIER,
     IRI_RDF_TYPE,
     IRI_RELATION,
     IRI_RESEARCH_PAPER,
     IRI_RUN_ACTIVITY,
+    IRI_SOURCE_DOI,
     IRI_SUBJECT,
     IRI_TEXT_CHUNK,
     IRI_WAS_DERIVED_FROM,
@@ -125,6 +130,36 @@ def run_iri(kb_name: str, iso8601: str, model: str | None) -> str:
 def _eco_iri(eco_grade: str | None) -> str:
     code = _ECO_BY_TYPE.get(eco_grade or "knowledge", _ECO_BY_TYPE["knowledge"])
     return f"{ECO_BASE}{code}"
+
+
+def _add_figure_node(
+    store: Any,
+    kb_name: str,
+    claim_iri_str: str,
+    fig: dict,
+) -> str:
+    """Add a Figure RDF node linked from claim_iri via prov:wasDerivedFrom.
+
+    fig keys: fig_id, label, caption, fig_type, source_doi (optional)
+    Returns the figure IRI.
+    """
+    fig_id = fig.get("fig_id") or fig.get("label") or "unknown"
+    source_doi = fig.get("source_doi", "")
+    h = hashlib.sha1(f"{source_doi}|{fig_id}".encode()).hexdigest()[:10]
+    fig_iri = f"kb://{kb_name}/figure/{h}"
+
+    store.add(fig_iri, IRI_RDF_TYPE, IRI_FIGURE)
+    if fig.get("fig_id"):
+        store.add(fig_iri, IRI_FIGURE_ID, ("literal", fig["fig_id"], None))
+    if fig.get("caption"):
+        store.add(fig_iri, IRI_CAPTION, ("literal", fig["caption"][:500], None))
+    if fig.get("fig_type"):
+        store.add(fig_iri, IRI_FIGURE_TYPE, ("literal", fig["fig_type"], None))
+    if source_doi:
+        store.add(fig_iri, IRI_SOURCE_DOI, ("literal", source_doi, None))
+    # Link claim → figure
+    store.add(claim_iri_str, IRI_WAS_DERIVED_FROM, fig_iri)
+    return fig_iri
 
 
 async def build_claim_graph(

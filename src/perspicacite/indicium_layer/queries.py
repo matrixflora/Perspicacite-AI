@@ -21,6 +21,18 @@ OA_NS = "http://www.w3.org/ns/oa#"
 DCT_NS = "http://purl.org/dc/terms/"
 RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 XSD_NS = "http://www.w3.org/2001/XMLSchema#"
+DCAT_NS = "http://www.w3.org/ns/dcat#"
+
+# Indicium v1.2 figure / script / dataset type IRIs
+IRI_FIGURE = f"{DOCO_NS}Figure"
+IRI_SCRIPT = f"{FABIO_NS}ComputerProgram"
+IRI_DATA_ASSET = f"{DCAT_NS}Dataset"
+
+# Indicium v1.2 figure property IRIs
+IRI_FIGURE_ID = f"{ASB_NS}figureId"
+IRI_CAPTION = f"{DCT_NS}description"
+IRI_FIGURE_TYPE = f"{ASB_NS}figureType"
+IRI_SOURCE_DOI = f"{ASB_NS}sourceDoi"
 
 SPARQL_PREFIXES = f"""
 PREFIX asb: <{ASB_NS}>
@@ -32,6 +44,7 @@ PREFIX oa: <{OA_NS}>
 PREFIX dct: <{DCT_NS}>
 PREFIX rdf: <{RDF_NS}>
 PREFIX xsd: <{XSD_NS}>
+PREFIX dcat: <{DCAT_NS}>
 """
 
 # ---------- Type IRIs (frequently referenced by builder + strategies) ----------
@@ -260,6 +273,33 @@ def papers_with_claim_pattern(
             {filter_block}
         }}
     """
+    )
+    return store.select(sparql)
+
+
+def figures_for_claim(
+    store: Any,
+    kb_name: str,
+    claim_iri: str,
+) -> list[dict[str, str]]:
+    """Return Figure nodes linked to a claim via prov:wasDerivedFrom.
+
+    Each row: {"figure": iri, "figure_id": str, "caption": str,
+               "figure_type": str, "source_doi": str}
+    """
+    sparql = (
+        SPARQL_PREFIXES
+        + f"""
+        PREFIX dcat: <{DCAT_NS}>
+        SELECT ?figure ?figure_id ?caption ?figure_type ?source_doi WHERE {{
+            <{claim_iri}> prov:wasDerivedFrom ?figure .
+            ?figure rdf:type <{IRI_FIGURE}> .
+            OPTIONAL {{ ?figure asb:figureId ?figure_id }}
+            OPTIONAL {{ ?figure dct:description ?caption }}
+            OPTIONAL {{ ?figure asb:figureType ?figure_type }}
+            OPTIONAL {{ ?figure asb:sourceDoi ?source_doi }}
+        }}
+        """
     )
     return store.select(sparql)
 

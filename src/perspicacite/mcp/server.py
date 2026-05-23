@@ -2933,7 +2933,7 @@ async def add_local_papers_to_kb(
             except Exception as exc:
                 results.append(
                     {"file": raw_file, "status": "error", "reason": f"Read failed: {exc}"}
-                )  # noqa: E501
+                )
                 continue
 
         doi = pd.get("doi")
@@ -5691,6 +5691,46 @@ async def query_claim_graph(
 
 
 @mcp.tool()
+async def get_claim_figures(
+    kb_name: str,
+    claim_iri: str,
+) -> str:
+    """Return Figure nodes associated with a claim in the KB's claim graph.
+
+    Traverses the claim graph for Figure nodes linked to the given claim
+    IRI via prov:wasDerivedFrom.  Useful for surfacing the visual evidence
+    behind a claim (microscopy plates, data plots, etc.) when the claim was
+    grounded in a figure rather than a text passage.
+
+    Args:
+        kb_name:   KB whose claim graph to query.
+        claim_iri: IRI of the claim (e.g. ``kb://my_kb/claim/abc123``).
+
+    Returns:
+        JSON ``{success, kb_name, claim_iri, figures: [{figure, figure_id,
+        caption, figure_type, source_doi}]}``
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+
+    from perspicacite.indicium_layer.queries import figures_for_claim
+
+    store = _open_claim_graph_store_for_kb(kb_name)
+    try:
+        rows = figures_for_claim(store, kb_name, claim_iri)
+    finally:
+        store.close()
+
+    return _json_ok({
+        "kb_name": kb_name,
+        "claim_iri": claim_iri,
+        "figures": rows,
+    })
+
+
+@mcp.tool()
 async def claim_graph_export(
     kb_name: str,
     format: str = "turtle",
@@ -5877,6 +5917,7 @@ _TOOL_NAMES: list[str] = [
     "build_claim_graph",
     "claim_graph_status",
     "query_claim_graph",
+    "get_claim_figures",
     "claim_graph_export",
     "get_usage_guide",
     "extract_claims_from_passages",
