@@ -29,8 +29,8 @@ from perspicacite.rag.modes.base import BaseRAGMode
 
 logger = get_logger("perspicacite.rag.modes.reasoning")
 
-# After Subplan A: "provenance" + "contradiction" ship.
-SHIPPED_STRATEGIES: frozenset[str] = frozenset({"provenance", "contradiction"})
+# After Subplan B Task 3: "provenance" + "contradiction" + "graph" ship.
+SHIPPED_STRATEGIES: frozenset[str] = frozenset({"provenance", "contradiction", "graph"})
 DEFAULT_REASONING_STRATEGY: str = "contradiction"
 
 # Module-level toggle so tests can monkey-patch without touching sys.modules.
@@ -98,6 +98,22 @@ class ReasoningRAGMode(BaseRAGMode):
             )
 
             async for ev in run_provenance_stream(
+                request=request,
+                llm=llm,
+                vector_store=vector_store,
+                embedding_provider=embedding_provider,
+                config=self.config,
+                session_store=self.session_store,
+            ):
+                yield ev
+            return
+
+        elif strategy == "graph":
+            from perspicacite.rag.modes.reasoning.graph_traversal import (
+                run_graph_traversal_stream,
+            )
+
+            async for ev in run_graph_traversal_stream(
                 request=request,
                 llm=llm,
                 vector_store=vector_store,
