@@ -1028,10 +1028,18 @@ class AsyncLLMClient:
                 temperature=temperature, max_tokens=max_tokens, **kwargs,
             )
         except Exception as primary_exc:
-            free_models: list[str] = getattr(
-                self.config, "free_tier_fallback_models", []
-            ) or []
             if not free_models or not _should_trigger_free_fallback(primary_exc):
+                raise
+
+            # Don't cascade into the free chain when the failing model is
+            # *already* a free-tier model — complete_with_chain() handles
+            # rotation itself and we'd only duplicate retries.
+            current_model = model or self.config.default_model
+            if (
+                current_model.endswith(":free")
+                or current_model in free_models
+                or current_model == "openrouter/free"
+            ):
                 raise
 
             logger.warning(
