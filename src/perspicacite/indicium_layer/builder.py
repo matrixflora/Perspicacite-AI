@@ -95,8 +95,7 @@ def _sha8(text: str) -> str:
 
 def claim_iri(kb_name: str, claim: dict) -> str:
     canonical = "|".join(
-        str(claim.get(k, ""))
-        for k in ("context", "subject", "qualifier", "relation", "object")
+        str(claim.get(k, "")) for k in ("context", "subject", "qualifier", "relation", "object")
     )
     return f"kb://{kb_name}/claim/{_sha8(canonical)}"
 
@@ -156,8 +155,7 @@ async def build_claim_graph(
 
     all_papers = papers_provider()
     paper_texts = {
-        pid: "\n".join(p.get("text", "") for p in passages_provider(pid))
-        for pid in all_papers
+        pid: "\n".join(p.get("text", "") for p in passages_provider(pid)) for pid in all_papers
     }
     to_process = papers_needing_rebuild(manifest, paper_texts)
 
@@ -237,9 +235,7 @@ async def build_claim_graph(
                     ("literal", str(pg["char_end"]), f"{XSD_NS}nonNegativeInteger"),
                 )
 
-            ev_grade = (
-                (claim.get("evidence") or [{}])[0].get("evidence_type") or "knowledge"
-            )
+            ev_grade = (claim.get("evidence") or [{}])[0].get("evidence_type") or "knowledge"
             e_iri = evidence_iri(kb_name, ps_iri, ev_grade)
             store.add(e_iri, IRI_RDF_TYPE, IRI_EVIDENCE)
             store.add(e_iri, IRI_EVIDENCE_TYPE, _eco_iri(ev_grade))
@@ -280,9 +276,7 @@ async def build_claim_graph(
 
     # CiTO classification
     if all_new_claims:
-        pairs = build_candidate_pairs(
-            all_new_claims, max_pairs_per_claim=max_pairs_per_claim
-        )
+        pairs = build_candidate_pairs(all_new_claims, max_pairs_per_claim=max_pairs_per_claim)
         pairs_classified = len(pairs)
         edges = await classify_pairs(pairs, llm_client=llm_client, model=model)
         for edge in edges:
@@ -306,15 +300,17 @@ async def build_claim_graph(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a") as f:
         f.write(
-            json.dumps({
-                "iso": t0.isoformat(),
-                "papers": len(to_process),
-                "claims_added": claims_added,
-                "edges_added": edges_added,
-                "pairs_classified": pairs_classified,
-                "duration_seconds": duration,
-                "model": model,
-            })
+            json.dumps(
+                {
+                    "iso": t0.isoformat(),
+                    "papers": len(to_process),
+                    "claims_added": claims_added,
+                    "edges_added": edges_added,
+                    "pairs_classified": pairs_classified,
+                    "duration_seconds": duration,
+                    "model": model,
+                }
+            )
             + "\n"
         )
 
