@@ -1,6 +1,9 @@
 import json
-import pytest
+from typing import ClassVar
 from unittest.mock import AsyncMock
+
+import pytest
+
 from perspicacite.pipeline.claims import extract_claims
 
 
@@ -42,7 +45,7 @@ class _MockAdapter:
     """Minimal adapter that satisfies the DomainAdapter structural protocol."""
     domain_id = "test"
     qualifiers = frozenset({"test_qualifier"})
-    ontology_prefixes = {"TST": "http://test.example.org/"}
+    ontology_prefixes: ClassVar[dict[str, str]] = {"TST": "http://test.example.org/"}
 
     def extraction_context(self) -> str:
         return "Domain: test. Extra qualifier: test_qualifier."

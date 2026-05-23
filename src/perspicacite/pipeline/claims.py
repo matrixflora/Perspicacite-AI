@@ -6,12 +6,12 @@ import json
 import uuid
 from typing import Any
 
-_QUALIFIERS = {
+_QUALIFIERS: frozenset[str] = frozenset({
     "causes", "prevents", "inhibits", "activates", "increases", "decreases",
     "correlates_with", "is_associated_with", "predicts", "interacts_with",
     "produces", "requires", "enables", "treats", "enhances", "reduces",
     "has_property", "is_part_of", "is_a", "consistent_with",
-}
+})
 _EVIDENCE_TYPES = {"data", "citation", "knowledge", "inference", "speculation"}
 _SOURCE_TYPES = {"text", "figure", "table", "image", "code", "data"}
 
@@ -29,7 +29,7 @@ Return JSON: {{"claims": [{{...}}]}}"""
 async def extract_claims(
     *, llm_client: Any, passages: list[dict], context: str | None = None,
     model: str | None = None,
-    domain_adapter: "Any | None" = None,
+    domain_adapter: Any | None = None,
 ) -> list[dict]:
     """Extract typed claims from passages via LLM.
 
