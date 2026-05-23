@@ -123,7 +123,7 @@ async def test_ingest_skill_bundles_batch_processes_all(tmp_path):
     with patch("perspicacite.pipeline.github_kb.ingest_dois_into_kb", new=fake_ingest), \
          patch("perspicacite.rag.dynamic_kb.DynamicKnowledgeBase", return_value=mock_dkb):
         summaries = await ingest_skill_bundles_batch(
-            sources=dirs,
+            root=tmp_path,
             config=config,
             vector_store=AsyncMock(),
             embedding_service=mock_embed,
