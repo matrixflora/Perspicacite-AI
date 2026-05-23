@@ -3,6 +3,7 @@ from retrieved passages, via the project LLM client."""
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 _QUALIFIERS = {
@@ -66,7 +67,11 @@ def _coerce_claim(c: dict) -> dict | None:
     src_type = c.get("source_type")
     if src_type is not None and src_type not in _SOURCE_TYPES:
         src_type = None
-    claim: dict = {k: c[k] for k in required}
+    # Mint a stable id so every claim dict is Indicium-adapter-compatible.
+    # Callers may override by setting claim["id"] after coercion if they have
+    # a stable identifier from the upstream source (e.g. a DOI-scoped hash).
+    claim: dict = {"id": f"perspicacite:{uuid.uuid4().hex[:8]}"}
+    claim.update({k: c[k] for k in required})
     if c.get("claim_type") in {"explicit", "implicit"}:
         claim["claim_type"] = c["claim_type"]
     evidence: dict = {}
@@ -94,7 +99,8 @@ def claims_to_graph(claims: list[dict]):
     g = rdflib.Graph()
     asb = rdflib.Namespace(_ASB)
     for i, c in enumerate(claims):
-        node = rdflib.URIRef(f"urn:perspicacite:claim:{i}")
+        cid = c.get("id") or f"pos:{i}"
+        node = rdflib.URIRef(f"urn:perspicacite:claim:{cid}")
         g.add((node, rdflib.RDF.type, asb.Claim))
         for slot in ("context", "subject", "qualifier", "relation", "object"):
             if c.get(slot):
