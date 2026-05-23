@@ -5293,6 +5293,7 @@ async def extract_claims_from_passages(
     passages: list[dict],
     context: str | None = None,
     model: str | None = None,
+    domain: str | None = None,
 ) -> str:
     """Extract typed scientific claims (Bucur 5-slot SuperPattern + ECO-typed
     evidence) from retrieved passages, validated against the indicium standard.
@@ -5302,6 +5303,15 @@ async def extract_claims_from_passages(
     {success, claims:[...], claims_valid: bool, validation_report?: str}.
     Use after retrieval (e.g. get_relevant_passages) to produce a machine-
     readable, standards-compliant claim set instead of prose.
+
+    Args:
+        passages: List of passage dicts (as returned by get_relevant_passages).
+        context: Optional extraction context appended to the LLM prompt.
+        model: Optional LLM model override.
+        domain: Optional domain adapter ID (e.g. "metabolomics"). When provided,
+            claims are enriched with ontology terms and domain-specific SHACL
+            shapes are merged into validation. Requires indicium-adapters to be
+            installed; silently ignored if not available.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -5310,9 +5320,24 @@ async def extract_claims_from_passages(
         from perspicacite.pipeline.claims import extract_claims, validate_claims
     except ImportError:
         return _json_error("indicium not installed; reinstall with the 'indicia' extra")
+
+    # Resolve domain adapter (best-effort; silently skip if indicium-adapters not installed)
+    adapter = None
+    if domain:
+        try:
+            from indicium_adapters import discover_adapters
+            adapter = discover_adapters().get(domain)
+        except ImportError:
+            pass  # indicium-adapters not installed — proceed without adapter
+
     claims = await extract_claims(
         llm_client=state.llm_client, passages=passages, context=context, model=model)
-    conforms, report = validate_claims(claims) if claims else (True, "")
+
+    # Enrich claims with domain ontology terms when adapter provides enrichment
+    if adapter is not None and claims:
+        claims = [adapter.enrich_claim(c) for c in claims]
+
+    conforms, report = validate_claims(claims, domain_adapter=adapter) if claims else (True, "")
     out: dict = {"claims": claims, "claims_valid": conforms}
     if not conforms:
         out["validation_report"] = report
