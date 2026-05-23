@@ -5846,20 +5846,22 @@ async def claim_graph_export(
                         + (jld_list if isinstance(jld_list, list) else []),
                     }
         else:
-            # oxigraph backend — dump via pyoxigraph; JSON-LD/RO-Crate via rdflib bridge
+            # oxigraph backend — Store only supports quad formats (N-Quads/TriG); round-trip
+            # via N-Quads→rdflib for all three output formats since pyoxigraph has no JSON-LD
+            # serialiser and text/turtle / n-triples are triples-only formats that raise
+            # "A RDF format supporting datasets was expected" on a named-graph Store.
             import io
 
             from rdflib import ConjunctiveGraph as _CG
 
             buf = io.BytesIO()
+            store._oxistore.dump(buf, "application/n-quads")
+            g = _CG()
+            g.parse(data=buf.getvalue().decode("utf-8"), format="nquads")
+
             if format == "turtle":
-                store._oxistore.dump(buf, "text/turtle")
-                result = buf.getvalue().decode("utf-8")
+                result = g.serialize(format="turtle")
             else:
-                # pyoxigraph has no native JSON-LD serialiser; round-trip via N-Triples→rdflib
-                store._oxistore.dump(buf, "application/n-triples")
-                g = _CG()
-                g.parse(data=buf.getvalue().decode("utf-8"), format="n-triples")
                 raw_jld = g.serialize(format="json-ld")
                 try:
                     jld_list = json.loads(raw_jld) if isinstance(raw_jld, str) else raw_jld
