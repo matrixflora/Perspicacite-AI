@@ -151,16 +151,22 @@ _TOOL_ENTRIES: list[dict] = [
         "key_knobs": ["file (required)", "title (required)", "authors", "year", "abstract", "keywords", "doi"],
     },
     {
+        "name": "ingest_asb_run",
+        "purpose": "Ingest an ASB (Agentic Science Benchmark) workflow-run directory into a KB.",
+        "when_to_use": "Make a completed ASB run (cards, skills, tool outputs) searchable. Pass the run directory path and a KB name.",
+        "key_knobs": ["run_dir (required)", "kb_name (required)"],
+    },
+    {
         "name": "ingest_github_repo",
         "purpose": "Ingest a GitHub repository's docs/code into a KB.",
-        "when_to_use": "Make a codebase searchable in a KB.",
-        "key_knobs": [],
+        "when_to_use": "Make a codebase or documentation repo searchable. Chunks markdown, Python docstrings, and notebooks. Use ingest_skill_bundle instead when the repo contains a bundle.yml.",
+        "key_knobs": ["url (required)", "kb_name (required)", "include", "exclude"],
     },
     {
         "name": "ingest_skill_bundle",
-        "purpose": "Ingest a packaged skill bundle into a KB.",
-        "when_to_use": "Load a skill bundle's content for retrieval.",
-        "key_knobs": [],
+        "purpose": "Ingest an ASB skill bundle (local path or GitHub URL with bundle.yml) into a KB.",
+        "when_to_use": "Load a skill bundle's papers and code for retrieval. Resolves DOIs from the bundle manifest when ingest_linked_papers=True.",
+        "key_knobs": ["source (required)", "kb_name", "ingest_linked_papers"],
     },
     {
         "name": "build_kb_from_search",

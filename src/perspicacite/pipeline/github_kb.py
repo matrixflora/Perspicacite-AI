@@ -285,15 +285,6 @@ async def ingest_skill_bundle(
         If ``ingest_linked_papers=True`` but no ``app_state_for_doi_ingest``
         was supplied.
     """
-    # Precondition check before any fetch/clone — misconfigured callers
-    # shouldn't pay for a potentially expensive ``_resolve_bundle_source``
-    # (clone-to-cache + working-tree extraction) when the linked-paper
-    # routing seam is missing.
-    if ingest_linked_papers and app_state_for_doi_ingest is None:
-        raise ValueError(
-            "app_state_for_doi_ingest is required when ingest_linked_papers=True"
-        )
-
     bundle_dir = await _resolve_bundle_source(source, config=config, fetcher=fetcher)
     manifest = BundleManifest.from_directory(bundle_dir)
 
@@ -560,6 +551,11 @@ async def _route_linked_papers(
 
     if not dois:
         return 0, skipped, resolved_count
+
+    if app_state_for_doi_ingest is None:
+        raise ValueError(
+            "app_state_for_doi_ingest is required when ingest_linked_papers=True"
+        )
 
     try:
         result = await ingest_dois_into_kb(
