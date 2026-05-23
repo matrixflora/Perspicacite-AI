@@ -132,6 +132,13 @@ indicia = [
   "indicium",
 ]
 
+# indicium-adapters — optional domain adapter protocol + built-in adapters
+# (e.g. MetabolomicsAdapter). Enables domain_adapter= kwarg in extract_claims().
+#
+# Install with:
+#   uv sync --extra adapters
+adapters = ["indicium-adapters"]
+
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
 
@@ -156,6 +163,7 @@ override-dependencies = ["httpx>=0.28.1"]
 
 [tool.uv.sources]
 indicium = { path = "../indicium", editable = true }
+indicium-adapters = { path = "../indicium-adapters", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -21,7 +21,7 @@ context, subject, qualifier (one of: {qualifiers}), relation, object;
 plus claim_type (explicit|implicit), evidence_type (one of: {evidence_types}),
 source_type (one of: {source_types}), an exact quote, and source_doi.
 Context: {context}
-Passages:
+{domain_context}Passages:
 {passages}
 Return JSON: {{"claims": [{{...}}]}}"""
 
@@ -29,16 +29,42 @@ Return JSON: {{"claims": [{{...}}]}}"""
 async def extract_claims(
     *, llm_client: Any, passages: list[dict], context: str | None = None,
     model: str | None = None,
+    domain_adapter: "Any | None" = None,
 ) -> list[dict]:
+    """Extract typed claims from passages via LLM.
+
+    Args:
+        llm_client: AsyncLLMClient instance.
+        passages: List of passage dicts with ``chunk_text`` and ``source`` keys.
+        context: Optional free-text context prepended to the prompt.
+        model: Optional model override forwarded to ``llm_client.complete()``.
+        domain_adapter: Optional DomainAdapter (indicium-adapters). When provided:
+            - its qualifiers are merged into the valid qualifier set;
+            - its extraction_context() is appended to the LLM prompt;
+            - its enrich_claim() is called on every coerced claim.
+            No import from indicium_adapters is required — structural typing only.
+    """
+    valid_qualifiers = (
+        _QUALIFIERS | domain_adapter.qualifiers
+        if domain_adapter is not None
+        else _QUALIFIERS
+    )
+    domain_context = (
+        domain_adapter.extraction_context() + "\n"
+        if domain_adapter is not None
+        else ""
+    )
     rendered = "\n\n".join(
         f"[{i}] doi={p.get('source', {}).get('doi')}: {p.get('chunk_text', '')}"
         for i, p in enumerate(passages)
     )
     prompt = _PROMPT.format(
-        qualifiers=", ".join(sorted(_QUALIFIERS)),
+        qualifiers=", ".join(sorted(valid_qualifiers)),
         evidence_types=", ".join(sorted(_EVIDENCE_TYPES)),
         source_types=", ".join(sorted(_SOURCE_TYPES)),
-        context=context or "(none)", passages=rendered,
+        context=context or "(none)",
+        domain_context=domain_context,
+        passages=rendered,
     )
     messages = [{"role": "user", "content": prompt}]
     raw = await (llm_client.complete(messages=messages, model=model) if model
@@ -49,17 +75,19 @@ async def extract_claims(
         return []
     out: list[dict] = []
     for raw_claim in data.get("claims", []):
-        claim = _coerce_claim(raw_claim)
+        claim = _coerce_claim(raw_claim, valid_qualifiers)
         if claim is not None:
             out.append(claim)
+    if domain_adapter is not None:
+        out = [domain_adapter.enrich_claim(c) for c in out]
     return out
 
 
-def _coerce_claim(c: dict) -> dict | None:
+def _coerce_claim(c: dict, qualifiers: frozenset[str] = _QUALIFIERS) -> dict | None:
     required = ("context", "subject", "qualifier", "relation", "object")
     if not all(c.get(k) for k in required):
         return None
-    if c["qualifier"] not in _QUALIFIERS:
+    if c["qualifier"] not in qualifiers:
         return None  # out-of-vocabulary qualifier => drop (don't void the run)
     ev_type = c.get("evidence_type")
     if ev_type is not None and ev_type not in _EVIDENCE_TYPES:
