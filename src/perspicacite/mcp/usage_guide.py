@@ -318,6 +318,17 @@ _TOOL_ENTRIES: list[dict] = [
         ),
         "key_knobs": ["kb_name (required)", "query_name (required)", "kwargs"],
     },
+    {
+        "name": "claim_graph_export",
+        "purpose": (
+            "Export a KB's indicium claim graph as Turtle, JSON-LD, or RO-Crate."
+        ),
+        "when_to_use": (
+            "Archive or hand off a KB's claim graph to an external triple-store, "
+            "analysis pipeline, or research-object archive."
+        ),
+        "key_knobs": ["kb_name (required)", "format (turtle|jsonld|rocrate)"],
+    },
 ]
 
 _CAPABILITIES: list[str] = [

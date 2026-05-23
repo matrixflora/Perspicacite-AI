@@ -5691,6 +5691,91 @@ async def query_claim_graph(
 
 
 @mcp.tool()
+async def claim_graph_export(
+    kb_name: str,
+    format: str = "turtle",
+) -> str:
+    """Export a KB's claim graph as Turtle, JSON-LD, or RO-Crate.
+
+    Serialises every triple in the KB's indicium claim graph to the requested
+    format and returns the result inline. Useful for archiving a KB's claim
+    graph, feeding it to an external triple-store, or packaging it as an
+    RO-Crate research object.
+
+    Args:
+        kb_name: KB whose claim graph to export.
+        format: Serialisation format — one of ``"turtle"``, ``"jsonld"``,
+            ``"rocrate"`` (default: ``"turtle"``).
+
+    Returns:
+        JSON ``{success, kb_name, format, data}`` where ``data`` is a string
+        (turtle) or a list/dict (jsonld/rocrate).
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        return _json_error("indicia extra not installed; uv sync --extra indicia")
+
+    _valid_formats = ("turtle", "jsonld", "rocrate")
+    if format not in _valid_formats:
+        return _json_error(
+            f"unsupported format '{format}'; choose one of: {list(_valid_formats)}"
+        )
+
+    store = _open_claim_graph_store_for_kb(kb_name)
+    try:
+        if store._backend == "memory":
+            # rdflib ConjunctiveGraph — full serialisation support
+            assert store._g is not None
+            if format == "turtle":
+                serialised = store._g.serialize(format="turtle")
+                result: Any = serialised
+            else:
+                raw_jld = store._g.serialize(format="json-ld")
+                try:
+                    jld_list = json.loads(raw_jld) if isinstance(raw_jld, str) else raw_jld
+                except Exception:
+                    jld_list = []
+                if format == "jsonld":
+                    result = jld_list
+                else:  # rocrate
+                    result = {
+                        "@context": "https://w3id.org/ro/crate/1.1/context",
+                        "@graph": [
+                            {
+                                "@type": "CreativeWork",
+                                "@id": "ro-crate-metadata.json",
+                                "about": {"@id": "./"},
+                                "conformsTo": {
+                                    "@id": "https://w3id.org/ro/crate/1.1"
+                                },
+                            },
+                            {
+                                "@type": "Dataset",
+                                "@id": "./",
+                                "name": f"Perspicacite claim graph: {kb_name}",
+                                "hasPart": [{"@id": "claim-graph.jsonld"}],
+                            },
+                        ]
+                        + (jld_list if isinstance(jld_list, list) else []),
+                    }
+        else:
+            # oxigraph backend — dump via pyoxigraph
+            import io
+
+            import pyoxigraph as oxi  # noqa: F401
+
+            buf = io.BytesIO()
+            oxi_fmt = "text/turtle" if format == "turtle" else "application/n-triples"
+            store._oxistore.dump(buf, oxi_fmt)
+            result = buf.getvalue().decode("utf-8")
+    finally:
+        store.close()
+
+    return _json_ok({"kb_name": kb_name, "format": format, "data": result})
+
+
+@mcp.tool()
 async def suggest_databases(query: str, hints: list[str] | None = None) -> str:
     """
     Recommend which literature databases to search for a given query.
@@ -5792,6 +5877,7 @@ _TOOL_NAMES: list[str] = [
     "build_claim_graph",
     "claim_graph_status",
     "query_claim_graph",
+    "claim_graph_export",
     "get_usage_guide",
     "extract_claims_from_passages",
     "export_astra",
