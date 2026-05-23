@@ -28,7 +28,14 @@ _TOOL_ENTRIES: list[dict] = [
         "name": "search_literature",
         "purpose": "Live multi-database academic search with enrichment and rerank.",
         "when_to_use": "Find candidate papers for a topic from the open literature.",
-        "key_knobs": ["databases", "max_results", "optimize_query", "year_min", "year_max", "min_relevance"],
+        "key_knobs": [
+            "databases",
+            "max_results",
+            "optimize_query",
+            "year_min",
+            "year_max",
+            "min_relevance",
+        ],
     },
     {
         "name": "web_search",
@@ -118,7 +125,15 @@ _TOOL_ENTRIES: list[dict] = [
         "name": "generate_report",
         "purpose": "Run a full RAG report over a KB (basic/advanced/profound/agentic/literature_survey/contradiction).",
         "when_to_use": "Synthesise an answer with citations from KB content.",
-        "key_knobs": ["mode", "kb_names", "max_papers", "recency_weight", "screen_method", "screen_threshold", "databases"],
+        "key_knobs": [
+            "mode",
+            "kb_names",
+            "max_papers",
+            "recency_weight",
+            "screen_method",
+            "screen_threshold",
+            "databases",
+        ],
     },
     {
         "name": "screen_papers",
@@ -148,7 +163,15 @@ _TOOL_ENTRIES: list[dict] = [
         "name": "add_local_papers_to_kb",
         "purpose": "Ingest local files into a KB with user-provided metadata (title, authors, year, abstract).",
         "when_to_use": "Use instead of ingest_local_documents when you have metadata to attach — proposal PDFs, preprints without DOIs, lab reports. Gives proper titles in search results rather than raw filenames.",
-        "key_knobs": ["file (required)", "title (required)", "authors", "year", "abstract", "keywords", "doi"],
+        "key_knobs": [
+            "file (required)",
+            "title (required)",
+            "authors",
+            "year",
+            "abstract",
+            "keywords",
+            "doi",
+        ],
     },
     {
         "name": "ingest_asb_run",
@@ -282,6 +305,18 @@ _TOOL_ENTRIES: list[dict] = [
         "purpose": "Return the per-KB claim-graph manifest + last build summary.",
         "when_to_use": "Check KB claim-graph freshness before reasoning; detects schema drift.",
         "key_knobs": ["kb_name (required)"],
+    },
+    {
+        "name": "query_claim_graph",
+        "purpose": (
+            "Run a typed traversal query (claims_supporting / disputing / "
+            "trace / pattern / neighbors) against a KB's claim graph."
+        ),
+        "when_to_use": (
+            "Direct graph queries when reasoning mode's planner isn't "
+            "suitable or for tool composition."
+        ),
+        "key_knobs": ["kb_name (required)", "query_name (required)", "kwargs"],
     },
 ]
 
