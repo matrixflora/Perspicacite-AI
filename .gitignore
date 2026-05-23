@@ -98,6 +98,7 @@ packages_to_use/
 # Documentation files (keep only main docs)
 *.md
 !README.md
+!CHANGELOG.md
 !CONTRIBUTING.md
 !INSTALL_AGENT.md
 !.claude/commands/*.md
