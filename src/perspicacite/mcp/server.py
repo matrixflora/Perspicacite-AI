@@ -1747,8 +1747,8 @@ async def generate_report(
                 "cancelled": True,
                 "task_id": task_id,
                 "asb_metadata": asb_md,
-                "iterations": report_iterations,
-                "completion_reason": report_completion_reason,
+                "iteration_count": report_iterations if report_iterations is not None else 0,
+                "completion_reason": report_completion_reason or "cancelled",
                 "diagnostic": report_diagnostic,
             }
             _cancelled_payload.update(_response_collector.as_response_extras())
@@ -1802,8 +1802,8 @@ async def generate_report(
             "papers_used": len(sources),
             "message_id": message_id,
             "asb_metadata": asb_md,
-            "iterations": report_iterations,
-            "completion_reason": report_completion_reason,
+            "iteration_count": report_iterations if report_iterations is not None else 1,
+            "completion_reason": report_completion_reason or "complete",
             "diagnostic": report_diagnostic,
         }
         _final_payload.update(_response_collector.as_response_extras())
