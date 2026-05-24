@@ -1618,7 +1618,7 @@ async def export_claim_graph(
     import json as _json
     import pathlib
 
-    from perspicacite.indicium_layer.claim_graph import ClaimGraphStore
+    from perspicacite.indicium_layer.store import ClaimGraphStore
 
     data_dir = pathlib.Path("data/claim_graphs") / name
     if not data_dir.exists():
@@ -1680,10 +1680,10 @@ async def export_claim_graph(
                 )
         else:
             # oxigraph backend
-            assert store._store is not None
+            assert store._oxistore is not None
             if format == "nquads":
                 buf = io.BytesIO()
-                store._store.dump(buf, "application/n-quads")
+                store._oxistore.dump(buf, "application/n-quads")
                 return Response(
                     content=buf.getvalue(),
                     media_type="application/n-quads",
@@ -1694,7 +1694,7 @@ async def export_claim_graph(
                 import rdflib
 
                 buf = io.BytesIO()
-                store._store.dump(buf, "application/n-quads")
+                store._oxistore.dump(buf, "application/n-quads")
                 g = rdflib.ConjunctiveGraph()
                 g.parse(data=buf.getvalue().decode(), format="nquads")
                 if format == "turtle":
