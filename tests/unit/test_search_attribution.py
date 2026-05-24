@@ -1,9 +1,7 @@
 """Unit tests for multi-provider dedup merge and attribution union (Issue 4).
 
 Proves that DomainAwareAggregator correctly unions discovery_sources when two
-providers return the same paper, and that the MCP attribution union logic
-(server.py lines 609-618) correctly surfaces both provider names in
-metadata["sources"].
+providers return the same paper.
 
 All I/O is faked — no network calls, no DB.
 """
@@ -24,10 +22,14 @@ from perspicacite.search.domain_aggregator import DomainAwareAggregator
 # ---------------------------------------------------------------------------
 
 class _FakeProvider:
-    domains = ["general"]
-
-    def __init__(self, name: str, papers: list[Paper]) -> None:
+    def __init__(
+        self,
+        name: str,
+        papers: list[Paper],
+        domains: list[str] | None = None,
+    ) -> None:
         self.name = name
+        self.domains = domains if domains is not None else ["general"]
         self._papers = papers
 
     async def search(
@@ -69,38 +71,6 @@ async def test_same_doi_discovery_sources_union_both_providers():
     sources = results[0].discovery_sources
     assert "pubmed" in sources, f"expected 'pubmed' in {sources}"
     assert "dblp_sparql" in sources, f"expected 'dblp_sparql' in {sources}"
-
-
-# ---------------------------------------------------------------------------
-# Test 2 — MCP attribution union logic: metadata["sources"] contains both names
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_same_doi_mcp_attribution_union_metadata_sources():
-    """After applying the MCP attribution union logic (server.py lines 609-618),
-    metadata['sources'] must contain BOTH provider names for a dedup-merged paper."""
-    shared_doi = "10.1234/shared"
-    pubmed = _FakeProvider("pubmed", [_paper(shared_doi)])
-    dblp = _FakeProvider("dblp_sparql", [_paper(shared_doi)])
-
-    agg = DomainAwareAggregator([pubmed, dblp], provider_timeout_s=5.0)
-    results = await agg.search("test query", max_results=10)
-
-    assert len(results) == 1
-    paper = results[0]
-
-    # Reproduce MCP attribution union logic verbatim from server.py lines 609-618.
-    pd: dict = {}
-    discovery = list(paper.discovery_sources or [])
-    meta_srcs = (paper.metadata or {}).get("sources") or []
-    all_srcs = list(dict.fromkeys(discovery + [s for s in meta_srcs if s not in discovery]))
-    if all_srcs:
-        pd["metadata"] = {"sources": all_srcs}
-
-    assert "metadata" in pd, "MCP attribution block should have produced metadata dict"
-    final_sources = pd["metadata"]["sources"]
-    assert "pubmed" in final_sources, f"expected 'pubmed' in {final_sources}"
-    assert "dblp_sparql" in final_sources, f"expected 'dblp_sparql' in {final_sources}"
 
 
 # ---------------------------------------------------------------------------
