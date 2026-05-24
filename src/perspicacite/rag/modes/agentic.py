@@ -224,6 +224,7 @@ class AgenticRAGMode(BaseRAGMode):
         emit_phase(_phase_sink, phase="plan", state="running")
         yield StreamEvent.status("Initializing agentic research...")
         _current_phase = "plan"
+        _agentic_metadata: dict = {}
 
         with agentic_request_overrides(
             recency_weight=getattr(request, "recency_weight", None),
@@ -269,14 +270,28 @@ class AgenticRAGMode(BaseRAGMode):
                     chunk_size = 100
                     for i in range(0, len(content), chunk_size):
                         chunk = content[i : i + chunk_size]
-                        yield StreamEvent.token(chunk)
+                        yield StreamEvent.content(chunk)
 
                 elif event_type == "papers_found":
                     papers = event.get("papers", [])
                     yield StreamEvent.status(f"Found {len(papers)} relevant papers")
 
+                elif event_type == "completion":
+                    _agentic_metadata = {
+                        "iteration_count": event.get("iteration_count", 1),
+                        "completion_reason": event.get("completion_reason", "complete"),
+                    }
+
         emit_phase(_phase_sink, phase=_current_phase, state="done")
-        yield StreamEvent.done()
+        yield StreamEvent.metadata(
+            **(_agentic_metadata if _agentic_metadata else {"iteration_count": 1, "completion_reason": "complete"})
+        )
+        yield StreamEvent.done(
+            conversation_id="",
+            tokens_used=0,
+            mode="agentic",
+            iterations=_agentic_metadata.get("iteration_count", 1) if _agentic_metadata else 1,
+        )
 
 
 # Keep backward-compatible exports

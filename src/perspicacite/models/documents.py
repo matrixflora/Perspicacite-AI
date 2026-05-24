@@ -1,6 +1,6 @@
 """Document chunk models."""
 
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -56,6 +56,12 @@ class ChunkMetadata(BaseModel):
     source_via: Literal["bundle", "enrichment", "cite_graph", "cite_graph_script"] | None = None
     cited_tool: str | None = None
     discovery_score: float | None = None
+
+    # Carries the upstream ``Paper.metadata`` dict, JSON-encoded so it
+    # round-trips through Chroma's scalar-only per-doc metadata. None
+    # for non-bundle papers. Decoded back to a dict at the retrieval
+    # boundary (see DynamicKnowledgeBase.search_two_pass).
+    paper_metadata_json: Optional[str] = None
 
     def __repr__(self) -> str:
         return (

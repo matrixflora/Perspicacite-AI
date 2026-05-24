@@ -145,7 +145,7 @@ Generates a synthesized research report from a KB using RAG.
 **Modes:**
 - `"basic"` — fast single-pass, no web search, KB content only
 - `"advanced"` — query expansion, re-ranking (recommended default)
-- `"profound"` — multi-cycle deep analysis (slowest, best quality)
+- `"deep_research"` — multi-cycle deep analysis (slowest, best quality); `"profound"` is still accepted as a backward-compat alias
 - `"contradiction"` — clusters claims across papers into agreement / disagreement / open-question buckets; degrades gracefully when <3 papers are retrieved
 
 **Args:**
@@ -384,7 +384,7 @@ If `search_knowledge_base` or `generate_report` returns a KB not found error:
 
 - `get_paper_content` can take 5-30s per paper (network fetches)
 - `add_papers_to_kb` is the slowest tool — batch papers carefully
-- `generate_report` in `"profound"` mode may take 60s+
+- `generate_report` in `"deep_research"` mode may take 60s+
 - Use `"basic"` mode for quick answers, `"advanced"` for balanced quality
 
 ### Rate limiting

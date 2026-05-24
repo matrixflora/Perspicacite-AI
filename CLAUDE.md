@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Purpose
 
-Perspicacité is a local-first, AI-powered scientific literature research assistant. It exposes a FastAPI web app, a REST API, and an MCP server (10 tools) that can be consumed by external agents (e.g., Mimosa-AI). Users query academic databases, build personal knowledge bases (KBs) from BibTeX or DOIs, and answer research questions using one of six RAG modes.
+Perspicacité is a local-first, AI-powered scientific literature research assistant. It exposes a FastAPI web app, a REST API, and an MCP server (40+ tools) that can be consumed by external agents (e.g., Mimosa-AI). Users query academic databases, build personal knowledge bases (KBs) from BibTeX or DOIs, and answer research questions using one of six RAG modes.
 
 ## Environment
 
@@ -68,7 +68,7 @@ uv run perspicacite pubmed-search --query "microbiome" --max-results 50 --output
 |------|--------------|
 | `basic` | Single-pass vector retrieval, no rerank |
 | `advanced` | Query expansion, WRRF fusion scoring, BM25+vector hybrid, rerank |
-| `profound` | Multi-cycle (up to 3 iterations) with planning + reflection |
+| `deep_research` | Multi-cycle (up to 3 iterations) with planning + reflection (formerly `profound`) |
 | `agentic` | Intent-classified, tool-using, up to 5 iterations |
 | `literature_survey` | Broad search → theme clustering → AI paper recommendations |
 | `contradiction` | Multi-paper claim clustering → agreement / disagreement / open-question brief; degrades gracefully (<3 papers → normal answer + note) |
@@ -77,7 +77,7 @@ All modes extend `BaseRAGMode` ([src/perspicacite/rag/modes/base.py](src/perspic
 
 **Recency-weighted retrieval:** `RAGRequest` accepts an optional `recency_weight` (float 0..1) and `recency_half_life_years` field. `retrieval/recency.py` `apply_recency_weighting()` applies exponential decay by `year`; it is a no-op when `recency_weight` is None or 0. Wired into all six RAG modes. See `retrieval/recency.py` → `apply_recency_weighting()`.
 
-**Multi-KB query:** `RAGRequest.kb_names: list[str] | None` lets a caller fan a query across multiple knowledge bases simultaneously. `retrieval/multi_kb.py` `MultiKBRetriever` queries each KB's ChromaDB collection in parallel, merges results by score, deduplicates by `paper_id`, and tags each chunk with `kb_name`. `check_embedding_compat(kb_metas)` refuses to proceed (returns an error string) when the requested KBs were embedded with different models. `BaseRAGMode._build_kb_retriever(request, vector_store, embedding_provider)` returns a `MultiKBRetriever` when `len(kb_names) > 1`, else a `DynamicKnowledgeBase`. Wired into `basic`, `contradiction`, `advanced`, `profound`, and `agentic` modes. `literature_survey` accepts `kb_names` and now retrieves semantically similar papers from ALL provided KBs before the survey (pre-filtering already-known papers out of the broad search), and stores final-recommendation DOIs as lightweight reference rows in `kb_paper_references` for every KB beyond the first. These references can be ingested later via `add_dois_to_kb`. `RAGEngine` receives an optional `session_store` kwarg and injects it into `LiteratureSurveyRAGMode`. `SourceReference.kb_name: str | None` tags each source reference with its originating KB. The chat router runs `check_embedding_compat` before streaming and emits an error SSE event on mismatch; the `generate_report` and `search_knowledge_base` MCP tools also accept an optional `kb_names` list with the same compat check.
+**Multi-KB query:** `RAGRequest.kb_names: list[str] | None` lets a caller fan a query across multiple knowledge bases simultaneously. `retrieval/multi_kb.py` `MultiKBRetriever` queries each KB's ChromaDB collection in parallel, merges results by score, deduplicates by `paper_id`, and tags each chunk with `kb_name`. `check_embedding_compat(kb_metas)` refuses to proceed (returns an error string) when the requested KBs were embedded with different models. `BaseRAGMode._build_kb_retriever(request, vector_store, embedding_provider)` returns a `MultiKBRetriever` when `len(kb_names) > 1`, else a `DynamicKnowledgeBase`. Wired into `basic`, `contradiction`, `advanced`, `deep_research`, and `agentic` modes. `literature_survey` accepts `kb_names` and now retrieves semantically similar papers from ALL provided KBs before the survey (pre-filtering already-known papers out of the broad search), and stores final-recommendation DOIs as lightweight reference rows in `kb_paper_references` for every KB beyond the first. These references can be ingested later via `add_dois_to_kb`. `RAGEngine` receives an optional `session_store` kwarg and injects it into `LiteratureSurveyRAGMode`. `SourceReference.kb_name: str | None` tags each source reference with its originating KB. The chat router runs `check_embedding_compat` before streaming and emits an error SSE event on mismatch; the `generate_report` and `search_knowledge_base` MCP tools also accept an optional `kb_names` list with the same compat check.
 
 **Chat router:** `web/routers/chat.py` `RAG_MODE_MAP` includes `"contradiction"`. `generate_report` MCP tool (`mcp/server.py`) accepts `mode="contradiction"`, `recency_weight: float = 0.0`, and `kb_names: list[str] | None`.
 
@@ -114,7 +114,9 @@ FastAPI app is defined in [src/perspicacite/web/app.py](src/perspicacite/web/app
 
 ### MCP Server
 
-Defined in [src/perspicacite/mcp/server.py](src/perspicacite/mcp/server.py) using `fastmcp`. It has its own `MCPState` singleton (separate from `AppState`) and is mounted at `/mcp` by the CLI. The 10 tools and their usage patterns are documented in [docs/perspicacite_skills.md](docs/perspicacite_skills.md).
+Defined in [src/perspicacite/mcp/server.py](src/perspicacite/mcp/server.py) using `fastmcp`. It has its own `MCPState` singleton (separate from `AppState`) and is mounted at `/mcp` by the CLI. Tool usage patterns are documented in [docs/perspicacite_skills.md](docs/perspicacite_skills.md) (and the live `get_usage_guide` tool is the source of truth).
+
+The claim/standardization tools — `extract_claims_from_passages` and `export_astra` — require the optional **`indicia`** extra (`uv sync --extra indicia`), which pulls in the local [`indicium`](../indicium) standard package (typed claims: Bucur 5-slot SuperPattern + ECO/CiTO/SEPIO; SHACL-validated). They degrade with a clear error when the extra isn't installed.
 
 For using Perspicacité over MCP intelligently (query shaping, tool/mode choice), follow [.claude/skills/perspicacite-mcp/SKILL.md](.claude/skills/perspicacite-mcp/SKILL.md) or call the `get_usage_guide` tool for the live source of truth.
 

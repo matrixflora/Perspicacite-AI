@@ -1,0 +1,1 @@
+{"input_files": [], "invocation": "library(MetLinkR)\nlibrary(RaMP)\nrampDB <- RaMP()\nresults <- metLinkR(input_data = my_metabolite_table, rampDB = rampDB)", "expected_output_files": [], "source_url": "skill.md#examples"}

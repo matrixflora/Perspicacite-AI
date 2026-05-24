@@ -128,6 +128,8 @@ export const kb = {
     return res.json();
   },
   exportUrl: (name: string) => `${BASE}/api/kb/${encodeURIComponent(name)}/export`,
+  claimGraphUrl: (name: string, format: "nquads" | "turtle" | "jsonld" | "rocrate" = "nquads") =>
+    `${BASE}/api/kb/${encodeURIComponent(name)}/claim-graph?format=${format}`,
 };
 
 // ──────────── Conversations ───────────────────────────────────────────────

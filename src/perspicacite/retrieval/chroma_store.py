@@ -601,6 +601,10 @@ def _chunk_to_metadata(metadata: ChunkMetadata) -> dict[str, Any]:
         if val:
             result[f"{field}_json"] = _json.dumps(list(val))
 
+    # ASB paper metadata JSON (round-trip through chroma)
+    if getattr(metadata, "paper_metadata_json", None) is not None:
+        result["paper_metadata_json"] = metadata.paper_metadata_json
+
     return result
 
 
@@ -663,6 +667,7 @@ def _metadata_to_chunk(metadata: dict[str, Any]) -> ChunkMetadata:
         source_via=metadata.get("source_via"),
         cited_tool=metadata.get("cited_tool"),
         discovery_score=metadata.get("discovery_score"),
+        paper_metadata_json=metadata.get("paper_metadata_json"),
     )
 
 
@@ -684,6 +689,11 @@ def _filters_to_where(filters: SearchFilters) -> dict[str, Any] | None:
         conditions.append(
             {"source": {"$in": [s.value for s in filters.sources]}}
         )
+    if filters.source_skill is not None:
+        # 2026-05-15: composite skill-bundle KBs stamp each chunk with
+        # `source_skill=<bundle.yml:name>` so queries can filter to one
+        # skill inside a composite KB.
+        conditions.append({"source_skill": filters.source_skill})
 
     if not conditions:
         return None

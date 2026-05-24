@@ -13,18 +13,22 @@ class RAGMode(str, Enum):
 
     BASIC: Simple retrieval + generation (single query, no refinement)
     ADVANCED: Query rephrasing + hybrid retrieval + WRRF scoring + optional refinement
-    PROFOUND: Multi-cycle research with planning, web search, reflection (from v1)
+    DEEP_RESEARCH: Multi-cycle research with planning, web search, reflection (canonical name)
+    PROFOUND: Deprecated alias for DEEP_RESEARCH — kept for backward compat
     AGENTIC: Intent-based agentic RAG with tool use
     LITERATURE_SURVEY: Systematic field mapping with theme identification and structured output
     CONTRADICTION: Identify agreement / disagreement / open questions across papers
+    REASONING: Indicium claim-graph reasoning (knob: reasoning_strategy)
     """
 
     BASIC = "basic"
     ADVANCED = "advanced"
-    PROFOUND = "profound"
+    DEEP_RESEARCH = "deep_research"    # canonical name
+    PROFOUND = "profound"              # deprecated alias — kept for backward compat
     AGENTIC = "agentic"
     LITERATURE_SURVEY = "literature_survey"
     CONTRADICTION = "contradiction"
+    REASONING = "reasoning"
 
 
 class SourceReference(BaseModel):
@@ -77,6 +81,10 @@ class SourceReference(BaseModel):
         alias="sources_all",
         description="DBs that returned this paper (deduped). Multi-DB matches render as a chip group.",
     )
+    # Carries the underlying paper's ``Paper.metadata`` dict (or chunk
+    # metadata) as a free-form mapping. Surfaces ASB skill / workflow-card
+    # fields to the response builders (build_asb_response_metadata).
+    metadata: dict[str, Any] | None = None
 
     @field_validator("authors", mode="before")
     @classmethod
@@ -157,7 +165,7 @@ class RAGRequest(BaseModel):
     max_papers_retrieval: int | None = Field(
         default=None,
         ge=1,
-        le=10,
+        le=50,
         description="Hard cap on papers loaded in two-pass; None uses mode default",
     )
     bm25_weight: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -165,6 +173,16 @@ class RAGRequest(BaseModel):
     recency_weight: float | None = Field(default=None, ge=0.0, le=1.0)
     recency_half_life_years: float | None = Field(default=None, gt=0.0)
     kb_names: list[str] | None = None
+    reasoning_strategy: (
+        Literal["provenance", "contradiction", "graph", "evidence_graded"] | None
+    ) = Field(
+        default=None,
+        description=(
+            "Strategy for RAGMode.REASONING. None = strongest shipped layer "
+            "(see rag/modes/reasoning/__init__.py). Unshipped strategies raise "
+            "NotImplementedError pointing to the planned sprint."
+        ),
+    )
     task_id: str | None = Field(
         default=None,
         description="Optional task ID for MCP cancellation tracking",
@@ -278,6 +296,8 @@ class StreamEvent(BaseModel):
         "done",  # Stream complete
         "code_excerpt",  # Code-chunk attachment (sub-project C, 2026-05-15)
         "figure_ref",  # Figure-reference attachment (sub-project C, 2026-05-15)
+        "metadata",  # Run summary: iteration_count, completion_reason
+        "diagnostic",  # Early-return diagnostics: papers_searched, filtered_as_known, …
     ]
     data: str  # JSON-encoded payload
 
@@ -362,3 +382,22 @@ class StreamEvent(BaseModel):
         """Create a figure-ref event (sub-project C)."""
         import json
         return cls(event="figure_ref", data=json.dumps(payload))
+
+    @classmethod
+    def metadata(cls, **payload: Any) -> "StreamEvent":
+        """Create a metadata event carrying run summary fields.
+
+        Typical fields: ``iteration_count``, ``completion_reason``.
+        """
+        import json
+        return cls(event="metadata", data=json.dumps(payload))
+
+    @classmethod
+    def diagnostic(cls, **payload: Any) -> "StreamEvent":
+        """Create a diagnostic event for early-return paths.
+
+        Typical fields: ``papers_searched``, ``filtered_as_known``,
+        ``kb_chunks_found``, ``cancellation_reason``.
+        """
+        import json
+        return cls(event="diagnostic", data=json.dumps(payload))

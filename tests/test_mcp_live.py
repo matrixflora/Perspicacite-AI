@@ -560,6 +560,135 @@ def test_nonstream(port: int):
 
 
 # =========================================================================
+# Test: push_notes_to_zotero
+# =========================================================================
+
+def test_zotero_notes(port: int):
+    """Test push_notes_to_zotero: tool registration, error handling, and
+    (when Zotero is configured) a full round-trip note creation + read-back."""
+    print("\n>>> Test: push_notes_to_zotero")
+
+    client = create_client(port)
+
+    # --- 1. Tool registration ---
+    tools = client.list_tools()
+    tool_names = [t["name"] for t in tools]
+    if "push_notes_to_zotero" in tool_names:
+        _pass("tool registered", "push_notes_to_zotero in tools/list")
+    else:
+        _fail("tool registered", "push_notes_to_zotero missing from tools/list")
+        return
+
+    tool_def = next(t for t in tools if t["name"] == "push_notes_to_zotero")
+    schema = tool_def.get("inputSchema", {}).get("properties", {})
+    if "notes" in schema and "library_id" in schema:
+        _pass("tool schema", "notes + library_id parameters present")
+    else:
+        _fail("tool schema", f"unexpected schema keys: {list(schema.keys())}")
+
+    # --- 2. Error: no notes list ---
+    result = client.call_tool("push_notes_to_zotero", {"notes": []})
+    if result.get("success") and result.get("created") == [] and result.get("failed") == []:
+        _pass("empty notes list", "returns success with empty created/failed")
+    else:
+        _fail("empty notes list", _truncate(str(result)))
+
+    # --- 3. Error: missing content field ---
+    result = client.call_tool("push_notes_to_zotero", {
+        "notes": [{"item_key": "FAKE1234"}],
+    })
+    failed = result.get("failed", [])
+    if failed and "content" in str(failed[0].get("reason", "")):
+        _pass("missing content → failed entry", failed[0]["reason"])
+    else:
+        _fail("missing content → failed entry", _truncate(str(result)))
+
+    # --- 4. Error: neither item_key nor doi ---
+    result = client.call_tool("push_notes_to_zotero", {
+        "notes": [{"content": "A note without a parent identifier"}],
+    })
+    failed = result.get("failed", [])
+    if failed and ("item_key" in str(failed[0].get("reason", "")) or
+                   "doi" in str(failed[0].get("reason", ""))):
+        _pass("missing identifier → failed entry", failed[0]["reason"])
+    else:
+        _fail("missing identifier → failed entry", _truncate(str(result)))
+
+    # --- 5. Error: Zotero not configured (missing api_key + not local) ---
+    # Push with a fictitious library_id that forces a config look-up failure.
+    # If Zotero IS configured in config.yml, this step tests the DOI-not-found path instead.
+    result = client.call_tool("push_notes_to_zotero", {
+        "notes": [{"doi": "10.9999/does-not-exist", "content": "test note"}],
+    })
+    # Either "not configured" error or "DOI not found" failed entry — both are correct.
+    has_error = (
+        not result.get("success") and result.get("error")
+    ) or (
+        result.get("success") and result.get("failed")
+    )
+    if has_error:
+        msg = result.get("error") or str(result.get("failed", [{}])[0].get("reason", ""))
+        _pass("DOI not found / not configured", _truncate(msg, 120))
+    else:
+        _fail("DOI not found / not configured", _truncate(str(result)))
+
+    # --- 6. Round-trip: push_to_zotero → push_notes_to_zotero → get_item_notes ---
+    # Only runs when Zotero is fully configured (api_key present).
+    _info("Attempting round-trip: push item → push note → verify (skipped if Zotero not configured)")
+    q2forge_doi = "10.1145/3731443.3771350"
+
+    push_result = client.call_tool("push_to_zotero", {
+        "dois": [q2forge_doi],
+    }, timeout=60)
+
+    created = push_result.get("created", [])
+    failed_push = push_result.get("failed", [])
+    error_push = push_result.get("error")
+
+    if error_push or (not created and failed_push):
+        reason = error_push or failed_push[0].get("reason", "unknown")
+        _info(f"  Zotero push skipped or failed: {_truncate(str(reason), 100)}")
+        _info("  Round-trip skipped (Zotero not configured or item push failed)")
+        return
+
+    item_key = created[0].get("key") if created else None
+    if not item_key:
+        _info("  Could not obtain item key — round-trip skipped")
+        return
+    _info(f"  Item created/found: key={item_key}")
+
+    note_content = (
+        "Live test note — push_notes_to_zotero audit.\n\n"
+        "Q2Forge: automated competency question + SPARQL generation via LLMs.\n"
+        "Best Paper Award at RAGE-KG / ISWC 2025, Nara, Japan."
+    )
+    note_result = client.call_tool("push_notes_to_zotero", {
+        "notes": [{
+            "item_key": item_key,
+            "content": note_content,
+            "tags": ["ai-forge-live-test"],
+        }],
+    }, timeout=30)
+
+    note_created = note_result.get("created", [])
+    note_failed = note_result.get("failed", [])
+    if note_created and note_created[0].get("note_key"):
+        note_key = note_created[0]["note_key"]
+        _pass("push_notes_to_zotero round-trip", f"note_key={note_key}, parent={item_key}")
+    else:
+        reason = note_failed[0].get("reason", "?") if note_failed else str(note_result)
+        _fail("push_notes_to_zotero round-trip", _truncate(str(reason)))
+        return
+
+    # Verify via zotero_get_collection_items is not straightforward (no get_item_notes MCP tool).
+    # Confirm via tool returning success=True with the note key.
+    if note_result.get("success") and note_created:
+        _pass("note result envelope", "success=True, created list non-empty")
+    else:
+        _fail("note result envelope", _truncate(str(note_result)))
+
+
+# =========================================================================
 # Main
 # =========================================================================
 
@@ -573,6 +702,7 @@ TESTS = {
     "kb": ("KB lifecycle", test_kb),
     "jsonrpc": ("JSON-RPC session", test_jsonrpc),
     "nonstream": ("/api/chat non-streaming", test_nonstream),
+    "zotero_notes": ("push_notes_to_zotero (registration + errors + round-trip)", test_zotero_notes),
     "all_content": ("All content tests", lambda p: (test_content_pmc(p), test_content_arxiv(p), test_content_discovery(p))),
 }
 

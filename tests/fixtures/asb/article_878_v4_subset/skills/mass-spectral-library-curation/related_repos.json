@@ -1,0 +1,33 @@
+[
+  {
+    "full_name": "vinta/awesome-python",
+    "html_url": "https://github.com/vinta/awesome-python",
+    "default_branch": "master",
+    "description": "An opinionated list of Python frameworks, libraries, tools, and resources",
+    "stars": 297822,
+    "pushed_at": "2026-05-12T02:36:10Z",
+    "license_spdx": "NOASSERTION",
+    "language": "Python",
+    "topics": [
+      "awesome",
+      "collections",
+      "python",
+      "python-frameworks",
+      "python-libraries",
+      "python-tools"
+    ],
+    "matched_via": "repo_search+topic_search",
+    "matched_query": "python",
+    "matched_tool": "python",
+    "author_overlap_match": null,
+    "score": 0.8056,
+    "score_breakdown": {
+      "stars": 0.2,
+      "recency": 0.0995,
+      "keyword_match": 0.2561,
+      "topic_match": 0.15,
+      "author_overlap": 0.0,
+      "signal_conjunction": 0.1
+    }
+  }
+]

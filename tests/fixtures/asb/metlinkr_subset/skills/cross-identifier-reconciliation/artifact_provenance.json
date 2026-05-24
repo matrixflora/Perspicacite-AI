@@ -1,0 +1,44 @@
+{
+  "schema_version": "v1",
+  "skill_slug": "cross-identifier-reconciliation",
+  "skill_paper_doi": null,
+  "generated_at": "2026-05-15T15:16:10Z",
+  "artifacts": [
+    {
+      "path": "skill.md",
+      "source_task_ids": [
+        "task_005"
+      ],
+      "source": "card",
+      "kind": "narrative",
+      "external_refs": []
+    },
+    {
+      "path": "README.md",
+      "source_task_ids": [
+        "task_005"
+      ],
+      "source": "card",
+      "kind": "readme",
+      "external_refs": []
+    },
+    {
+      "path": "tools.json#tools/0",
+      "source_task_ids": [
+        "task_005"
+      ],
+      "source": "card",
+      "kind": "tool_entry",
+      "external_refs": []
+    },
+    {
+      "path": "tools.json#tools/1",
+      "source_task_ids": [
+        "task_005"
+      ],
+      "source": "card",
+      "kind": "tool_entry",
+      "external_refs": []
+    }
+  ]
+}

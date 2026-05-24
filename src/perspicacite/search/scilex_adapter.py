@@ -40,6 +40,7 @@ KNOWN_DATABASES: frozenset[str] = frozenset({
     "pubchem",
     "inspire",
     "dblp",
+    "dblp_sparql",
     "google_scholar",
 })
 
@@ -191,11 +192,64 @@ class SciLExAdapter:
         apis: list[str] | None = None,
         article_type: str | None = None,
     ) -> list[Paper]:
-        """Search academic databases via SciLEx.
+        """Public search entry point. Retries once with normalised title
+        when a title-like query returns zero results.
 
         Returns an empty list when the optional SciLEx package isn't
         installed. Callers should check ``self.available`` first to
         distinguish "SciLEx missing" from "search returned zero hits".
+        """
+        out = await self._search_once(
+            query=query,
+            max_results=max_results,
+            year_min=year_min,
+            year_max=year_max,
+            apis=apis,
+            article_type=article_type,
+        )
+        if out:
+            return out
+
+        from perspicacite.search.title_normalize import normalize_title, is_titlelike
+        if not is_titlelike(query):
+            return out
+        normalised = normalize_title(query)
+        if normalised == query or len(normalised) < 4:
+            return out
+
+        logger.info(
+            "scilex_normalize_retry",
+            original=query,
+            normalized=normalised,
+        )
+        retried = await self._search_once(
+            query=normalised,
+            max_results=max_results,
+            year_min=year_min,
+            year_max=year_max,
+            apis=apis,
+            article_type=article_type,
+        )
+        for p in retried:
+            if p.metadata is None:
+                p.metadata = {}
+            p.metadata["search_normalized_from"] = query
+        return retried
+
+    async def _search_once(
+        self,
+        *,
+        query: str,
+        max_results: int = 20,
+        year_min: int | None = None,
+        year_max: int | None = None,
+        apis: list[str] | None = None,
+        article_type: str | None = None,
+    ) -> list[Paper]:
+        """Internal: do one actual search pass without normalize-retry.
+
+        Returns an empty list when the optional SciLEx package isn't
+        installed.
         """
         if not self._scilex_available:
             logger.warning("scilex_not_available_fallback")
@@ -257,9 +311,12 @@ class SciLExAdapter:
             "DBLP": DBLPtoZoteroFormat,
         }
 
-        # Default APIs
+        # Default APIs — PubMed first (no key needed, reliable). Semantic
+        # Scholar is intentionally last because its public tier rate-limits
+        # aggressively and frequently errors out; we still query it for
+        # CS coverage, but it shouldn't lead the fan-out.
         if apis is None:
-            apis = ["semantic_scholar", "openalex", "pubmed"]
+            apis = ["pubmed", "openalex", "semantic_scholar"]
 
         # Defense in depth: SciLEx only knows the APIs in ``api_name_map``.
         # Callers sometimes pass the full user-selected provider list (e.g.
@@ -328,42 +385,37 @@ class SciLExAdapter:
             _root_logger = _stdlib_logging.getLogger()
             _root_logger.addHandler(_quota)
             try:
-                # Phase 1: Collect
+                # Phase 1: Collect — backends run concurrently; a single
+                # backend failure does not poison the aggregate.
                 logger.info("scilex_collection_start", query=query, apis=apis)
                 collector = CollectCollection(main_config, api_config)
 
                 queries_by_api = collector.queryCompositor()
 
-                for api_name, queries in queries_by_api.items():
-                    api_collect_list = []
-                    for idx, query_dict in enumerate(queries):
-                        query_dict["id_collect"] = idx
-                        query_dict["total_art"] = 0
-                        query_dict["last_page"] = 0
-                        query_dict["coll_art"] = 0
-                        query_dict["state"] = 0
-                        query_dict["max_articles_per_query"] = max_results * 2
-                        api_collect_list.append({"query": query_dict, "api": api_name})
+                successful_backends, failed_backends = self._collect_all_backends(
+                    collector=collector,
+                    queries_by_api=queries_by_api,
+                    max_results=max_results,
+                )
 
-                    try:
-                        logger.info(f"Collecting from {api_name}...")
-                        collector.run_job_collects(api_collect_list)
-                        logger.info(f"Successfully collected from {api_name}")
-                    except Exception as api_error:
-                        logger.warning(f"API {api_name} failed: {api_error}")
-                        # F-19: surface to the caller. SciLEx labels APIs in
-                        # CamelCase ("Arxiv"); we lower it back to the form
-                        # the public MCP tool exposed.
-                        canonical = next(
-                            (k for k, v in api_name_map.items() if v == api_name),
-                            api_name.lower(),
-                        )
-                        self.last_errors_by_database[canonical] = str(api_error)[:200]
-                        continue
+                if failed_backends:
+                    logger.warning(
+                        "scilex_collection_partial",
+                        failed=failed_backends,
+                        succeeded=successful_backends,
+                        note="Results from successful backends will still be returned.",
+                    )
 
                 # Phase 2: Manual aggregation
                 logger.info("scilex_aggregation_start")
                 repo_path = Path(tmpdir) / "perspicacite_search"
+
+                if not repo_path.exists():
+                    logger.warning(
+                        "scilex_no_results_dir",
+                        note="No backend produced output; all backends failed.",
+                    )
+                    return []
 
                 all_records = []
 
@@ -378,8 +430,10 @@ class SciLExAdapter:
                     converter = api_converters.get(api_name)
 
                     if not converter:
-                        logger.warning(f"No converter for API: {api_name}")
+                        logger.warning("scilex_no_converter_for_api", api=api_name)
                         continue
+
+                    backend_records_before = len(all_records)
 
                     # Process each query directory
                     for query_dir in api_dir.iterdir():
@@ -410,12 +464,28 @@ class SciLExAdapter:
                                         zotero_record["archive"] = api_name
                                         all_records.append(zotero_record)
                                     except Exception as conv_error:
-                                        logger.debug(f"Conversion error: {conv_error}")
+                                        logger.debug(
+                                            "scilex_conversion_error",
+                                            api=api_name,
+                                            error=str(conv_error),
+                                        )
                                         continue
 
                             except Exception as e:
-                                logger.debug(f"Failed to read {result_file}: {e}")
+                                logger.debug(
+                                    "scilex_result_file_read_error",
+                                    file=str(result_file),
+                                    error=str(e),
+                                )
                                 continue
+
+                    backend_count = len(all_records) - backend_records_before
+                    logger.info(
+                        "scilex_backend_ok",
+                        backend=api_name,
+                        results=backend_count,
+                    )
+
 
                 logger.info("scilex_collected_records", count=len(all_records))
 
@@ -525,6 +595,121 @@ class SciLExAdapter:
                             "Without a key, SciLEx is throttled aggressively."
                         ),
                     }
+
+    def _collect_all_backends(
+        self,
+        collector: Any,
+        queries_by_api: dict[str, list[dict]],
+        max_results: int,
+    ) -> tuple[list[str], list[str]]:
+        """Fan out per-backend collection concurrently via ThreadPoolExecutor.
+
+        One backend's failure (network error, rate-limit, missing API key) is
+        isolated by _collect_from_backend; this helper makes the fan-out
+        parallel so wall time equals the slowest backend, not the sum of all
+        backends.
+
+        Args:
+            collector: SciLEx CollectCollection instance.
+            queries_by_api: Mapping from capitalized backend name to the list
+                of raw query dicts as returned by collector.queryCompositor().
+            max_results: User-requested result cap; used to compute
+                max_articles_per_query (= max_results * 2) per existing pattern.
+
+        Returns:
+            (successful_backends, failed_backends) — mutable lists populated
+            during concurrent dispatch. CPython's GIL makes list.append
+            thread-safe.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        successful: list[str] = []
+        failed: list[str] = []
+
+        def build_collect_list(api_name: str, queries: list[dict]) -> list[dict]:
+            api_collect_list = []
+            for idx, query_dict in enumerate(queries):
+                # Copy to avoid mutating the caller's dicts across threads.
+                query_dict = dict(query_dict)
+                query_dict["id_collect"] = idx
+                query_dict["total_art"] = 0
+                query_dict["last_page"] = 0
+                query_dict["coll_art"] = 0
+                query_dict["state"] = 0
+                query_dict["max_articles_per_query"] = max_results * 2
+                api_collect_list.append({"query": query_dict, "api": api_name})
+            return api_collect_list
+
+        api_lists = {
+            api_name: build_collect_list(api_name, queries)
+            for api_name, queries in queries_by_api.items()
+        }
+
+        if not api_lists:
+            return successful, failed
+
+        # Concurrent fan-out — each backend runs in its own thread.
+        # _collect_from_backend swallows collector exceptions and appends to
+        # the shared lists. CPython list.append is GIL-safe.
+        with ThreadPoolExecutor(max_workers=len(api_lists)) as executor:
+            futures = [
+                executor.submit(
+                    self._collect_from_backend,
+                    collector=collector,
+                    api_name=api_name,
+                    api_collect_list=api_collect_list,
+                    successful_backends=successful,
+                    failed_backends=failed,
+                )
+                for api_name, api_collect_list in api_lists.items()
+            ]
+            for f in as_completed(futures):
+                # _collect_from_backend catches collector errors; surface any
+                # unexpected helper-level exceptions here.
+                f.result()
+
+        return successful, failed
+
+    def _collect_from_backend(
+        self,
+        collector: Any,
+        api_name: str,
+        api_collect_list: list[dict],
+        successful_backends: list[str],
+        failed_backends: list[str],
+    ) -> None:
+        """Collect results from a single backend, logging loudly on failure.
+
+        Failures are caught and logged at WARNING level so that a single
+        broken backend (network error, missing API key, rate-limit) does not
+        poison the aggregate — the remaining backends' results are still
+        returned to the caller.
+
+        Args:
+            collector: SciLEx CollectCollection instance.
+            api_name: Capitalized backend name ("SemanticScholar", "OpenAlex", …).
+            api_collect_list: Query dicts prepared for this backend.
+            successful_backends: Mutable list; this backend's name is appended
+                on success so the caller can log a summary.
+            failed_backends: Mutable list; this backend's name is appended on
+                failure so the caller can log a summary and warn the user.
+        """
+        try:
+            logger.info("scilex_backend_collect_start", backend=api_name)
+            collector.run_job_collects(api_collect_list)
+            logger.info("scilex_backend_collect_ok", backend=api_name)
+            successful_backends.append(api_name)
+        except Exception as api_error:
+            logger.warning(
+                "scilex_backend_failed",
+                backend=api_name,
+                error=str(api_error),
+                note=(
+                    "This backend's results will be absent from the aggregate. "
+                    "Other backends are unaffected."
+                ),
+            )
+            failed_backends.append(api_name)
 
     def _filter_by_article_type(self, papers: list[Paper], article_type: str) -> list[Paper]:
         """Post-filter papers by article type.

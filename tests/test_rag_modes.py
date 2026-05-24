@@ -18,7 +18,7 @@ def test_rag_modes_files_exist():
         'base.py',
         'basic.py',
         'advanced.py',
-        'profound.py',
+        'deep_research.py',
         'agentic.py',
         '__init__.py'
     ]
@@ -38,7 +38,7 @@ def test_mode_class_structure():
     expected_methods = {
         'basic.py': ['execute', 'execute_stream', '_generate_response'],
         'advanced.py': ['execute', 'execute_stream', '_generate_similar_queries', '_wrrf_retrieval'],
-        'profound.py': ['execute', 'execute_stream', '_create_plan', '_execute_step'],
+        'deep_research.py': ['execute', 'execute_stream', '_create_plan', '_execute_step'],
         'agentic.py': ['execute', 'execute_stream'],  # Now a wrapper around AgenticOrchestrator
     }
 
@@ -188,12 +188,12 @@ def test_mode_parameters():
     assert 'use_refinement' in advanced_content
     print("    ✅ AdvancedRAGMode has WRRF and refinement settings")
 
-    # Profound mode
-    with open(os.path.join(modes_dir, 'profound.py')) as f:
+    # Deep research mode (formerly profound)
+    with open(os.path.join(modes_dir, 'deep_research.py')) as f:
         profound_content = f.read()
     assert 'max_cycles' in profound_content
     assert 'early_exit_confidence' in profound_content
-    print("    ✅ ProfoundRAGMode has cycle and exit settings")
+    print("    ✅ DeepResearchRAGMode has cycle and exit settings")
 
     # Agentic mode (now a wrapper around AgenticOrchestrator)
     with open(os.path.join(modes_dir, 'agentic.py')) as f:
@@ -232,7 +232,7 @@ def test_agentic_orchestrator_consolidation():
     assert 'early_exit_confidence' in content, "Missing early_exit_confidence"
     print("    ✅ Has early_exit_confidence (early exit)")
 
-    assert '_extract_documents_from_result' in content, "Missing document extraction"
+    assert '_extract_papers_from_results' in content, "Missing document extraction"
     print("    ✅ Has document extraction for quality assessment")
 
     # Check that it's unified

@@ -8,8 +8,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from perspicacite.integrations.local_docs import (
@@ -787,8 +787,6 @@ async def kb_export(name: str, format: str = "obsidian-vault"):
     with one Markdown note per paper, one per conversation, and an Index.md.
     """
     from typing import Any as _Any
-
-    from fastapi.responses import Response
 
     from perspicacite.integrations.obsidian import build_obsidian_vault
 
@@ -1588,3 +1586,135 @@ async def get_capsule_figure(paper_id: str, fig_id: str, request: Request):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="figure file missing")
     return FileResponse(path, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Claim graph export (indicium layer)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/kb/{name}/claim-graph")
+async def export_claim_graph(
+    name: str,
+    format: str = Query("nquads", description="nquads | turtle | jsonld | rocrate"),
+) -> Response:
+    """Download a KB's indicium claim graph in the requested serialisation format.
+
+    Requires build_claim_graph to have been run for this KB.
+    """
+    try:
+        import indicium  # noqa: F401
+    except ImportError:
+        raise HTTPException(
+            status_code=501,
+            detail="indicia extra not installed; run: uv sync --extra indicia",
+        ) from None
+
+    _valid = ("nquads", "turtle", "jsonld", "rocrate")
+    if format not in _valid:
+        raise HTTPException(status_code=400, detail=f"format must be one of {list(_valid)}")
+
+    import io
+    import json as _json
+    import pathlib
+
+    from perspicacite.indicium_layer.store import ClaimGraphStore
+
+    data_dir = pathlib.Path("data/claim_graphs") / name
+    if not data_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"No claim graph found for KB '{name}'. Run build_claim_graph first.",
+        )
+
+    store = ClaimGraphStore(name, data_dir=data_dir, backend="oxigraph")
+
+    def _rocrate_payload(name: str, jld: object) -> dict:
+        return {
+            "@context": "https://w3id.org/ro/crate/1.1/context",
+            "@graph": [
+                {
+                    "@type": "CreativeWork",
+                    "@id": "ro-crate-metadata.json",
+                    "about": {"@id": "./"},
+                    "conformsTo": {"@id": "https://w3id.org/ro/crate/1.1"},
+                },
+                {
+                    "@type": "Dataset",
+                    "@id": "./",
+                    "name": f"Perspicacite claim graph: {name}",
+                    "hasPart": [{"@id": "claim-graph.jsonld"}],
+                },
+            ] + (jld if isinstance(jld, list) else []),
+        }
+
+    def _cd(filename: str) -> dict:
+        return {"Content-Disposition": f'attachment; filename="{filename}"'}
+
+    try:
+        if store._backend == "memory":
+            assert store._g is not None
+            if format == "nquads":
+                raw = store._g.serialize(format="nquads")
+                return Response(
+                    content=raw,
+                    media_type="application/n-quads",
+                    headers=_cd(f"{name}-claim-graph.nq"),
+                )
+            elif format == "turtle":
+                raw = store._g.serialize(format="turtle")
+                return Response(
+                    content=raw,
+                    media_type="text/turtle",
+                    headers=_cd(f"{name}-claim-graph.ttl"),
+                )
+            else:
+                raw_jld = store._g.serialize(format="json-ld")
+                jld = _json.loads(raw_jld) if isinstance(raw_jld, str) else raw_jld
+                payload = jld if format == "jsonld" else _rocrate_payload(name, jld)
+                ext = "jsonld" if format == "jsonld" else "rocrate.json"
+                return Response(
+                    content=_json.dumps(payload),
+                    media_type="application/ld+json",
+                    headers=_cd(f"{name}-claim-graph.{ext}"),
+                )
+        else:
+            # oxigraph backend
+            assert store._oxistore is not None
+            if format == "nquads":
+                buf = io.BytesIO()
+                store._oxistore.dump(buf, "application/n-quads")
+                return Response(
+                    content=buf.getvalue(),
+                    media_type="application/n-quads",
+                    headers=_cd(f"{name}-claim-graph.nq"),
+                )
+            else:
+                # Round-trip via N-Quads → rdflib for Turtle/JSON-LD/RO-Crate
+                import rdflib
+
+                buf = io.BytesIO()
+                store._oxistore.dump(buf, "application/n-quads")
+                g = rdflib.ConjunctiveGraph()
+                g.parse(data=buf.getvalue().decode(), format="nquads")
+                if format == "turtle":
+                    raw = g.serialize(format="turtle")
+                    return Response(
+                        content=raw,
+                        media_type="text/turtle",
+                        headers=_cd(f"{name}-claim-graph.ttl"),
+                    )
+                else:
+                    raw_jld = g.serialize(format="json-ld")
+                    jld = _json.loads(raw_jld) if isinstance(raw_jld, str) else raw_jld
+                    payload = jld if format == "jsonld" else _rocrate_payload(name, jld)
+                    ext = "jsonld" if format == "jsonld" else "rocrate.json"
+                    return Response(
+                        content=_json.dumps(payload),
+                        media_type="application/ld+json",
+                        headers=_cd(f"{name}-claim-graph.{ext}"),
+                    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {e}") from e

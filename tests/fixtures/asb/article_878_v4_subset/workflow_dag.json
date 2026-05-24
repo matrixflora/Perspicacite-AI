@@ -1,0 +1,49 @@
+{
+  "edges": [
+    {
+      "from": "task_001",
+      "port": "cleaned_library",
+      "to": "task_002"
+    },
+    {
+      "from": "task_001",
+      "port": "cleaned_library",
+      "to": "task_003"
+    },
+    {
+      "from": "task_001",
+      "port": "cleaned_library",
+      "to": "task_004"
+    },
+    {
+      "from": "task_002",
+      "port": "annotated_spectra",
+      "to": "task_005"
+    },
+    {
+      "from": "task_001",
+      "port": "cleaned_library",
+      "to": "task_006"
+    },
+    {
+      "from": "task_004",
+      "port": "corrected_library",
+      "to": "task_007"
+    },
+    {
+      "from": "task_001",
+      "port": "cleaned_library",
+      "to": "task_008"
+    }
+  ],
+  "nodes": [
+    "task_001",
+    "task_002",
+    "task_003",
+    "task_004",
+    "task_005",
+    "task_006",
+    "task_007",
+    "task_008"
+  ]
+}

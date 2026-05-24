@@ -143,6 +143,10 @@ async def run_web_aggregator_search(
                     "phase": "start",
                     "providers": _provider_names,
                     "scilex_apis": list(scilex_apis or _apis),
+                    # Surface the actual query string the aggregator is
+                    # about to send so the frontend trail can show users
+                    # the keywords being searched (not just the count).
+                    "searched_query": effective_query,
                 })
             web_papers = await aggregator.search(
                 query=effective_query,

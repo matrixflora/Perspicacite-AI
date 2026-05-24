@@ -35,6 +35,7 @@ dependencies = [
     "biopython>=1.80",
     "nltk>=3.8",
     "langchain-text-splitters>=0.3.0",
+    "pathspec>=1.1.1",
 ]
 
 [project.optional-dependencies]
@@ -122,6 +123,30 @@ browser = [
   "playwright>=1.40",
 ]
 
+# indicium — Knowledge Graph / SHACL validation layer for structured claim
+# representation. Local sibling package (not on PyPI). Pulls in linkml,
+# pyshacl, and rdflib. Install only when KG-backed workflows are needed.
+#
+# Install with:
+#   uv sync --extra indicia
+indicia = [
+  "indicium",
+  "pyoxigraph>=0.4",
+]
+
+# indicium-adapters — optional domain adapter protocol. Core package (>=0.4.0)
+# no longer ships the metabolomics adapters; those live in the sibling package
+# indicium-adapters-metabolomics (MetabolomicsAdapter, MetaboKGAdapter,
+# EMIAdapter). Both are needed so discover_adapters() returns all three.
+# Enables domain_adapter= kwarg in extract_claims().
+#
+# Install with:
+#   uv sync --extra adapters
+adapters = [
+    "indicium-adapters>=0.4.0",
+    "indicium-adapters-metabolomics>=0.1.0",
+]
+
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
 
@@ -144,9 +169,15 @@ packages = ["src/perspicacite"]
 # Safe while the [scilex] extra is unused by the core / KB / MCP paths.
 override-dependencies = ["httpx>=0.28.1"]
 
+[tool.uv.sources]
+indicium = { path = "../indicium", editable = true }
+indicium-adapters = { path = "../indicium-adapters", editable = true }
+indicium-adapters-metabolomics = { path = "../indicium-adapters-metabolomics", editable = true }
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["src"]
 markers = [
     "unit: Unit tests (no external services)",
     "integration: Integration tests (may need services)",
@@ -180,5 +211,8 @@ fail_under = 70
 
 [dependency-groups]
 dev = [
+    "pytest-asyncio>=1.3.0",
+    "pytest-httpx>=0.36.2",
     "pytest-timeout>=2.4.0",
+    "respx>=0.23.1",
 ]

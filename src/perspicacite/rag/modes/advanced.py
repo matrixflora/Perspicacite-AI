@@ -420,6 +420,7 @@ Sources:
                         doi=p.get("doi"),
                         relevance_score=p.get("paper_score", 0.0),
                         kb_name=p.get("kb_name") or request.kb_name,
+                        metadata=p.get("paper_metadata"),
                     )
                 )
         else:
@@ -567,6 +568,23 @@ Sources:
 
         emit_phase(_phase_sink, phase="rewrite", state="done")
         emit_phase(_phase_sink, phase="retrieve_kb", state="running")
+
+        # Surface each variation individually so the trail's
+        # QueryVariationsCard can render the actual rewrites instead of
+        # only a count. Skip the original (first item in all_queries) —
+        # only the rewrites are interesting.
+        for _variant in all_queries:
+            if not _variant or _variant.strip() == retrieval_query.strip():
+                continue
+            yield StreamEvent.status_kind(
+                f"Variation: '{_variant}'",
+                kind="query_rephrased",
+                original=retrieval_query,
+                rewritten=_variant,
+                by="advanced_variations",
+            )
+
+
         yield StreamEvent.status(
             f"Advanced RAG: Searching with {len(all_queries)} query variations..."
         )
@@ -665,11 +683,18 @@ Sources:
                         _provs = ", ".join(
                             p.replace("_", " ").title() for p in _ev.get("providers", [])
                         )
+                        _sq = _ev.get("searched_query") or ""
+                        _msg = (
+                            f"Querying databases: {_provs} — keywords: '{_sq}'"
+                            if _sq
+                            else f"Querying databases: {_provs}…"
+                        )
                         yield StreamEvent.status_kind(
-                            f"Querying databases: {_provs}…",
+                            _msg,
                             kind="provider_progress",
                             phase="start",
                             providers=_ev.get("providers", []),
+                            searched_query=_sq,
                         )
                     elif _k == "provider_progress" and _ev.get("phase") == "done":
                         _bp = _ev.get("by_provider", {}) or {}
@@ -798,6 +823,7 @@ Sources:
                         enrichment_sources=p.get("enrichment_sources"),
                         relevance_score=p.get("paper_score", 0.0),
                         kb_name=p.get("kb_name") or request.kb_name,
+                        metadata=p.get("paper_metadata"),
                     )
                 )
         else:

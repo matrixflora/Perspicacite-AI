@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { kb, type KBSummary } from "@/lib/api";
+import { loadPreferences } from "@/lib/preferences";
 
 function formatDate(iso?: string | null): string {
   if (!iso) return "—";
@@ -29,6 +30,7 @@ export default function KBListPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeKbName, setActiveKbName] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -47,6 +49,10 @@ export default function KBListPage() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    setActiveKbName(loadPreferences().defaultKbName);
+  }, []);
 
   return (
     <main className="relative flex flex-1 flex-col">
@@ -78,10 +84,10 @@ export default function KBListPage() {
         ) : items && items.length === 0 ? (
           <EmptyState onCreate={() => setDrawerOpen(true)} />
         ) : (
-          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <ul className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {items?.map((k) => (
               <li key={k.name}>
-                <KBCard kb={k} />
+                <KBCard kb={k} isActive={k.name === activeKbName} />
               </li>
             ))}
           </ul>
@@ -101,22 +107,33 @@ export default function KBListPage() {
   );
 }
 
-function KBCard({ kb: k }: { kb: KBSummary }) {
+function KBCard({ kb: k, isActive }: { kb: KBSummary; isActive: boolean }) {
   return (
     <Link
       href={`/kb/${encodeURIComponent(k.name)}`}
-      className="group block h-full rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-card)] transition hover:border-[var(--cnrs-blue)]/40 hover:shadow-[var(--shadow-elev)]"
+      className="group block h-full rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-card)] transition hover:border-[var(--cnrs-blue)]/40 hover:shadow-[var(--shadow-elev)]"
     >
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="text-lg font-semibold tracking-tight text-[var(--cnrs-blue)] group-hover:underline">
-          {k.name}
-        </h3>
+      <div className="flex min-h-6 items-center justify-between gap-2">
+        {isActive ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-[var(--cnrs-yellow)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--cnrs-blue)]">
+            <span
+              className="h-1.5 w-1.5 rounded-full bg-[var(--cnrs-blue)]"
+              aria-hidden
+            />
+            Active
+          </span>
+        ) : (
+          <span />
+        )}
         <span
-          className="grid h-2.5 w-2.5 place-items-center rounded-full transition group-hover:scale-125"
+          className="grid h-2.5 w-2.5 shrink-0 place-items-center rounded-full transition group-hover:scale-125"
           style={{ background: "var(--cnrs-yellow)" }}
           aria-hidden
         />
       </div>
+      <h3 className="mt-2 break-words text-xl font-semibold tracking-tight text-[var(--cnrs-blue)] group-hover:underline">
+        {k.name}
+      </h3>
 
       {k.description ? (
         <p className="mt-2 line-clamp-3 text-sm text-[var(--text-muted)]">

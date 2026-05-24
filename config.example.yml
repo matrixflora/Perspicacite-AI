@@ -23,6 +23,20 @@ server:
 llm:
   default_provider: "anthropic"
   default_model: "claude-sonnet-4-5"
+  default_timeout_s: 60  # applied to every LLM call that doesn't set its own timeout
+
+  # ── Free-tier auto-rotation (zero-cost alternative) ──────────────────────
+  # Set free_auto_mode: true + add your OPENROUTER_API_KEY (free account at
+  # openrouter.ai — no credits needed) to rotate through free models instead.
+  # See config.example.openrouter-free.yml for a full zero-cost preset.
+  # free_auto_mode: false
+  # free_tier_fallback_models:
+  #   - "deepseek/deepseek-v4-flash:free"
+  #   - "qwen/qwen3-coder:free"
+  #   - "nvidia/nemotron-3-super-120b-a12b:free"
+  #   - "meta-llama/llama-3.3-70b-instruct:free"
+  #   - "openrouter/free"
+  # ─────────────────────────────────────────────────────────────────────────
 
   providers:
     anthropic:
@@ -116,12 +130,14 @@ rag_modes:
     enable_reflection: false
     query_expansion: true
 
-  profound:
+  deep_research:    # renamed from "profound"
     max_iterations: 3
     use_hybrid: true
     use_wrrf: true
     enable_planning: true
     enable_reflection: true
+    max_total_seconds: 540     # F-17: hard cycle budget; synthesis runs on top of this
+    synthesis_timeout_s: 90    # independent cap on final answer generation phase
 
   agentic:
     max_iterations: 5
@@ -131,6 +147,9 @@ rag_modes:
     # Higher values improve coverage but increase latency and token cost.
     # Range: 1–64; default is 8.
     map_reduce_max_papers: 8
+
+  literature_survey:
+    seed_known_max: 5   # known papers to keep as survey anchors when all results are already in KB
 
 # =============================================================================
 # SciLEx Integration

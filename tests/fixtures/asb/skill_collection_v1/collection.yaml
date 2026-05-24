@@ -1,0 +1,9 @@
+id: https://w3id.org/holobiomicslab/asb-skill/collection/metabolomics/v1
+name: metabolomics-v1
+title: Metabolomics v1
+edam_topics:
+  - http://edamontology.org/topic_3172
+  - http://edamontology.org/topic_0091
+skills:
+  - id: https://w3id.org/holobiomicslab/asb-skill/feature-detection-lcms
+    slug: feature-detection-lcms

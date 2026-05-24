@@ -32,6 +32,7 @@ from .biorxiv import get_content_from_biorxiv, is_biorxiv_doi
 from .discovery import discover_paper_sources
 from .elsevier import get_content_from_elsevier
 from .europepmc import get_content_from_europepmc
+from .html_capture import capture_landing_html
 from .openalex_oa import download_pdf_from_openalex_oa
 from .pmc import get_fulltext_from_pmc
 from .rsc import download_from_rsc, is_rsc_doi
@@ -111,6 +112,7 @@ async def retrieve_paper_content(
     cookie_domains: list[str] | None = None,
     pdf_cache_dir: str | None = None,
     abstract_only: bool = False,
+    enable_landing_capture: bool = False,
 ) -> PaperContent:
     """Retrieve paper content using the unified priority pipeline.
 
@@ -223,22 +225,25 @@ async def retrieve_paper_content(
 
         # ── STEP 2: STRUCTURED FULL TEXT ────────────────────────────────
 
-        # 2a. PMC JATS XML (sections + references)
-        if disc.pmcid:
-            text, sections = await get_fulltext_from_pmc(clean, client)
-            if text and len(text.strip()) > 200:
-                refs = _load_cached_references(clean)
-                return PaperContent(
-                    success=True,
-                    doi=clean,
-                    content_type="structured",
-                    full_text=text,
-                    sections=sections,
-                    references=refs,
-                    abstract=disc.abstract,
-                    content_source="pmc",
-                    metadata=_metadata_from_discovery(disc, clean),
-                )
+        # 2a. PMC JATS XML (sections + references).
+        # Run regardless of disc.pmcid: get_fulltext_from_pmc resolves its own
+        # PMCID via Europe PMC, which catches papers that are in PMC but whose
+        # PMCID OpenAlex/Unpaywall discovery did not surface. It short-circuits
+        # cheaply when the DOI is not in PMC.
+        text, sections = await get_fulltext_from_pmc(clean, client)
+        if text and len(text.strip()) > 200:
+            refs = _load_cached_references(clean)
+            return PaperContent(
+                success=True,
+                doi=clean,
+                content_type="structured",
+                full_text=text,
+                sections=sections,
+                references=refs,
+                abstract=disc.abstract,
+                content_source="pmc",
+                metadata=_metadata_from_discovery(disc, clean),
+            )
 
         # 2a-bis. Europe PMC fullTextXML (broader OA coverage)
         epmc = await get_content_from_europepmc(
@@ -387,6 +392,39 @@ async def retrieve_paper_content(
                         content_source="alternative",
                         metadata=_metadata_from_discovery(disc, clean),
                     )
+
+        # ── STEP 3c: COOKIE-AUTHENTICATED LANDING CAPTURE ───────────────
+        # Last-resort full text from the publisher landing page, fetched
+        # through the (cookie-authenticated) client. Brings the DOI path to
+        # parity with ingest_url for paywalled papers the user has cookie
+        # access to. Opt-in (enabled when cookies are configured) and only
+        # accepted at the full_text tier — thinner captures fall through to
+        # the abstract path below.
+        if enable_landing_capture:
+            try:
+                cap = await capture_landing_html(
+                    doi=clean,
+                    landing_url=disc.oa_url,
+                    abstract=disc.abstract or "",
+                    title=disc.title or "",
+                    http_client=client,
+                    cache_dir=pdf_cache_dir,
+                )
+            except Exception as e:
+                logger.info("landing_capture_failed", doi=clean, error=str(e))
+                cap = None
+            if cap is not None and cap.tier == "full_text" and cap.extracted_text:
+                pc = PaperContent(
+                    success=True,
+                    doi=clean,
+                    content_type="full_text",
+                    full_text=cap.extracted_text,
+                    abstract=disc.abstract,
+                    content_source="landing_html",
+                    metadata=_metadata_from_discovery(disc, clean),
+                )
+                pc.attempts.extend(attempts)
+                return pc
 
         # ── STEP 4: ABSTRACT ONLY ───────────────────────────────────────
         if disc.abstract and len(disc.abstract.strip()) > 20:

@@ -75,6 +75,7 @@ Within a wave, items are roughly ordered by dependency / leverage.
 | 4.3 | **Versioned KBs** (append log) | Track when each paper was added, by which command. Enables rollback and provenance audits. |
 | 4.4 | **Author / ORCID disambiguation** | "Smith J." → canonical author ID via ORCID API / OpenAlex. |
 | 4.5 | **Export formats** | BibTeX / CSL JSON / RIS for KB contents. |
+| 4.6 ✅ | **GitHub repo + skill-bundle ingest** | Shipped 2026-05-16 — `perspicacite ingest-github-repo`, `ingest-skill-bundle[s]` CLI; `ingest_github_repo` + `ingest_skill_bundle` MCP tools. New `pipeline/github/{fetcher,bundle,walk,chunk_producer}.py` + `pipeline/github_kb.py`. Linked DOI papers route through existing ingest path; arXiv/PMC surface in `linked_papers_skipped_non_doi`. External (non-paper) URLs from bundle README/docs land in the KB log as `external_link` events. Operator guide: `docs/github-skill-bundle-ingest-2026-05-15.md`. Spec: `docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md`. Plan: `docs/superpowers/plans/2026-05-15-github-skill-bundle-ingest.md`. |
 
 ## Wave 5 — MCP polish
 

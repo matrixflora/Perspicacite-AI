@@ -512,12 +512,13 @@ class LLMConfig(BaseModel):
     #     contextual:         "claude-haiku-4-5"   # contextual retrieval per-chunk
     #     search_optimize:    "claude-haiku-4-5"   # query optimizer
     #     grounding:          "claude-haiku-4-5"   # GUI grounding extractor
+    #     claim_graph:        "deepseek/deepseek-v4-pro"  # claim extraction (structured output)
     models: dict[str, str] = Field(
         default_factory=dict,
         description=(
             "Per-stage model overrides. Keys: synthesis_basic, "
             "synthesis_heavy, routing, screening, rephrase, contextual, "
-            "search_optimize, grounding. "
+            "search_optimize, grounding, claim_graph. "
             "Value is the model name; uses default_provider unless the "
             "name contains a provider prefix like 'anthropic/claude-...'. "
             "Empty dict = every stage uses the global default pair."
@@ -551,6 +552,15 @@ class LLMConfig(BaseModel):
             "inside MCP tools that wrap their body with use_mcp_context."
         ),
     )
+    default_timeout_s: float = Field(
+        default=60.0,
+        ge=1.0,
+        description=(
+            "Global LiteLLM call timeout in seconds, applied when the "
+            "per-provider config has no timeout set and the caller does "
+            "not pass a timeout= kwarg. Per-call kwargs always win."
+        ),
+    )
     budget: BudgetConfig = Field(
         default_factory=BudgetConfig,
         description="Per-process token / dollar caps. See BudgetConfig.",
@@ -561,6 +571,46 @@ class LLMConfig(BaseModel):
             "Optional per-(provider, model) pricing overrides in $/M tokens "
             "as [input, output]. Falls through to the default PRICING_TABLE "
             "in perspicacite.llm.budget."
+        ),
+    )
+
+    # ---- free-tier auto-mode -------------------------------------------
+    # When free_auto_mode=True and the caller does not specify an explicit
+    # model/provider, complete() uses free_tier_fallback_models as the
+    # *primary* chain rather than default_model. Models are tried in order;
+    # on any error the next model in the list is attempted automatically.
+    # Callers that pass an explicit model= still use that model (no override).
+    # Requires OPENROUTER_API_KEY (a free account at openrouter.ai is enough
+    # — no credits needed for :free-suffix models).
+    free_auto_mode: bool = Field(
+        default=False,
+        description=(
+            "When True, complete() without an explicit model uses "
+            "free_tier_fallback_models as the primary rotation chain instead "
+            "of default_model. Ideal for zero-cost deployments or as a safe "
+            "default when no paid API key is available."
+        ),
+    )
+    # Free-tier model pool — used in two ways:
+    #  1. As the primary chain when free_auto_mode=True (tried in order, rotate on error).
+    #  2. As a fallback chain when free_auto_mode=False and the primary fails with a
+    #     quota-exceeded, invalid-model-ID, or auth error.
+    # All entries are called via the 'openrouter' provider.
+    # Requires OPENROUTER_API_KEY (free account is sufficient).
+    # Recommended pool (best quality → broadest availability):
+    #   - "deepseek/deepseek-v4-flash:free"           1M ctx, scientific text
+    #   - "qwen/qwen3-coder:free"                     1M ctx, reasoning/code
+    #   - "nvidia/nemotron-3-super-120b-a12b:free"    1M ctx, strong general
+    #   - "meta-llama/llama-3.3-70b-instruct:free"   131K ctx, reliable
+    #   - "openrouter/free"                           auto-picks best available
+    free_tier_fallback_models: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ordered list of OpenRouter free-tier model IDs. Used as the "
+            "primary rotation chain when free_auto_mode=True, or as a "
+            "fallback chain when the primary model fails with a quota, "
+            "invalid-model-ID, or auth error. All entries routed via "
+            "'openrouter'. Requires OPENROUTER_API_KEY (free account ok)."
         ),
     )
 
@@ -725,16 +775,28 @@ class RAGModesConfig(BaseModel):
         )
     )
 
-    # Profound: Multi-cycle research with planning (from v1)
+    # Profond: Multi-cycle research with planning (from v1).
+    # Default 1 cycle — users opt in to deeper research via the
+    # per-request override in the composer.
     profound: RAGModeSettings = Field(
         default_factory=lambda: RAGModeSettings(
-            max_iterations=3,
+            max_iterations=1,
             tools=["kb_search", "web_search"],
             rerank=True,
             query_expansion=True,
             enable_planning=True,  # Research planning
             enable_reflection=True,  # Plan review and adjustment
         )
+    )
+
+    # deep_research is the renamed user-facing name for "profound" mode.
+    # When None, engine falls back to the profound field for backward compat.
+    deep_research: RAGModeSettings | None = Field(
+        default=None,
+        description=(
+            "Settings for deep_research mode (renamed from profound). "
+            "When None, falls back to the profound field for backward compat."
+        ),
     )
 
     # Agentic: Intent-based with tool selection
@@ -810,21 +872,32 @@ class WebSearchConfig(BaseModel):
 
 
 class ZoteroConfig(BaseModel):
-    """Zotero integration configuration."""
+    """Zotero integration configuration.
+
+    Minimal config to enable: just ``enabled: true``. By default we talk
+    to the desktop app's local API (no api_key needed). For the Zotero
+    cloud API, set ``api_key`` and ``library_id`` and switch ``base_url``
+    back to empty.
+    """
 
     enabled: bool = False
+    # API key — REQUIRED for cloud (api.zotero.org), OPTIONAL for the
+    # local desktop API (base_url on loopback).
     api_key: str = ""
+    # Library id — REQUIRED for cloud, OPTIONAL for the local API where
+    # the client can auto-discover. Provide a specific id to scope to a
+    # particular group library.
     library_id: str = ""
     library_type: str = "user"  # "user" or "group"
     collection_key: str = ""
-    # Base URL for the Zotero API. Empty = cloud (api.zotero.org). To use
-    # the desktop app's local API (which serves attachments from local
-    # storage — including Linked Files), set to
-    # "http://localhost:23119/api" and enable
-    # "Allow other applications on this computer to communicate with Zotero"
-    # in Zotero's Settings → Advanced. api_key may be omitted when base_url
-    # is on loopback.
-    base_url: str = ""
+    # Base URL for the Zotero API. Empty means cloud (api.zotero.org).
+    # The default below targets the desktop app's local API so that
+    # ``enabled: true`` alone is enough on a typical workstation. Set to
+    # empty (``""``) to switch back to the cloud API; in that case
+    # ``api_key`` and ``library_id`` become required.
+    # The desktop checkbox is in Zotero → Settings → Advanced →
+    # "Allow other applications on this computer to communicate with Zotero".
+    base_url: str = "http://localhost:23119/api"
 
 
 class LocalDocsConfig(BaseModel):
@@ -1029,6 +1102,73 @@ class PDFDownloadConfig(BaseModel):
     )
 
 
+class GitHubConfig(BaseModel):
+    """GitHub fetcher knobs (2026-05-15 spec).
+
+    Controls how the GitHub-repo / skill-bundle ingest pipeline talks to
+    api.github.com and caches downloaded tarballs on disk. See
+    docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md.
+    """
+
+    token_env_var: str = Field(default="GITHUB_TOKEN", min_length=1)
+    cache_dir: Path = Path("data/github_cache")
+    cache_max_mb: int = Field(default=2048, gt=0)
+    default_branch: str = Field(default="HEAD", min_length=1)
+    user_agent: str = Field(default="Perspicacite/2.0", min_length=1)
+    api_base: str = "https://api.github.com"
+
+    @field_validator("api_base")
+    @classmethod
+    def _api_base_must_be_http(cls, v: str) -> str:
+        """Reject non-HTTP(S) bases. ``AnyHttpUrl`` coerces to a URL
+        object and breaks downstream string concatenation; a regex on
+        ``str`` keeps the field shape stable."""
+        if not isinstance(v, str) or not (
+            v.startswith("https://") or v.startswith("http://")
+        ):
+            raise ValueError(
+                f"api_base must start with http:// or https://, got {v!r}"
+            )
+        return v
+
+
+class BundlesConfig(BaseModel):
+    """Skill-bundle ingest knobs (2026-05-15 spec).
+
+    KB-naming templates used by ``ingest_skill_bundle`` /
+    ``ingest_skill_bundles_batch``. ``default_kb_name_template`` applies
+    in per-skill mode (one KB per bundle); ``composite_kb_name_template``
+    applies in composite mode (many bundles → one KB).
+    """
+
+    default_kb_name_template: str = "{name}"  # for per-skill mode
+    composite_kb_name_template: str = "composite-{domain}"
+
+    @field_validator("default_kb_name_template")
+    @classmethod
+    def _per_skill_template_requires_name(cls, v: str) -> str:
+        """Per-skill mode formats this with ``name=<bundle.name>``. A
+        template without ``{name}`` would silently produce the same KB
+        name for every bundle and collapse them all into one collection."""
+        if "{name}" not in v:
+            raise ValueError(
+                f"default_kb_name_template must contain '{{name}}', got {v!r}"
+            )
+        return v
+
+    @field_validator("composite_kb_name_template")
+    @classmethod
+    def _composite_template_requires_domain(cls, v: str) -> str:
+        """Composite mode formats this with ``domain=<user-supplied>``.
+        Without ``{domain}`` the template can't differentiate composites
+        for different research domains."""
+        if "{domain}" not in v:
+            raise ValueError(
+                f"composite_kb_name_template must contain '{{domain}}', got {v!r}"
+            )
+        return v
+
+
 class LoggingConfig(BaseModel):
     """Logging configuration."""
 
@@ -1136,6 +1276,20 @@ class SearchConfig(BaseModel):
     )
 
 
+class CustomDatabase(BaseModel):
+    """A user-defined database entry, surfaced in the composer DB picker.
+
+    Display-only — favicon is fetched from `homepage` via the existing
+    DatabaseGlyph component. Search integration is not auto-wired.
+    """
+
+    id: str = Field(..., description="Stable id used in selection lists.")
+    label: str = Field(..., description="Human-readable name shown in tooltips.")
+    short: str = Field(default="", description="Optional 2-char abbreviation for the glyph fallback.")
+    homepage: str = Field(..., description="Base URL — favicon is auto-fetched from this domain.")
+    blurb: str = Field(default="", description="Optional one-line description.")
+
+
 class GoogleScholarConfig(BaseModel):
     """Google Scholar search via headless Chromium (optional [browser] dep)."""
 
@@ -1212,24 +1366,6 @@ class GoogleScholarConfig(BaseModel):
     )
 
 
-class GitHubConfig(BaseModel):
-    """GitHub integration configuration."""
-
-    token_env_var: str = "GITHUB_TOKEN"
-    cache_dir: Path = Path("data/github_cache")
-    cache_max_mb: int = 2048
-    default_branch: str = "HEAD"
-    user_agent: str = "Perspicacite/2.0"
-    api_base: str = "https://api.github.com"
-
-
-class BundlesConfig(BaseModel):
-    """Skill bundle ingestion configuration."""
-
-    default_kb_name_template: str = "{name}"
-    composite_kb_name_template: str = "composite-{domain}"
-
-
 class Config(BaseModel):
     """Main configuration for Perspicacité v2."""
 
@@ -1258,6 +1394,19 @@ class Config(BaseModel):
     github: GitHubConfig = Field(default_factory=GitHubConfig)
     bundles: BundlesConfig = Field(default_factory=BundlesConfig)
     google_scholar: GoogleScholarConfig = Field(default_factory=GoogleScholarConfig)
+    # User-defined databases shown in the composer's DB picker. These
+    # are display-only: the frontend renders them with a favicon pulled
+    # from `homepage`. Wiring a custom DB into the search pipeline is
+    # a separate, provider-implementation concern.
+    custom_databases: list["CustomDatabase"] = Field(
+        default_factory=list,
+        description=(
+            "User-defined databases that appear in the composer DB picker. "
+            "Each entry needs an id, label, and homepage URL — the favicon "
+            "is auto-fetched from the homepage. Searches are not yet wired "
+            "to custom entries; they're for visual/config presence only."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_config(self) -> "Config":

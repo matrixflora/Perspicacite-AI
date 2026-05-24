@@ -28,7 +28,14 @@ _TOOL_ENTRIES: list[dict] = [
         "name": "search_literature",
         "purpose": "Live multi-database academic search with enrichment and rerank.",
         "when_to_use": "Find candidate papers for a topic from the open literature.",
-        "key_knobs": ["databases", "max_results", "optimize_query", "year_min", "year_max", "min_relevance"],
+        "key_knobs": [
+            "databases",
+            "max_results",
+            "optimize_query",
+            "year_min",
+            "year_max",
+            "min_relevance",
+        ],
     },
     {
         "name": "web_search",
@@ -109,10 +116,31 @@ _TOOL_ENTRIES: list[dict] = [
         "key_knobs": ["context", "model"],
     },
     {
+        "name": "extract_claims_from_passages",
+        "purpose": "Turn retrieved passages into typed, SHACL-validated scientific claims (indicium standard).",
+        "when_to_use": "After retrieval, when you need machine-readable claims (5-slot SuperPattern + ECO-typed evidence) rather than prose.",
+        "key_knobs": ["passages (required)", "context", "model"],
+    },
+    {
         "name": "generate_report",
-        "purpose": "Run a full RAG report over a KB (basic/advanced/profound/agentic/literature_survey/contradiction).",
+        "purpose": "Run a full RAG report over a KB (basic/advanced/deep_research/agentic/literature_survey/contradiction; \"profound\" is a deprecated alias for deep_research).",
         "when_to_use": "Synthesise an answer with citations from KB content.",
-        "key_knobs": ["mode", "kb_names", "max_papers", "recency_weight", "screen_method", "screen_threshold", "databases"],
+        "key_knobs": [
+            "mode",
+            "kb_names",
+            "max_papers",
+            "recency_weight",
+            "screen_method",
+            "screen_threshold",
+            "databases",
+            "bm25_weight (hybrid retrieval keyword bias, 0.0–1.0)",
+            "vector_weight (hybrid retrieval semantic bias, 0.0–1.0)",
+        ],
+        "response_fields": (
+            "report, sources, papers_used, iteration_count, completion_reason, "
+            "diagnostic (cycles_completed/papers_retrieved for deep_research), "
+            "message_id, task_id, asb_metadata"
+        ),
     },
     {
         "name": "screen_papers",
@@ -135,20 +163,40 @@ _TOOL_ENTRIES: list[dict] = [
     {
         "name": "ingest_local_documents",
         "purpose": "Ingest local files (PDF/text) into a KB.",
-        "when_to_use": "Add documents already on disk to a KB.",
+        "when_to_use": "Add documents already on disk to a KB when the filename is a sufficient identifier.",
         "key_knobs": [],
+    },
+    {
+        "name": "add_local_papers_to_kb",
+        "purpose": "Ingest local files into a KB with user-provided metadata (title, authors, year, abstract).",
+        "when_to_use": "Use instead of ingest_local_documents when you have metadata to attach — proposal PDFs, preprints without DOIs, lab reports. Gives proper titles in search results rather than raw filenames.",
+        "key_knobs": [
+            "file (required)",
+            "title (required)",
+            "authors",
+            "year",
+            "abstract",
+            "keywords",
+            "doi",
+        ],
+    },
+    {
+        "name": "ingest_asb_run",
+        "purpose": "Ingest an ASB (Agentic Science Benchmark) workflow-run directory into a KB.",
+        "when_to_use": "Make a completed ASB run (cards, skills, tool outputs) searchable. Pass the run directory path and a KB name.",
+        "key_knobs": ["run_dir (required)", "kb_name (required)"],
     },
     {
         "name": "ingest_github_repo",
         "purpose": "Ingest a GitHub repository's docs/code into a KB.",
-        "when_to_use": "Make a codebase searchable in a KB.",
-        "key_knobs": [],
+        "when_to_use": "Make a codebase or documentation repo searchable. Chunks markdown, Python docstrings, and notebooks. Use ingest_skill_bundle instead when the repo contains a bundle.yml.",
+        "key_knobs": ["url (required)", "kb_name (required)", "include", "exclude"],
     },
     {
         "name": "ingest_skill_bundle",
-        "purpose": "Ingest a packaged skill bundle into a KB.",
-        "when_to_use": "Load a skill bundle's content for retrieval.",
-        "key_knobs": [],
+        "purpose": "Ingest an ASB skill bundle (local path or GitHub URL with bundle.yml) into a KB.",
+        "when_to_use": "Load a skill bundle's papers and code for retrieval. Resolves DOIs from the bundle manifest when ingest_linked_papers=True.",
+        "key_knobs": ["source (required)", "kb_name", "ingest_linked_papers"],
     },
     {
         "name": "build_kb_from_search",
@@ -205,6 +253,19 @@ _TOOL_ENTRIES: list[dict] = [
         "key_knobs": [],
     },
     {
+        "name": "push_notes_to_zotero",
+        "purpose": "Attach text notes to existing Zotero items.",
+        "when_to_use": (
+            "After push_to_zotero or when you have a Zotero item_key/DOI and want to "
+            "store a RAG summary, annotation, or drafting note alongside the reference."
+        ),
+        "key_knobs": [
+            "content (required)",
+            "item_key or doi (one required per note)",
+            "tags",
+        ],
+    },
+    {
         "name": "zotero_list_collections",
         "purpose": "List Zotero collections.",
         "when_to_use": "Discover Zotero collections before ingesting.",
@@ -234,12 +295,78 @@ _TOOL_ENTRIES: list[dict] = [
         "when_to_use": "Stop an in-flight report/ingest you no longer need.",
         "key_knobs": ["task_id"],
     },
+    {
+        "name": "export_astra",
+        "purpose": "Project indicium claims to ASTRA Insights for interoperable analysis records.",
+        "when_to_use": "After extracting claims, to hand them to an ASTRA-consuming tool.",
+        "key_knobs": ["claims"],
+    },
+    {
+        "name": "build_claim_graph",
+        "purpose": "Build/refresh the indicium claim graph for a KB (oxigraph-backed).",
+        "when_to_use": "Run before first RAGMode.REASONING query or after new papers.",
+        "key_knobs": ["kb_name (required)", "refresh", "max_pairs_per_claim", "model"],
+    },
+    {
+        "name": "claim_graph_status",
+        "purpose": "Return the per-KB claim-graph manifest + last build summary.",
+        "when_to_use": "Check KB claim-graph freshness before reasoning; detects schema drift.",
+        "key_knobs": ["kb_name (required)"],
+    },
+    {
+        "name": "query_claim_graph",
+        "purpose": (
+            "Run a typed traversal query (claims_supporting / disputing / "
+            "trace / pattern / neighbors) against a KB's claim graph."
+        ),
+        "when_to_use": (
+            "Direct graph queries when reasoning mode's planner isn't "
+            "suitable or for tool composition."
+        ),
+        "key_knobs": ["kb_name (required)", "query_name (required)", "kwargs"],
+    },
+    {
+        "name": "claim_graph_export",
+        "purpose": (
+            "Export a KB's indicium claim graph as N-Quads (default), Turtle, JSON-LD, or RO-Crate."
+        ),
+        "when_to_use": (
+            "Archive or hand off a KB's claim graph to an external triple-store, "
+            "analysis pipeline, or research-object archive."
+        ),
+        "key_knobs": ["kb_name (required)", "format (nquads|turtle|jsonld|rocrate) — default: nquads"],
+    },
+    {
+        "name": "get_claim_figures",
+        "purpose": (
+            "Return Figure nodes (microscopy, plots, diagrams) associated with "
+            "a claim IRI in the KB claim graph."
+        ),
+        "when_to_use": (
+            "After build_claim_graph, when you need the visual evidence behind "
+            "a specific claim — e.g. to surface supporting figures in a report."
+        ),
+        "key_knobs": ["kb_name (required)", "claim_iri (required)"],
+    },
+    {
+        "name": "get_claim_links",
+        "purpose": (
+            "Return ClaimLink nodes (supports, contradicts, refines, etc.) "
+            "for a claim IRI in the KB claim graph."
+        ),
+        "when_to_use": (
+            "After build_claim_graph, when you need the full typed-edge context "
+            "around a specific claim — e.g. to surface contradicting claims, "
+            "argument chains, or methodological refinements in a report."
+        ),
+        "key_knobs": ["kb_name (required)", "claim_iri (required)"],
+    },
 ]
 
 _CAPABILITIES: list[str] = [
     "Live multi-database literature search with enrichment and rerank.",
     "Personal knowledge bases (KBs): build, ingest (DOIs/local/GitHub/Zotero), search, export.",
-    "RAG report generation in modes basic/advanced/profound/agentic/literature_survey/contradiction.",
+    "RAG report generation in modes basic/advanced/deep_research/agentic/literature_survey/contradiction (\"profound\" still accepted as alias).",
     "Passage-level retrieval and citable source/license records.",
     "LLM extraction of numeric parameters and failure modes from passages.",
     "Citation-graph expansion and evidence-capsule building.",
@@ -248,11 +375,14 @@ _CAPABILITIES: list[str] = [
 _DECISION_RULES: list[str] = [
     "Translate non-English queries to English before searching.",
     "Set optimize_query on for literature search unless you need a verbatim query.",
+    "For author searches, set optimize_query=false (or filter by ORCID/OpenAlex "
+    "author id): the rewrite is tuned for topical recall and may drop bare "
+    "surnames it does not recognise as scientific terms.",
     "Call suggest_databases first when unsure which databases to target.",
     "Pick the tool: search_literature/web_search for discovery; "
     "search_knowledge_base/search_by_passage/get_relevant_passages for KB retrieval; "
     "generate_report to synthesise an answer.",
-    "Pick the mode (advanced default; profound for depth; contradiction for claim conflicts) "
+    "Pick the mode (advanced default; deep_research for depth; contradiction for claim conflicts; \"profound\" is a deprecated alias for deep_research) "
     "and screening (screen_method/screen_threshold) for generate_report.",
     "Always read the {success: true/false} envelope on every response before continuing.",
 ]

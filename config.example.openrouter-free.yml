@@ -1,0 +1,208 @@
+# Perspicacité — OpenRouter Free-Tier Preset
+# ============================================================
+# Zero-cost configuration using OpenRouter's free-tier models.
+# No paid credits required — only a free OpenRouter account.
+#
+# SETUP (one time):
+#   1. Register at https://openrouter.ai (free, no credit card)
+#   2. Create an API key at https://openrouter.ai/keys
+#   3. Add to your shell profile (~/.zshrc or ~/.bashrc):
+#        export OPENROUTER_API_KEY="sk-or-v1-..."
+#   4. Copy this file:
+#        cp config.example.openrouter-free.yml config.yml
+#   5. Start the server:
+#        source ~/.zshrc && uv run perspicacite -c config.yml serve
+#
+# HOW THE FREE CHAIN WORKS:
+#   When free_auto_mode is true, every LLM call without an explicit model
+#   rotates through free_tier_fallback_models in order. If the first model
+#   hits its per-minute/per-day rate limit, the next is tried automatically.
+#   The last entry ("openrouter/free") is OpenRouter's own meta-router that
+#   picks the best available free model as a final safety net.
+#
+# FREE MODEL LIMITS (as of 2026-05):
+#   Most :free models share a global 20 req/min rate limit per user.
+#   Daily limits vary by model but are generous for personal research use.
+#   See https://openrouter.ai/models for live quota info.
+# ============================================================
+
+version: "2.0.0"
+config_name: "openrouter-free"
+
+# =============================================================================
+# Server
+# =============================================================================
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+
+# =============================================================================
+# LLM — OpenRouter free-tier auto-rotation
+# =============================================================================
+
+llm:
+  default_provider: "openrouter"
+  # default_model is used only when free_auto_mode=false or when a caller
+  # explicitly requests a model. Keep it as a free model for consistency.
+  default_model: "deepseek/deepseek-v4-flash:free"
+
+  # When true: every complete() call without an explicit model rotates
+  # through free_tier_fallback_models in priority order.
+  # When false: default_model is tried first; free chain is only the fallback.
+  free_auto_mode: true
+
+  # Priority-ordered free-tier rotation pool.
+  # Criteria: context size → benchmark quality → availability track record.
+  free_tier_fallback_models:
+    - "deepseek/deepseek-v4-flash:free"           # 1st choice: DeepSeek V4 Flash, 1M ctx
+    - "qwen/qwen3-coder:free"                      # 2nd: Qwen3 480B, 1M ctx, strong reasoning
+    - "nvidia/nemotron-3-super-120b-a12b:free"     # 3rd: NVIDIA 120B, 1M ctx
+    - "openai/gpt-oss-120b:free"                   # 4th: OpenAI OSS 120B, 131K ctx
+    - "meta-llama/llama-3.3-70b-instruct:free"    # 5th: Meta 70B, 131K ctx, very reliable
+    - "openrouter/free"                            # Last resort: OpenRouter auto-selects
+
+  providers:
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      timeout: 120
+      max_retries: 3
+
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+    summarize_threshold: 20
+
+# =============================================================================
+# Knowledge Base
+# =============================================================================
+
+knowledge_base:
+  embedding_model: "all-MiniLM-L6-v2"   # local model, no API key needed
+  chunk_size: 1000
+  chunk_overlap: 200
+  chunking_method: "token"
+  default_top_k: 10
+  similarity_threshold: 0.7
+  use_two_pass: true
+  markdown_heading_aware: true
+  code_language_aware: true
+
+# =============================================================================
+# Database
+# =============================================================================
+
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "./chroma_db"
+
+# =============================================================================
+# RAG Modes
+# =============================================================================
+
+rag_modes:
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"  # local, no API needed
+
+  basic:
+    max_iterations: 1
+    use_hybrid: true
+
+  advanced:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+    enable_reflection: false
+    query_expansion: true
+
+  profound:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+    enable_planning: true
+    enable_reflection: true
+    max_total_seconds: 300.0
+
+  agentic:
+    max_iterations: 5
+    use_hybrid: true
+    early_exit_confidence: 0.85
+    map_reduce_max_papers: 8
+
+# =============================================================================
+# Literature Search
+# =============================================================================
+
+scilex:
+  enabled: true
+  apis:
+    semantic_scholar:
+      enabled: true
+      rate_limit: 100
+    openalex:
+      enabled: true
+      rate_limit: 100
+    pubmed:
+      enabled: true
+      rate_limit: 10
+    arxiv:
+      enabled: true
+      rate_limit: 100
+    hal:
+      enabled: true
+      rate_limit: 100
+
+search:
+  enabled_providers:
+    - scilex
+    - europepmc
+    - pubchem
+    - core
+
+# Google Scholar requires Playwright: uv pip install -e '[browser]' && playwright install chromium
+google_scholar:
+  enabled: false
+
+# =============================================================================
+# PDF Download (works without API keys — OA routes only)
+# =============================================================================
+
+pdf_download:
+  unpaywall_email: "your@email.com"   # replace with your email for polite pool
+  timeout: 30
+  max_retries: 3
+
+# =============================================================================
+# MCP Server
+# =============================================================================
+
+mcp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8000
+  transport: "streamable-http"
+
+# =============================================================================
+# Logging
+# =============================================================================
+
+logging:
+  level: "INFO"
+  format: "json"
+
+# =============================================================================
+# Local Documents (optional)
+# =============================================================================
+
+local_docs:
+  allowed_roots: []   # add paths to allow local-file ingest, e.g. ["/Users/you/papers"]
+
+# =============================================================================
+# Capsule
+# =============================================================================
+
+capsule:
+  enabled: true
+  auto_build_on_ingest: true
+  root: ./data/capsules
+  min_version: "0.1"

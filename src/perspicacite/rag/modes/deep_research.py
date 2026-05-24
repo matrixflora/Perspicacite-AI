@@ -1,6 +1,6 @@
-"""Profound RAG Mode - Exact implementation from release package v1.
+"""Deep Research RAG Mode — formerly ProfoundRAGMode.
 
-Profound RAG (ProfondeChain) adds:
+Exact implementation from release package v1 (ProfondeChain). Adds:
 - Multi-cycle research with planning
 - Dynamic plan creation and review
 - Web search integration
@@ -10,6 +10,7 @@ Profound RAG (ProfondeChain) adds:
 - WRRF multi-query fusion (vector-only retrieval, matching v1 profonde)
 """
 
+import asyncio
 import contextlib
 import json
 import math
@@ -34,6 +35,8 @@ from perspicacite.search.screening import (
     screen_papers_llm,
     screen_papers_rerank,
 )
+from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
+from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     ASSESS_DOCUMENT_QUALITY_PROMPT,
     GENERATE_CONTEXTUAL_QUERIES_PROMPT,
@@ -60,7 +63,7 @@ from perspicacite.rag.wrrf_v1 import doc_page_content, select_wrrf_merged_docume
 from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 
-logger = get_logger("perspicacite.rag.modes.profound")
+logger = get_logger("perspicacite.rag.modes.deep_research")
 
 
 @dataclass
@@ -88,11 +91,11 @@ class PlanStep:
     expected_outcome: str = ""
 
 
-class ProfoundRAGMode(BaseRAGMode):
+class DeepResearchRAGMode(BaseRAGMode):
     """
-    Profound RAG Mode - Exact port from release package core/profonde.py
+    Deep Research RAG Mode — formerly ProfoundRAGMode.
 
-    This is the original "Profound" mode from Perspicacité v1 with:
+    Exact port from release package core/profonde.py with:
     - Multi-cycle research (up to max_cycles)
     - Planning with step-by-step approach
     - Plan review and adjustment
@@ -110,7 +113,9 @@ class ProfoundRAGMode(BaseRAGMode):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        rag_settings = getattr(config.rag_modes, "profound", None)
+        # Prefer deep_research config; fall back to profound for backward compat
+        rag_settings = getattr(config.rag_modes, "deep_research", None) \
+                       or getattr(config.rag_modes, "profound", None)
 
         # Handle both dict and Pydantic model
         if rag_settings is None:
@@ -130,6 +135,10 @@ class ProfoundRAGMode(BaseRAGMode):
         # can't run away when the LLM is slow (the audit hit a >13min hang
         # on DeepSeek V4 Flash with the default settings).
         self.max_total_seconds = float(rag_settings.get("max_total_seconds", 360.0))
+        # Issue 2: independent cap on the final synthesis phase.
+        # Cycles are never starved — total wall-clock is at most
+        # max_total_seconds + synthesis_timeout_s + overhead.
+        self.synthesis_timeout_s = float(rag_settings.get("synthesis_timeout_s", 90.0))
         # Per-cycle LLM call cap — defends against the planning/reflection
         # loop fanning out indefinitely. Default 15 covers a typical cycle
         # (plan + 3-5 steps + reflection + finalize) with headroom.
@@ -442,7 +451,17 @@ class ProfoundRAGMode(BaseRAGMode):
 
         Ported from: core/profonde.py::ProfondeChain.process()
         """
-        logger.info("profound_rag_start", query=request.query, max_cycles=self.max_cycles)
+        # Per-request override: ChatRequest may set max_iterations.
+        _req_max = getattr(request, "max_iterations", None)
+        if _req_max is not None:
+            try:
+                max_cycles = max(1, min(int(_req_max), 5))
+            except (TypeError, ValueError):
+                max_cycles = self.max_cycles
+        else:
+            max_cycles = self.max_cycles
+
+        logger.info("profound_rag_start", query=request.query, max_cycles=max_cycles)
 
         # Reset state
         self.iterations = 0
@@ -469,7 +488,7 @@ class ProfoundRAGMode(BaseRAGMode):
         )
 
         # Main research loop
-        for cycle in range(self.max_cycles):
+        for cycle in range(max_cycles):
             # Cancellation check — respect MCP cancel_task requests
             from perspicacite.rag.cancellation import is_cancelled
             _tid = getattr(request, "task_id", None)
@@ -555,16 +574,38 @@ class ProfoundRAGMode(BaseRAGMode):
 
             if early_exit:
                 logger.info("profound_early_exit", cycle=self.iterations)
-                return await self._finalize_response(
-                    query=request.query,
-                    steps=all_steps,
-                    documents=all_documents,
-                    llm=llm,
-                    request=request,
-                    exited_early=True,
-                    completion_reason="question_answered",
-                    cancelled_tid=_cancelled_tid,
-                )
+                try:
+                    async with asyncio.timeout(self.synthesis_timeout_s):
+                        return await self._finalize_response(
+                            query=request.query,
+                            steps=all_steps,
+                            documents=all_documents,
+                            llm=llm,
+                            request=request,
+                            exited_early=True,
+                            completion_reason="question_answered",
+                            cancelled_tid=_cancelled_tid,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "profound_synthesis_timeout_execute",
+                        synthesis_timeout_s=self.synthesis_timeout_s,
+                    )
+                    sources = self._prepare_sources(all_documents)
+                    return RAGResponse(
+                        answer=(
+                            "Research synthesis exceeded the time budget. "
+                            "Partial research was completed but the final answer could not be generated."
+                        ),
+                        sources=sources,
+                        mode=RAGMode.PROFOUND,
+                        iterations=self.iterations,
+                        web_search_used=any(
+                            isinstance(d, dict) and d.get("source") == "web_search"
+                            for d in all_documents
+                        ),
+                        metadata={"completion_reason": "synthesis_timeout"},
+                    )
 
             if plan_limit_reason:
                 completion_reason = plan_limit_reason
@@ -614,7 +655,7 @@ class ProfoundRAGMode(BaseRAGMode):
             )
 
             should_continue = (
-                bool(summary.get("should_continue", False)) and cycle < self.max_cycles - 1
+                bool(summary.get("should_continue", False)) and cycle < max_cycles - 1
             )
             if not should_continue:
                 logger.info("profound_iteration_summary_stop", cycle=self.iterations)
@@ -629,16 +670,38 @@ class ProfoundRAGMode(BaseRAGMode):
             else:
                 self.consecutive_failures = 0
 
-        return await self._finalize_response(
-            query=request.query,
-            steps=all_steps,
-            documents=all_documents,
-            llm=llm,
-            request=request,
-            exited_early=False,
-            completion_reason=completion_reason,
-            cancelled_tid=_cancelled_tid,
-        )
+        try:
+            async with asyncio.timeout(self.synthesis_timeout_s):
+                return await self._finalize_response(
+                    query=request.query,
+                    steps=all_steps,
+                    documents=all_documents,
+                    llm=llm,
+                    request=request,
+                    exited_early=False,
+                    completion_reason=completion_reason,
+                    cancelled_tid=_cancelled_tid,
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "profound_synthesis_timeout_execute",
+                synthesis_timeout_s=self.synthesis_timeout_s,
+            )
+            sources = self._prepare_sources(all_documents)
+            return RAGResponse(
+                answer=(
+                    "Research synthesis exceeded the time budget. "
+                    "Partial research was completed but the final answer could not be generated."
+                ),
+                sources=sources,
+                mode=RAGMode.PROFOUND,
+                iterations=self.iterations,
+                web_search_used=any(
+                    isinstance(d, dict) and d.get("source") == "web_search"
+                    for d in all_documents
+                ),
+                metadata={"completion_reason": "synthesis_timeout"},
+            )
 
     async def execute_stream(
         self,
@@ -652,7 +715,22 @@ class ProfoundRAGMode(BaseRAGMode):
 
         _phase_sink = getattr(request, "telemetry_sink", None)
         emit_phase(_phase_sink, phase="rewrite", state="running")
-        yield StreamEvent.status("Profound RAG: Initializing deep research...")
+
+        # Per-request override: ChatRequest may set max_iterations to let
+        # the user pick a number of cycles from the composer. Bound to
+        # the same safe range used at __init__ (1-5).
+        _req_max = getattr(request, "max_iterations", None)
+        if _req_max is not None:
+            try:
+                max_cycles = max(1, min(int(_req_max), 5))
+            except (TypeError, ValueError):
+                max_cycles = self.max_cycles
+        else:
+            max_cycles = self.max_cycles
+
+        yield StreamEvent.status(
+            f"Deep Research: Initializing deep research ({max_cycles} cycle{'s' if max_cycles != 1 else ''})..."
+        )
 
         # Reset state
         self.iterations = 0
@@ -660,12 +738,56 @@ class ProfoundRAGMode(BaseRAGMode):
         self.research_history = []
         self._iteration_summaries = []
 
+        _diag: dict = {
+            "cycles_completed": 0,
+            "papers_retrieved": 0,
+        }
+
+        # Live token counters. Each LLM call this Profond run makes goes
+        # through the wrapper below, which accumulates into these dicts;
+        # we yield a `usage` status frame between research steps so the
+        # status bar's tokens-in / tokens-out counters tick up live
+        # instead of jumping from 0 to a big number only after the final
+        # synthesis streams.
+        _tok = {"in": 0, "out": 0}
+
+        class _CountingLLM:
+            __slots__ = ("_real", "_acc")
+
+            def __init__(self, real: Any, acc: dict[str, int]) -> None:
+                object.__setattr__(self, "_real", real)
+                object.__setattr__(self, "_acc", acc)
+
+            async def complete(self, *args: Any, **kwargs: Any) -> Any:
+                resp = await self._real.complete(*args, **kwargs)
+                try:
+                    self._acc["in"] += int(getattr(resp, "input_tokens", 0) or 0)
+                    self._acc["out"] += int(getattr(resp, "output_tokens", 0) or 0)
+                except Exception:
+                    pass
+                return resp
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._real, name)
+
+        llm = _CountingLLM(llm, _tok)
+
         all_steps: list[ResearchStep] = []
         all_documents: list[Any] = []
         completion_reason: str | None = None
         kb_name = chroma_collection_name_for_kb(request.kb_name)
         kb_names = getattr(request, "kb_names", None) or [request.kb_name]
         collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
+
+        import time as _time
+        _start_time = _time.monotonic()
+
+        # Per-call budget override: request.max_total_seconds takes
+        # precedence over the config-file default stored on self.
+        max_total_seconds = (
+            getattr(request, "max_total_seconds", None)
+            or self.max_total_seconds
+        )
 
         # Run the keyword optimizer UPFRONT so the rephrase event lands
         # immediately. Without this, the rephrase only fires when the
@@ -693,24 +815,46 @@ class ProfoundRAGMode(BaseRAGMode):
 
         emit_phase(_phase_sink, phase="rewrite", state="done")
         emit_phase(_phase_sink, phase="retrieve", state="running")
-        for cycle in range(self.max_cycles):
+        for cycle in range(max_cycles):
             from perspicacite.rag.cancellation import is_cancelled
             _tid = getattr(request, "task_id", None)
             if _tid and is_cancelled(_tid):
                 logger.info("profound_cancelled", task_id=_tid, cycle=cycle)
+                yield StreamEvent.diagnostic(**_diag, cancellation_reason="cancelled")
+                yield StreamEvent.metadata(
+                    iteration_count=self.iterations,
+                    completion_reason="cancelled",
+                )
                 yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
                 return
 
+            # F-17: hard wall-clock budget. Break before starting a new
+            # cycle if we've already burned the budget — the answer so
+            # far is still finalized below.
+            elapsed = _time.monotonic() - _start_time
+            if elapsed > max_total_seconds:
+                logger.warning(
+                    "profound_time_budget_exceeded",
+                    cycle=cycle,
+                    elapsed_s=round(elapsed, 1),
+                    budget_s=max_total_seconds,
+                )
+                completion_reason = "time_budget_exceeded"
+                break
+
             self.iterations = cycle + 1
             yield StreamEvent.status(
-                f"Profound RAG: Research cycle {self.iterations}/{self.max_cycles}..."
+                f"Deep Research: Research cycle {self.iterations}/{max_cycles}..."
             )
 
             plan = await self._create_plan(query=request.query, llm=llm)
-            yield StreamEvent.status(f"Profound RAG: Executing {len(plan)} research steps...")
+            yield StreamEvent.status_kind(
+                "tokens", kind="usage", tokens_in=_tok["in"], tokens_out=_tok["out"],
+            )
+            yield StreamEvent.status(f"Deep Research: Executing {len(plan)} research steps...")
             if self.use_websearch and "web_search" in tools.list_tools():
                 yield StreamEvent.status(
-                    "Profound RAG: Web search is available — will consult live "
+                    "Deep Research: Web search is available — will consult live "
                     "databases when KB coverage is insufficient."
                 )
             _c_plan_s = get_collector()
@@ -752,11 +896,18 @@ class ProfoundRAGMode(BaseRAGMode):
                         _provs = ", ".join(
                             p.replace("_", " ").title() for p in _ev.get("providers", [])
                         )
+                        _sq = _ev.get("searched_query") or ""
+                        _msg = (
+                            f"Cycle {self.iterations}: querying databases — {_provs} (keywords: '{_sq}')"
+                            if _sq
+                            else f"Cycle {self.iterations}: querying databases — {_provs}…"
+                        )
                         yield StreamEvent.status_kind(
-                            f"Cycle {self.iterations}: querying databases — {_provs}…",
+                            _msg,
                             kind="provider_progress",
                             phase="start",
                             providers=_ev.get("providers", []),
+                            searched_query=_sq,
                         )
                     elif _k == "provider_progress" and _ev.get("phase") == "done":
                         _bp = _ev.get("by_provider", {}) or {}
@@ -782,7 +933,7 @@ class ProfoundRAGMode(BaseRAGMode):
             ]
             if _web_docs:
                 yield StreamEvent.status(
-                    f"Profound RAG: Cycle {self.iterations} consulted the web "
+                    f"Deep Research: Cycle {self.iterations} consulted the web "
                     f"({len(_web_docs)} document{'s' if len(_web_docs) != 1 else ''} from live search)."
                 )
 
@@ -824,28 +975,65 @@ class ProfoundRAGMode(BaseRAGMode):
             all_steps.extend(cycle_steps)
             all_documents.extend(cycle_documents)
 
+            _diag["cycles_completed"] = self.iterations
+            _diag["papers_retrieved"] = max(
+                _diag["papers_retrieved"], len(cycle_documents)
+            )
+
+            # Surface cumulative LLM token usage for this cycle so the
+            # status bar updates live instead of waiting for the final
+            # synthesis to stream.
+            yield StreamEvent.status_kind(
+                "tokens", kind="usage", tokens_in=_tok["in"], tokens_out=_tok["out"],
+            )
+
             if early_exit:
+                _diag["cycles_completed"] = self.iterations
+                yield StreamEvent.diagnostic(**_diag, cancellation_reason="early_exit_confidence")
                 emit_phase(_phase_sink, phase="retrieve", state="done")
                 emit_phase(_phase_sink, phase="reason", state="done")
                 emit_phase(_phase_sink, phase="synthesize", state="running")
-                yield StreamEvent.status("Profound RAG: Early exit — synthesizing final answer...")
-                async for event in self._stream_final_response(
-                    query=request.query,
-                    steps=all_steps,
-                    documents=all_documents,
-                    llm=llm,
-                    request=request,
-                    exited_early=True,
-                    completion_reason="question_answered",
-                ):
-                    yield event
+                yield StreamEvent.status("Deep Research: Early exit — synthesizing final answer...")
+                try:
+                    async with asyncio.timeout(self.synthesis_timeout_s):
+                        async for event in self._stream_final_response(
+                            query=request.query,
+                            steps=all_steps,
+                            documents=all_documents,
+                            llm=llm,
+                            request=request,
+                            exited_early=True,
+                            completion_reason="question_answered",
+                        ):
+                            yield event
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "profound_synthesis_timeout_early_exit",
+                        synthesis_timeout_s=self.synthesis_timeout_s,
+                    )
+                    completion_reason = "synthesis_timeout"
+                    yield StreamEvent.status(
+                        "Deep research: synthesis time budget reached — returning partial answer."
+                    )
+                    _fallback = self._build_fallback_report(
+                        query=request.query,
+                        steps=all_steps,
+                        documents=all_documents,
+                        reason="synthesis_timeout",
+                    )
+                    if _fallback.strip():
+                        yield StreamEvent.content(_fallback)
+                yield StreamEvent.metadata(
+                    iteration_count=self.iterations,
+                    completion_reason=completion_reason or "complete",
+                )
                 emit_phase(_phase_sink, phase="synthesize", state="done")
                 return
 
             if plan_limit_reason:
                 completion_reason = plan_limit_reason
                 yield StreamEvent.status(
-                    f"Profound RAG: Plan review ended research ({plan_limit_reason})"
+                    f"Deep Research: Plan review ended research ({plan_limit_reason})"
                 )
                 if plan_limit_reason in (
                     "unanswerable",
@@ -894,17 +1082,17 @@ class ProfoundRAGMode(BaseRAGMode):
             )
 
             should_continue = (
-                bool(summary.get("should_continue", False)) and cycle < self.max_cycles - 1
+                bool(summary.get("should_continue", False)) and cycle < max_cycles - 1
             )
             if not should_continue:
-                yield StreamEvent.status("Profound RAG: Research complete based on iteration summary")
+                yield StreamEvent.status("Deep Research: Research complete based on iteration summary")
                 break
 
             cycle_successes = sum(1 for s in cycle_steps if s.success)
             if cycle_successes == 0:
                 self.consecutive_failures += 1
                 if self.consecutive_failures >= self.max_consecutive_failures:
-                    yield StreamEvent.status("Profound RAG: Max consecutive failures reached")
+                    yield StreamEvent.status("Deep Research: Max consecutive failures reached")
                     break
             else:
                 self.consecutive_failures = 0
@@ -912,18 +1100,90 @@ class ProfoundRAGMode(BaseRAGMode):
         emit_phase(_phase_sink, phase="retrieve", state="done")
         emit_phase(_phase_sink, phase="reason", state="done")
         emit_phase(_phase_sink, phase="synthesize", state="running")
-        yield StreamEvent.status("Profound RAG: Synthesizing final answer...")
-        async for event in self._stream_final_response(
-            query=request.query,
-            steps=all_steps,
-            documents=all_documents,
-            llm=llm,
-            request=request,
-            exited_early=False,
-            completion_reason=completion_reason,
-        ):
-            yield event
+        yield StreamEvent.status_kind(
+            "tokens", kind="usage", tokens_in=_tok["in"], tokens_out=_tok["out"],
+        )
+        yield StreamEvent.status("Deep Research: Synthesizing final answer...")
+        try:
+            async with asyncio.timeout(self.synthesis_timeout_s):
+                async for event in self._stream_final_response(
+                    query=request.query,
+                    steps=all_steps,
+                    documents=all_documents,
+                    llm=llm,
+                    request=request,
+                    exited_early=False,
+                    completion_reason=completion_reason,
+                ):
+                    yield event
+        except asyncio.TimeoutError:
+            logger.warning(
+                "profound_synthesis_timeout_normal",
+                synthesis_timeout_s=self.synthesis_timeout_s,
+            )
+            yield StreamEvent.status(
+                "Deep research: synthesis time budget reached — returning partial answer."
+            )
+            _fallback = self._build_fallback_report(
+                query=request.query,
+                steps=all_steps,
+                documents=all_documents,
+                reason="synthesis_timeout",
+            )
+            if _fallback.strip():
+                yield StreamEvent.content(_fallback)
+            completion_reason = "synthesis_timeout"
+        yield StreamEvent.diagnostic(**_diag)
+        yield StreamEvent.metadata(
+            iteration_count=self.iterations,
+            completion_reason=completion_reason or "complete",
+        )
         emit_phase(_phase_sink, phase="synthesize", state="done")
+
+    def _build_fallback_report(
+        self,
+        query: str,
+        steps: list,
+        documents: list,
+        reason: str = "synthesis_timeout",
+    ) -> str:
+        """Build a minimal report from research step summaries when LLM synthesis times out."""
+        lines: list[str] = [
+            f"**Research Summary** *(synthesis {reason} — partial results)*\n",
+            f"**Query:** {query}\n",
+        ]
+        # Step analyses
+        if steps:
+            lines.append(f"**Research steps completed ({self.iterations} cycle(s)):**\n")
+            for i, step in enumerate(steps, 1):
+                analysis = getattr(step, "analysis", "") or ""
+                if analysis.strip():
+                    lines.append(f"{i}. {analysis[:600]}{'…' if len(analysis) > 600 else ''}\n")
+        # Key documents found
+        docs_shown = 0
+        if documents:
+            lines.append("\n**Sources retrieved:**\n")
+            for d in documents[:5]:
+                if isinstance(d, dict):
+                    title = (d.get("title") or "Untitled").strip()
+                    year = d.get("year") or ""
+                    authors = d.get("authors") or []
+                    author_str = ", ".join(str(a) for a in authors[:2]) if authors else ""
+                    lines.append(
+                        f"- {title}"
+                        + (f" ({author_str}, {year})" if (author_str or year) else "")
+                        + "\n"
+                    )
+                    docs_shown += 1
+                elif hasattr(d, "chunk") and hasattr(d.chunk, "metadata"):
+                    meta = d.chunk.metadata
+                    title = (getattr(meta, "title", None) or "Untitled").strip()
+                    year = getattr(meta, "year", None) or ""
+                    lines.append(f"- {title}" + (f" ({year})" if year else "") + "\n")
+                    docs_shown += 1
+        if docs_shown == 0:
+            lines.append("*(No documents retrieved)*\n")
+        return "".join(lines)
 
     async def _create_plan(
         self,
@@ -2084,21 +2344,21 @@ Follow the system instructions for this situation."""
                         model=request.model,
                         provider=request.provider,
                         max_tokens=2000,
-                    )
+                    ) or ""
                 return await llm.complete(
                     messages=messages,
                     model=request.model,
                     provider=request.provider,
                     max_tokens=2000,
                     temperature=0.3,
-                )
+                ) or ""
             if is_o_series:
                 return await llm.complete(
                     messages=messages,
                     model=request.model,
                     provider=request.provider,
                     max_tokens=2000,
-                )
+                ) or ""
             if self.use_relevancy_optimization:
                 qc = assess_query_complexity(query)
                 return await llm.complete(
@@ -2108,7 +2368,7 @@ Follow the system instructions for this situation."""
                     max_tokens=2000,
                     temperature=(0.3 if qc < 0.7 else 0.5),
                     stage="profound.draft",
-                )
+                ) or ""
             return await llm.complete(
                 messages=messages,
                 model=request.model,
@@ -2116,7 +2376,7 @@ Follow the system instructions for this situation."""
                 max_tokens=2000,
                 temperature=0.3,
                 stage="profound.draft",
-            )
+            ) or ""
         except Exception as e:
             logger.error("profound_final_answer_error", error=str(e))
             return f"Error generating response: {e}"
@@ -2323,7 +2583,7 @@ Follow the system instructions for this situation."""
         yield StreamEvent.done(
             conversation_id="",
             tokens_used=0,
-            mode="profound",
+            mode="deep_research",
             iterations=self.iterations,
         )
 
@@ -2462,6 +2722,7 @@ Follow the system instructions for this situation."""
                         doi=doc.get("doi"),
                         relevance_score=doc.get("paper_score", 0.5),
                         kb_name=doc.get("kb_name"),
+                        metadata=doc.get("paper_metadata"),
                     )
                 )
                 continue
@@ -2499,6 +2760,7 @@ Follow the system instructions for this situation."""
                         url=doc.get("url") or None,
                         source=doc.get("source_provider") or None,
                         relevance_score=0.5,
+                        metadata=None,
                     )
                 )
                 continue
@@ -2510,6 +2772,8 @@ Follow the system instructions for this situation."""
                 authors = getattr(meta, "authors", [])
                 year = getattr(meta, "year", None)
                 doi = getattr(meta, "doi", None)
+                # Decode the ASB ``paper_metadata_json`` blob if present.
+                _pm_dict = decode_paper_metadata_json(meta)
             else:
                 continue
 
@@ -2536,6 +2800,7 @@ Follow the system instructions for this situation."""
                     doi=doi,
                     relevance_score=getattr(doc, "score", 0.0),
                     kb_name=getattr(doc, "kb_name", None),
+                    metadata=_pm_dict,
                 )
             )
 
@@ -2544,3 +2809,7 @@ Follow the system instructions for this situation."""
     def _format_references(self, sources: list[SourceReference]) -> str:
         """Format sources as a references section using shared utility."""
         return format_references(sources)
+
+
+# Backward-compatible alias — code that imports ProfoundRAGMode still works.
+ProfoundRAGMode = DeepResearchRAGMode

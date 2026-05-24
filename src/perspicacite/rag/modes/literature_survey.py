@@ -147,6 +147,18 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         self.max_themes = 8
         self.min_themes = 3
 
+        # Issue 3: keep up to seed_known_max known papers as anchor seeds when
+        # the broad search returns ONLY already-indexed papers. Prevents the
+        # empty-results → KB-vector-fallback → poor diversity loop.
+        _ls_settings = getattr(config.rag_modes, "literature_survey", None) or {}
+        if hasattr(_ls_settings, "model_dump"):
+            _ls_settings = _ls_settings.model_dump()
+        elif hasattr(_ls_settings, "dict"):
+            _ls_settings = _ls_settings.dict()
+        elif not isinstance(_ls_settings, dict):
+            _ls_settings = {}
+        self.seed_known_max: int = int(_ls_settings.get("seed_known_max", 5))
+
         # SciLEx for multi-API search
         self.scilex_adapter = SciLExAdapter()
 
@@ -196,14 +208,29 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         papers = await self._broad_search(request.query, request.databases, app_state=getattr(request, "app_state", None))
 
         # Pre-filter: remove papers already in any provided KB
+        _papers_searched = len(papers)
         papers = self._filter_known_papers(papers, known_paper_ids)
+        _filtered_as_known = _papers_searched - len(papers)
 
         if not papers:
+            _cancellation_reason = (
+                "all_known_no_fallback" if _filtered_as_known > 0 else "no_papers"
+            )
             return RAGResponse(
                 answer="No papers found for this topic. Try broadening your search terms.",
                 sources=[],
                 mode=RAGMode.LITERATURE_SURVEY,
-                metadata={"session_id": session_id, "phase": "search_failed"}
+                metadata={
+                    "session_id": session_id,
+                    "phase": "search_failed",
+                    "diagnostic": {
+                        "papers_searched": _papers_searched,
+                        "filtered_as_known": _filtered_as_known,
+                        "kb_fallback_tried": False,
+                        "kb_chunks_found": 0,
+                        "cancellation_reason": _cancellation_reason,
+                    },
+                },
             )
 
         # Convert to candidates
@@ -256,7 +283,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         if _c is not None:
             _c.add_trace("recommend")
 
-        # Return interim response - user needs to select papers
+        # Build interim listing summary (for API compatibility / metadata).
         summary = self._generate_interim_summary(session, known_context=kb_context_block)
 
         # Store references to extra KBs (indices 1..n) for future re-ingestion.
@@ -268,8 +295,21 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             recommended_papers, all_kb_names, request.query
         )
 
+        # Generate the actual synthesized survey report so execute() returns
+        # a scoreable answer rather than a bare paper listing. The interim
+        # summary is preserved in metadata for UI compatibility.
+        survey_papers = recommended_papers[:20] if recommended_papers else session.papers[:20]
+        try:
+            answer = await self._generate_survey_report(session, survey_papers, llm)
+        except Exception as _survey_exc:
+            logger.warning(
+                "literature_survey_report_failed_fallback",
+                error=str(_survey_exc),
+            )
+            answer = summary  # graceful fallback to interim summary
+
         return RAGResponse(
-            answer=summary,
+            answer=answer,
             sources=self._convert_to_sources(session.papers),
             mode=RAGMode.LITERATURE_SURVEY,
             metadata={
@@ -278,6 +318,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 "papers_count": len(session.papers),
                 "themes_count": len(session.themes),
                 "recommended_count": sum(1 for p in session.papers if p.recommended),
+                "interim_summary": summary,
             }
         )
 
@@ -304,6 +345,15 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         kb_context_block, known_paper_ids = await self._prepare_kb_context(
             request, vector_store, embedding_provider
         )
+
+        # Diagnostic counters — populated as the pipeline progresses and emitted
+        # in every early-return path so callers can diagnose empty results.
+        _diag: dict = {
+            "papers_searched": 0,
+            "filtered_as_known": 0,
+            "kb_fallback_tried": False,
+            "kb_chunks_found": 0,
+        }
 
         _phase_sink = getattr(request, "telemetry_sink", None)
         yield StreamEvent.status("Literature Survey: Initializing...")
@@ -333,11 +383,18 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     _provs = ", ".join(
                         p.replace("_", " ").title() for p in _ev.get("providers", [])
                     )
+                    _sq = _ev.get("searched_query") or ""
+                    _msg = (
+                        f"Querying databases: {_provs} — keywords: '{_sq}'"
+                        if _sq
+                        else f"Querying databases: {_provs}…"
+                    )
                     yield StreamEvent.status_kind(
-                        f"Querying databases: {_provs}…",
+                        _msg,
                         kind="provider_progress",
                         phase="start",
                         providers=_ev.get("providers", []),
+                        searched_query=_sq,
                     )
                 elif _k == "provider_progress" and _ev.get("phase") == "done":
                     _bp = _ev.get("by_provider", {}) or {}
@@ -354,23 +411,118 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     )
 
         # Pre-filter: remove papers already in any provided KB
+        _diag["papers_searched"] = len(papers)
         papers = self._filter_known_papers(papers, known_paper_ids)
+        _diag["filtered_as_known"] = _diag["papers_searched"] - len(papers)
 
         if not papers:
+            # If a KB was explicitly provided and the broad search is empty (because
+            # all results were already in the KB), fall back to surveying KB papers
+            # directly.  This is the "survey what I have" use case.
+            kb_names_used: list[str] = list(getattr(request, "kb_names", None) or [])
+            if kb_names_used:
+                yield StreamEvent.status(
+                    "Literature Survey: Using KB papers as survey corpus (all new results already known)"
+                )
+                _diag["kb_fallback_tried"] = True
+                try:
+                    retriever = self._build_kb_retriever(request, vector_store, embedding_provider)
+                    kb_results = await retriever.search(request.query, top_k=30)
+                    # Build PaperCandidate objects from KB chunks (chunk_text as abstract)
+                    seen_pids: set[str] = set()
+                    kb_candidates: list[PaperCandidate] = []
+                    for r in kb_results:
+                        pid = r.get("paper_id") or ""
+                        if pid and pid in seen_pids:
+                            continue
+                        if pid:
+                            seen_pids.add(pid)
+                        meta = r.get("metadata")
+                        chunk_text = r.get("chunk_text") or ""
+                        if not chunk_text.strip():
+                            continue
+                        title = (getattr(meta, "title", None) or "Unknown title")
+                        year = getattr(meta, "year", None)
+                        doi = getattr(meta, "doi", None)
+                        authors_raw = getattr(meta, "authors", None) or []
+                        authors = (
+                            [a if isinstance(a, str) else getattr(a, "name", str(a)) for a in authors_raw]
+                            if authors_raw else []
+                        )
+                        kb_candidates.append(PaperCandidate(
+                            id=pid or str(uuid.uuid4()),
+                            title=title,
+                            authors=authors,
+                            year=year,
+                            abstract=chunk_text[:800],  # first 800 chars as abstract
+                            doi=doi,
+                            citation_count=0,
+                        ))
+                    _diag["kb_chunks_found"] = len(kb_candidates)
+                    if kb_candidates:
+                        session.papers = kb_candidates
+                        emit_phase(_phase_sink, phase="collect", state="done")
+                        yield StreamEvent.status(
+                            f"Literature Survey: Surveying {len(session.papers)} KB papers"
+                        )
+                    else:
+                        emit_phase(_phase_sink, phase="collect", state="done")
+                        yield StreamEvent.diagnostic(
+                            **_diag,
+                            cancellation_reason="kb_fallback_empty",
+                        )
+                        yield StreamEvent.status("Literature Survey: No papers found")
+                        yield StreamEvent.content(
+                            "No papers found for this topic. Try broadening your search terms or adding papers to your KB."
+                        )
+                        yield StreamEvent.done(
+                            conversation_id=session_id,
+                            tokens_used=0,
+                            mode="literature_survey",
+                            iterations=1,
+                        )
+                        return
+                except Exception as _kb_exc:
+                    logger.warning("survey_kb_fallback_failed", error=str(_kb_exc))
+                    emit_phase(_phase_sink, phase="collect", state="done")
+                    yield StreamEvent.diagnostic(
+                        **_diag,
+                        cancellation_reason="kb_fallback_failed",
+                        kb_fallback_error=str(_kb_exc),
+                    )
+                    yield StreamEvent.status("Literature Survey: No papers found")
+                    yield StreamEvent.content(
+                        "No papers found for this topic. Try broadening your search terms."
+                    )
+                    yield StreamEvent.done(
+                        conversation_id=session_id,
+                        tokens_used=0,
+                        mode="literature_survey",
+                        iterations=1,
+                    )
+                    return
+            else:
+                emit_phase(_phase_sink, phase="collect", state="done")
+                _cancellation_reason = (
+                    "all_known_no_fallback" if _diag["filtered_as_known"] > 0 else "no_papers"
+                )
+                yield StreamEvent.diagnostic(
+                    **_diag,
+                    cancellation_reason=_cancellation_reason,
+                )
+                yield StreamEvent.status("Literature Survey: No papers found")
+                yield StreamEvent.content("No papers found for this topic. Try broadening your search terms.")
+                yield StreamEvent.done(
+                    conversation_id=session_id,
+                    tokens_used=0,
+                    mode="literature_survey",
+                    iterations=1,
+                )
+                return
+        else:
+            session.papers = self._convert_to_candidates(papers)
             emit_phase(_phase_sink, phase="collect", state="done")
-            yield StreamEvent.status("Literature Survey: No papers found")
-            yield StreamEvent.content("No papers found for this topic. Try broadening your search terms.")
-            yield StreamEvent.done(
-                conversation_id=session_id,
-                tokens_used=0,
-                mode="literature_survey",
-                iterations=1,
-            )
-            return
-
-        session.papers = self._convert_to_candidates(papers)
-        emit_phase(_phase_sink, phase="collect", state="done")
-        yield StreamEvent.status(f"Literature Survey: Found {len(session.papers)} papers")
+            yield StreamEvent.status(f"Literature Survey: Found {len(session.papers)} papers")
 
         # Provenance: record broad search
         _c = get_collector()
@@ -475,6 +627,12 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 )
             _c.add_trace("cluster", detail={"themes": len(session.themes)})
 
+        # Emit per-paper source events so the frontend renders the
+        # source-pill grid like other modes (Basic, Advanced, Profond).
+        # We cap at 20 to match what's actually shown in the UI.
+        for _src in self._convert_to_sources(session.papers[:20]):
+            yield StreamEvent.source(_src)
+
         # Phase 3: Recommendations (deepen)
         emit_phase(_phase_sink, phase="deepen", state="running")
         yield StreamEvent.status("Literature Survey: Generating recommendations...")
@@ -485,9 +643,26 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         if _c is not None:
             _c.add_trace("recommend")
 
-        # Emit summary
+        # Build the interim listing (used as fallback / UI metadata)
         summary = self._generate_interim_summary(session, known_context=kb_context_block)
-        yield StreamEvent.content(summary)
+
+        # Store references to extra KBs before generating the report.
+        all_kb_names = list(request.kb_names or [request.kb_name])
+        recommended_papers = [p for p in session.papers if p.recommended]
+        await self._store_references_to_all_kbs(
+            recommended_papers, all_kb_names, request.query
+        )
+
+        # Generate a synthesized survey report so the stream yields a scoreable
+        # answer rather than a bare paper listing.
+        survey_papers = recommended_papers[:20] if recommended_papers else session.papers[:20]
+        try:
+            survey_answer = await self._generate_survey_report(session, survey_papers, llm)
+        except Exception as _exc:
+            logger.warning("literature_survey_stream_report_failed", error=str(_exc))
+            survey_answer = summary  # graceful fallback
+
+        yield StreamEvent.content(survey_answer)
 
         # Emit metadata for UI
         import json
@@ -499,16 +674,8 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 "papers_count": len(session.papers),
                 "themes_count": len(session.themes),
                 "recommended_count": sum(1 for p in session.papers if p.recommended),
+                "interim_summary": summary,
             })
-        )
-
-        # Store references to extra KBs.
-        # Falls back to [request.kb_name] when kb_names is absent; in that case
-        # len(all_kb_names) == 1 so _store_references_to_all_kbs is a no-op.
-        all_kb_names = list(request.kb_names or [request.kb_name])
-        recommended_papers = [p for p in session.papers if p.recommended]
-        await self._store_references_to_all_kbs(
-            recommended_papers, all_kb_names, request.query
         )
 
         yield StreamEvent.done(
@@ -711,21 +878,43 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
     ) -> list[Any]:
         """Remove papers already present in any provided KB.
 
+        When ALL results are already in the KB (a common case for well-indexed
+        topics), keep up to ``self.seed_known_max`` of them as anchor seeds to
+        preserve survey diversity.  Falls back to pure KB vector search only
+        when the broad search returns zero results.
+
         A paper is excluded when its ``id`` or ``doi`` appears in
         ``known_paper_ids``.  Papers with no identifiers are kept.
         """
         if not known_paper_ids or not papers:
             return papers
+
         before_count = len(papers)
-        filtered = [
+        new_papers = [
             p for p in papers
             if (getattr(p, "id", None) not in known_paper_ids)
             and (not getattr(p, "doi", None) or getattr(p, "doi", None) not in known_paper_ids)
         ]
-        filtered_count = before_count - len(filtered)
+        filtered_count = before_count - len(new_papers)
         if filtered_count:
             logger.info("survey_known_papers_filtered", count=filtered_count)
-        return filtered
+
+        if new_papers:
+            return new_papers
+
+        # All results are known — keep top-N as anchor seeds for survey diversity.
+        # Only fall back to pure KB vector search when the broad search itself
+        # returns zero results (empty papers list), not when all are known.
+        seeds = [p for p in papers if (
+            getattr(p, "id", None) in known_paper_ids
+            or (getattr(p, "doi", None) and getattr(p, "doi", None) in known_paper_ids)
+        )][:self.seed_known_max]
+        logger.info(
+            "survey_using_known_seeds",
+            seed_count=len(seeds),
+            seed_known_max=self.seed_known_max,
+        )
+        return seeds
 
     async def _store_references_to_all_kbs(
         self,
@@ -1277,10 +1466,13 @@ Respond with theme names separated by commas, or "None" if no match."""
         """Generate AI recommendations for deep analysis."""
         logger.info("generating_recommendations", total_papers=len(papers))
 
-        # Ensure all papers have at least a minimum relevance score
+        # Ensure all papers have at least a minimum relevance score.
+        # Using 1.0 (below the relevant_threshold of 3.0) so unscored papers
+        # are excluded rather than promoted — only papers the LLM explicitly
+        # scored >= 3.0 are eligible for recommendations.
         for p in papers:
             if p.relevance_score < 1.0:  # If no score assigned, give default
-                p.relevance_score = 2.0  # Default to "somewhat relevant"
+                p.relevance_score = 1.0  # Default below relevant threshold
 
         # Filter to on-topic papers. Bumped from 1.5 → 3.0 to match the
         # stricter clustering pipeline above: only papers the LLM scored as
@@ -1494,30 +1686,49 @@ Respond with theme names separated by commas, or "None" if no match."""
         # intermediate paper-metadata processing, not final user-facing synthesis.
         # If/when a final-synthesis LLM call is added, wire via
         # perspicacite.rag.multimodal.wrap_messages_for_chunks here.
-        # TODO: Full implementation with PDF export
-
-        lines = [
-            f"# Literature Survey Report: {session.query}",
-            f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-            "\n---\n",
-            "## Executive Summary",
-            f"\nThis survey analyzed {len(selected_papers)} papers across {len(session.themes)} research themes.",
-            "\n## Research Themes",
-        ]
-
-        for theme in session.themes:
-            lines.append(f"\n### {theme.name}")
-            lines.append(theme.description)
-
-        lines.extend([
-            "\n## Annotated Bibliography",
-            "",
-        ])
-
+        # Build a concise reference block for the LLM to synthesize from.
+        papers_text_parts = []
         for i, p in enumerate(selected_papers[:20], 1):
-            lines.append(f"{i}. **{p.title}** ({p.year})")
-            lines.append(f"   - {', '.join(p.authors[:3])}")
-            lines.append(f"   - {p.abstract[:300]}...")
-            lines.append("")
+            abstract = (p.abstract or "")[:600]
+            authors = ", ".join(p.authors[:3]) if p.authors else "Unknown"
+            papers_text_parts.append(
+                f"[{i}] {p.title} ({p.year}) — {authors}\n{abstract}"
+            )
+        papers_text = "\n\n".join(papers_text_parts)
 
-        return "\n".join(lines)
+        themes_text = "\n".join(
+            f"- {t.name}: {t.description}" for t in session.themes
+        ) if session.themes else "(no themes identified)"
+
+        prompt = (
+            f'Write a structured literature survey on: "{session.query}"\n\n'
+            f"Research themes identified:\n{themes_text}\n\n"
+            f"Key papers (cite as [N] — use only information present in the abstracts below):\n"
+            f"{papers_text}\n\n"
+            "Write a 400-600 word synthesis covering:\n"
+            "1. State of the field\n"
+            "2. Key themes and methodological patterns across the papers\n"
+            "3. Notable contributions and relationships between works\n"
+            "4. Open challenges and future directions\n\n"
+            "Cite papers by number [N]. Do not invent facts or fabricate citations."
+        )
+
+        try:
+            return await llm.complete(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1500,
+                stage="survey.synthesis",
+            )
+        except Exception as _exc:  # noqa: BLE001
+            logger.warning("literature_survey_synthesis_llm_failed", error=str(_exc))
+            # Fall back to annotated template
+            lines = [
+                f"# Literature Survey: {session.query}",
+                f"\n## Themes\n{themes_text}",
+                "\n## Annotated Bibliography",
+            ]
+            for i, p in enumerate(selected_papers[:20], 1):
+                lines.append(f"\n{i}. **{p.title}** ({p.year})")
+                lines.append(f"   {(p.abstract or '')[:300]}...")
+            return "\n".join(lines)

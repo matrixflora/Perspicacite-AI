@@ -128,6 +128,8 @@ cd frontend && npm install && npm run dev
 > vars take precedence over `.env`. For offline / mocked-LLM development,
 > bypass the preflight with `PERSPICACITE_ALLOW_MISSING_LLM_KEYS=1`.
 
+The MCP server is also accessible at `http://localhost:8000/mcp` (streamable HTTP). MCP clients connect there to call tools like `search_knowledge_base`, `generate_report`, and `ingest_asb_run`. See [docs/MCP.md](docs/MCP.md) for the envelope contract and per-tool latency expectations.
+
 ### First knowledge base
 
 ```bash

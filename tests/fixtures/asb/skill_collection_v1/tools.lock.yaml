@@ -1,0 +1,4 @@
+tools:
+  - slug: mzmine
+    iri: https://w3id.org/holobiomicslab/asb-tool/mzmine@sha256:abc123
+    ref: tools/mzmine.yaml

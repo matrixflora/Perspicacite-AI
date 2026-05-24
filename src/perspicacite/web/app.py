@@ -49,6 +49,9 @@ from perspicacite.web.routers import (
     kb as kb_router,
 )
 from perspicacite.web.routers import (
+    llm_proxy as llm_proxy_router,
+)
+from perspicacite.web.routers import (
     pdf_dropzone as pdf_dropzone_router,
 )
 from perspicacite.web.routers import (
@@ -107,6 +110,7 @@ app.include_router(health_router.router)
 app.include_router(conversations_router.router)
 app.include_router(chat_router.router)
 app.include_router(kb_router.router)
+app.include_router(llm_proxy_router.router)
 app.include_router(survey_router.router)
 app.include_router(jobs_router.router)
 app.include_router(zotero_router.router)

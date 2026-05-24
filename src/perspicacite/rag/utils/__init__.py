@@ -226,7 +226,19 @@ COPYRIGHT & ATTRIBUTION:
 - If you need to quote, keep quotations short (≤ 15 words), wrap them in quotation marks, and immediately cite the source.
 - Do NOT reproduce abstracts, full paragraphs, or extended passages from any source. Re-express the ideas in your own words.
 - Tables, figure captions, and large blocks of data should be summarized in your own words, not transcribed.
-- Always cite the source paper(s) you draw from (e.g., [Author, Year]).
+
+CITATIONS — MANDATORY FORMAT:
+- Every sourced claim MUST be cited inline using a markdown link with a rich visible label AND a `title` attribute holding the full citation.
+- Visible link text: `[<N>, <Surname> et al., <Journal>, <Year>]` — where <N> is the 1-based paper number from the Documents block (look for the `[Paper N]` header), <Surname> is the FIRST AUTHOR's last name (taken from the metadata after `—`), <Journal> is the journal name (after `|`), and <Year> is the year (in parentheses). Substitute REAL VALUES — never write the placeholder words `<N>`, `Surname`, `Journal`, `Year`, or `FirstAuthor` literally.
+- When there is only one author, drop "et al." and use the surname alone.
+- If the journal is unknown, omit that field and keep the rest.
+- The link `title` attribute MUST hold the full citation: `<All authors>. <Year>. <Title>. <Journal>.`
+- The link URL is the paper's DOI (`https://doi.org/<doi>`) when present; otherwise leave it as `#`.
+
+Example (note real surname/journal/year substituted in):
+`[2, Tautenhahn et al., BMC Bioinformatics, 2008](https://doi.org/10.1186/1471-2105-9-504 "Ralf Tautenhahn, Christoph Böttcher, Steffen Neumann. 2008. Highly sensitive feature detection for high resolution LC/MS. BMC Bioinformatics.")`
+
+NEVER emit bare `[Paper N]` markers, `(Author, Year)` plain text without a link, or `[N]` numeric-only citations.
 
 FORMAT REQUIREMENTS:
 1. Start with a brief overview/introduction (2-3 sentences)

@@ -9,14 +9,16 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from perspicacite.models.rag import RAGMode
+from perspicacite.pipeline.asb.response import build_asb_response_metadata
 from perspicacite.provenance.collector import ProvenanceCollector
 from perspicacite.web.routers._grounding import extract_grounding_context
 from perspicacite.web.state import app_state
@@ -28,12 +30,217 @@ logger = logging.getLogger(__name__)
 RAG_MODE_MAP = {
     "basic": RAGMode.BASIC,
     "advanced": RAGMode.ADVANCED,
-    "profound": RAGMode.PROFOUND,
+    "deep_research": RAGMode.DEEP_RESEARCH,
+    "profound": RAGMode.PROFOUND,   # backward-compat alias (deprecated)
     "literature_survey": RAGMode.LITERATURE_SURVEY,
     "contradiction": RAGMode.CONTRADICTION,
+    "reasoning": RAGMode.REASONING,
 }
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Language detection + on-the-fly translation
+# ---------------------------------------------------------------------------
+#
+# Literature databases (PubMed, Semantic Scholar, OpenAlex, …) are heavily
+# English-biased: a French query like "Qu'est-ce que le réseautage par
+# identité d'ions?" returns zero hits even when the equivalent English
+# question pulls hundreds. We detect obviously non-English input with a
+# cheap regex and, on a positive match, route it through the LLM for a
+# one-shot translation before retrieval. Behaviour is gated by the
+# request-level `auto_translate` flag (default True).
+
+_NON_EN_LETTERS = (
+    "àâçéèêëïîôûùÿœæñáíóúüöäßÀÂÇÉÈÊËÏÎÔÛÙŸŒÆÑÁÍÓÚÜÖÄ"
+)
+_NON_EN_HINT_RE = re.compile(
+    rf"[{_NON_EN_LETTERS}]"
+    r"|\b(qu'?est-?ce|qu'?un|qu'?une|quels?|quelles?|comment|pourquoi|"
+    r"où|donne(?:-moi|z)?|explique(?:-moi|z)?|d[ée]finis(?:sez)?|"
+    r"que\ssignifie|c'?est|je\s|nous\s|vous\s|notre\s|votre\s)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_non_english(text: str) -> bool:
+    """Cheap heuristic — flag obviously non-English text without an LLM call."""
+    if not text or len(text.strip()) < 3:
+        return False
+    return bool(_NON_EN_HINT_RE.search(text))
+
+
+async def _pre_screen_query(text: str, history: list[Any] | None) -> tuple[str, str | None]:
+    """Return (verdict, reason). Verdict is "research" or "chat".
+
+    - "research": the turn warrants the full retrieve→synthesize pipeline.
+    - "chat": pure conversation / follow-up that can be answered from
+      history alone (no DB hit, no rephrase).
+
+    Best-effort: any LLM error falls back to "research" (the safer
+    choice, since missing a chat-only optimisation only costs latency
+    while skipping a real research turn would lose the user data).
+    """
+    llm = getattr(app_state, "llm_client", None)
+    cfg = getattr(app_state, "config", None)
+    if llm is None or cfg is None:
+        return "research", None
+    provider = "deepseek"
+    model = "deepseek-chat"
+    if getattr(cfg, "llm", None) is not None:
+        provider = cfg.llm.default_provider or provider
+        model = cfg.llm.default_model or model
+    # Light formatting of last 3 turns so the classifier knows whether
+    # the user is following up on something or starting fresh.
+    history_snippet = ""
+    if history:
+        last = history[-3:]
+        bits: list[str] = []
+        for m in last:
+            role = getattr(m, "role", None) or (m.get("role") if isinstance(m, dict) else None)
+            content = (
+                getattr(m, "content", None)
+                or (m.get("content") if isinstance(m, dict) else "")
+            )
+            if role and content:
+                bits.append(f"{role}: {str(content)[:240]}")
+        history_snippet = "\n".join(bits)
+    try:
+        out = await llm.complete(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You classify the user's next turn in a research-assistant chat. "
+                        "Output a SINGLE-LINE JSON object and nothing else: "
+                        '{"verdict":"research"|"chat","reason":"<short>"}. '
+                        "Use 'research' when the turn asks a new scientific question, "
+                        "requests literature, compares techniques, or any task that "
+                        "would benefit from new paper retrieval. "
+                        "Use 'chat' when the turn is a pure follow-up to an existing answer "
+                        "(\"can you summarise that\", \"explain point 2\", \"thanks\", "
+                        "\"reformulate\"), small talk, or a meta-question that needs no "
+                        "new sources."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Recent history:\n{history_snippet}\n\n"
+                        f"User's next turn: {text}"
+                    ),
+                },
+            ],
+            model=model,
+            provider=provider,
+            temperature=0.0,
+            max_tokens=80,
+        )
+        m = re.search(r"\{.*\}", out, re.DOTALL)
+        if not m:
+            return "research", None
+        obj = json.loads(m.group(0))
+        verdict = obj.get("verdict")
+        reason = obj.get("reason")
+        if verdict in ("research", "chat"):
+            return verdict, reason if isinstance(reason, str) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pre_screen_failed: %s", exc)
+    return "research", None
+
+
+async def _chat_only_reply(query: str, history: list[Any] | None) -> str:
+    """Generate a no-retrieval reply for a chat-only turn. Best-effort."""
+    llm = getattr(app_state, "llm_client", None)
+    cfg = getattr(app_state, "config", None)
+    if llm is None or cfg is None:
+        return "I can answer that from the conversation above — could you rephrase?"
+    provider = "deepseek"
+    model = "deepseek-chat"
+    if getattr(cfg, "llm", None) is not None:
+        provider = cfg.llm.default_provider or provider
+        model = cfg.llm.default_model or model
+    msgs: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "content": (
+                "You are Perspicacité, a literature-research assistant. The "
+                "current turn does not require new paper retrieval — answer "
+                "from the conversation context only. Be concise. If the user "
+                "is asking you to cite or quote a paper, point them at the "
+                "sources already shown in the prior turns and remind them "
+                "that you didn't run a new search."
+            ),
+        }
+    ]
+    if history:
+        for m in history[-8:]:
+            role = getattr(m, "role", None) or (m.get("role") if isinstance(m, dict) else None)
+            content = (
+                getattr(m, "content", None)
+                or (m.get("content") if isinstance(m, dict) else "")
+            )
+            if role and content:
+                msgs.append({"role": role, "content": str(content)})
+    msgs.append({"role": "user", "content": query})
+    try:
+        out = await llm.complete(
+            messages=msgs,
+            model=model,
+            provider=provider,
+            temperature=0.4,
+            max_tokens=900,
+        )
+        return out.strip() or "(no answer)"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chat_only_reply_failed: %s", exc)
+        return "(unable to answer from context — please try again)"
+
+
+async def _translate_query_to_english(text: str) -> tuple[str | None, str | None]:
+    """Translate ``text`` to English. Returns (english, source_lang) or
+    ``(None, None)`` on failure. Best-effort: never raises."""
+    llm = getattr(app_state, "llm_client", None)
+    cfg = getattr(app_state, "config", None)
+    if llm is None or cfg is None:
+        return None, None
+    provider = "deepseek"
+    model = "deepseek-chat"
+    if getattr(cfg, "llm", None) is not None:
+        provider = cfg.llm.default_provider or provider
+        model = cfg.llm.default_model or model
+    try:
+        out = await llm.complete(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a translation engine for scientific research queries. "
+                        "Reply with a SINGLE-LINE JSON object and nothing else: "
+                        '{"lang":"<ISO-639-1 code of input>","english":"<English translation>"}. '
+                        "If the input is already English, set english to the input verbatim. "
+                        "Never add commentary, code fences, or markdown."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            model=model,
+            provider=provider,
+            temperature=0.0,
+            max_tokens=400,
+        )
+        m = re.search(r"\{.*\}", out, re.DOTALL)
+        if not m:
+            return None, None
+        obj = json.loads(m.group(0))
+        english = obj.get("english")
+        lang = obj.get("lang")
+        if isinstance(english, str) and english.strip():
+            return english.strip(), lang if isinstance(lang, str) else None
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        logger.warning("query_translation_failed: %s", exc)
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +299,24 @@ class ChatMessage(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Request for chat endpoint - NOW WITH CONVERSATION SUPPORT."""
+    """Request for chat endpoint - NOW WITH CONVERSATION SUPPORT.
+
+    Accepts ``query`` (canonical) or ``message`` (Scriptorium-compat alias).
+    When both are supplied, ``query`` wins.
+    """
 
     query: str = Field(..., description="Current research question")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_message_alias(cls, data):
+        """Backward-compat with the legacy OpenAPI schema name ``message``.
+        If ``query`` is absent but ``message`` is supplied, promote it.
+        ``query`` always wins when both are present."""
+        if isinstance(data, dict) and "query" not in data and "message" in data:
+            data = {**data, "query": data["message"]}
+        return data
+
     messages: list[ChatMessage] = Field(default_factory=list, description="Conversation history")
     session_id: str | None = Field(default=None, description="Session ID for persistence")
     conversation_id: str | None = Field(
@@ -108,12 +330,12 @@ class ChatRequest(BaseModel):
     mode: str = Field(
         default="basic",
         description=(
-            "RAG mode: basic, advanced, profound, agentic, literature_survey, contradiction"
+            "RAG mode: basic, advanced, deep_research, agentic, literature_survey, contradiction (profound is a deprecated alias for deep_research)"
         ),
     )
     stream: bool = Field(default=True, description="Stream the response")
     max_papers: int = Field(
-        default=3, ge=1, le=10, description="Maximum papers to display in results"
+        default=3, ge=1, le=50, description="Maximum papers to display in results"
     )
     max_papers_to_download: int = Field(
         default=10,
@@ -132,6 +354,54 @@ class ChatRequest(BaseModel):
             "query optimization. If unset and the conversation has a prior "
             "assistant turn, the server auto-extracts a short context phrase. "
             "Set to an empty string to explicitly disable grounding."
+        ),
+    )
+    auto_translate: bool = Field(
+        default=True,
+        description=(
+            "When true (default), detect non-English queries via a cheap "
+            "heuristic and translate them to English via the configured "
+            "LLM before retrieval. The original wording is reported back "
+            "in a `query_translated` SSE event so the UI can show both."
+        ),
+    )
+    pre_screen: bool = Field(
+        default=True,
+        description=(
+            "When true (default), a cheap (~30-token) LLM classifier "
+            "decides whether the user's turn actually needs literature "
+            "retrieval. Pure chat / clarifications / meta-questions about "
+            "an earlier answer are routed to a no-retrieval reply, saving "
+            "30-60s and the cost of full search. The decision is reported "
+            "via a `pre_screen` SSE event."
+        ),
+    )
+    profond_cycles: int | None = Field(
+        default=None,
+        ge=1,
+        le=5,
+        description=(
+            "Profond mode only: per-request override for the number of "
+            "research cycles (1-5). When unset, the server-side default "
+            "(1) is used."
+        ),
+    )
+    bm25_weight: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Override BM25 weight for advanced-mode hybrid retrieval (0.0-1.0). "
+            "bm25_weight=1.0 + vector_weight=0.0 → pure BM25. None = LLM-determined."
+        ),
+    )
+    vector_weight: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Override vector (dense) weight for advanced-mode hybrid retrieval. "
+            "None = LLM-determined."
         ),
     )
 
@@ -291,13 +561,15 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
 
     Routes to appropriate handler based on request.mode:
     - agentic: Uses AgenticOrchestrator (intent-based, tool use)
-    - basic/advanced/profound: Uses RAGEngine with respective mode
+    - basic/advanced/deep_research: Uses RAGEngine with respective mode
 
     Yields SSE events with thinking steps, tool calls, and final answer.
     """
     from perspicacite.models.messages import Message
 
-    # Save user message to conversation if we have one
+    # Save user message to conversation if we have one. We persist the
+    # *original* wording (in whatever language the user typed) — the
+    # English translation, if any, is purely a retrieval-side detail.
     if conversation_id and app_state.session_store:
         try:
             await app_state.session_store.add_message(
@@ -305,6 +577,89 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
             )
         except Exception as e:
             logger.warning(f"Failed to save user message: {e}")
+
+    # --- Optional auto-translation to English for retrieval ---
+    # We translate before dispatching to any mode so KB search + web
+    # search + query rephrasing all see English text. The original
+    # query stays available for display via the SSE event we emit.
+    if request.auto_translate and _looks_non_english(request.query):
+        original_query = request.query
+        english, lang = await _translate_query_to_english(original_query)
+        if english and english.strip().lower() != original_query.strip().lower():
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "kind": "query_translated",
+                        "original": original_query,
+                        "translated": english,
+                        "source_lang": lang or "non-en",
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n\n"
+            )
+            # Replace the query field so all downstream code (modes,
+            # retrievers, LLM prompts) sees the English text.
+            try:
+                request.query = english
+            except Exception:
+                pass
+
+    # --- Optional pre-screen: route chat-only turns away from retrieval ---
+    # A cheap LLM classifier decides whether the user's turn warrants the
+    # full retrieve→rephrase→synthesize pipeline. Pure follow-ups
+    # ("rephrase the second paragraph", "thanks", "explain point 2") are
+    # answered from history alone — no DB hit, no rephrase, no wait.
+    if request.pre_screen:
+        verdict, reason = await _pre_screen_query(request.query, request.messages)
+        # Always surface the verdict so the UI can show what we decided
+        # and let the user override (e.g. "no, please do search the
+        # literature for this") on the next turn.
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "kind": "pre_screen",
+                    "verdict": verdict,
+                    "reason": reason or "",
+                },
+                separators=(",", ":"),
+            )
+            + "\n\n"
+        )
+        if verdict == "chat":
+            reply = await _chat_only_reply(request.query, request.messages)
+            assistant_message_id = str(uuid.uuid4())
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "answer",
+                        "message_id": assistant_message_id,
+                        "conversation_id": conversation_id,
+                        "content_b64": base64.b64encode(reply.encode("utf-8")).decode("ascii"),
+                        "sources": [],
+                    },
+                    separators=(",", ":"),
+                )
+                + "\n\n"
+            )
+            yield (
+                "data: "
+                + json.dumps({"type": "done", "message_id": assistant_message_id})
+                + "\n\n"
+            )
+            # Persist the assistant reply too.
+            if conversation_id and app_state.session_store:
+                try:
+                    await app_state.session_store.add_message(
+                        conversation_id,
+                        Message(id=assistant_message_id, role="assistant", content=reply),
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save chat-only assistant message: {e}")
+            return
 
     assistant_content = ""
     assistant_message_id_outer: str | None = None
@@ -328,7 +683,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
                         pass
                 yield event
         else:
-            # Use RAGEngine for other modes (basic, advanced, profound)
+            # Use RAGEngine for other modes (basic, advanced, deep_research)
             async for event in _stream_rag_mode(request, conversation_id):
                 # Collect assistant content and message_id for saving
                 if event.startswith("data:"):
@@ -524,7 +879,7 @@ async def _stream_agentic(request: ChatRequest, conversation_id: str | None = No
 
 
 async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = None):
-    """Stream using RAGEngine with selected mode (basic, advanced, profound, contradiction…)."""
+    """Stream using RAGEngine with selected mode (basic, advanced, deep_research, contradiction…)."""
     from perspicacite.models.rag import RAGMode
     from perspicacite.models.rag import RAGRequest as RAGReq
 
@@ -654,6 +1009,13 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
         max_papers_retrieval=request.max_papers,
         provider=default_provider,
         model=default_model,
+        max_iterations=(
+            request.profond_cycles
+            if rag_mode == RAGMode.PROFOUND and request.profond_cycles is not None
+            else None
+        ),
+        bm25_weight=request.bm25_weight,
+        vector_weight=request.vector_weight,
     )
     # Thread app_state and grounding context onto the RAGRequest so that
     # BasicRAGMode.execute() can pass them to the optimizer.
@@ -727,6 +1089,34 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
                     "sources": sources,
                 }
                 yield f"data: {json.dumps(safe, separators=(',', ':'))}\n\n"
+                # Derive ASB skill/workflow metadata blocks from collected
+                # sources. Each source carries its underlying paper's
+                # ``metadata`` dict; the helper coalesces by skill_id /
+                # task_id and ignores non-ASB sources. Emit a separate
+                # SSE event only when at least one block is non-empty so
+                # non-ASB conversations don't get an extra noise frame.
+                try:
+                    asb_md = build_asb_response_metadata(
+                        [
+                            {"metadata": (s.get("metadata") if isinstance(s, dict) else None)}
+                            for s in sources
+                        ]
+                    )
+                    if asb_md.get("skill_metadata") or asb_md.get("workflow_metadata"):
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "type": "asb_metadata",
+                                    "message_id": assistant_message_id,
+                                    **asb_md,
+                                },
+                                separators=(",", ":"),
+                            )
+                            + "\n\n"
+                        )
+                except Exception as _exc:  # noqa: BLE001
+                    logger.warning(f"asb_metadata_emit_failed: {_exc}")
                 yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_message_id})}\n\n"
                 return
 
@@ -745,6 +1135,13 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
                     yield f"data: {json.dumps({'type': 'figure_ref', **payload})}\n\n"
                 except Exception as _exc:
                     logger.warning(f"figure_ref_forward_failed: {_exc}")
+
+            elif event.event == "metadata":
+                try:
+                    payload = json.loads(event.data)
+                    yield f"data: {json.dumps({'type': 'metadata', **payload})}\n\n"
+                except Exception as _exc:
+                    logger.warning(f"metadata_forward_failed: {_exc}")
 
             elif event.event == "error":
                 yield f"data: {json.dumps({'type': 'error', 'message': event.data})}\n\n"

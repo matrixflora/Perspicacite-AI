@@ -14,14 +14,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-_PROMPT = """You rewrite scientific literature search queries to maximize recall on academic
-databases (Semantic Scholar, OpenAlex, PubMed, arXiv, Europe PMC).
+_PROMPT = """You rewrite a scientific question into two specialised forms so it
+performs well on different retrieval backends.
 
 The QUERY is what the user is asking now. It is authoritative.
 The CONTEXT is optional background from the conversation. Use it ONLY to
@@ -29,23 +30,41 @@ disambiguate ambiguous terms in the query (e.g., expanding an acronym, fixing
 a vague pronoun). If the context conflicts with or extends beyond the query's
 topic, ignore the context entirely.
 
-Produce ONE rewritten query that:
-- Preserves the user's scientific intent exactly. Do not narrow, broaden, or
-  drift the topic.
-- Uses concise scientific phrasing (3-12 words). Strip chatty words ("can you
-  find", "I'm looking for", "papers about"). Keep proper nouns, gene/drug/
-  species names, and units verbatim.
-- Prefers established terminology where the query is vague (e.g., "heart
-  attack" -> "myocardial infarction"), but does NOT replace specific terms the
-  user already chose.
-- Does NOT add boolean operators, field qualifiers, or quote marks. Plain text
-  only — the downstream adapters handle DB-specific syntax.
+Your rewrites are ADDITIVE and NORMALISING, never SUBTRACTIVE of meaning.
+The only things you may remove are filler/chatty words ("can you find", "I'm
+looking for", "papers about"). You must NEVER delete a content word the user
+typed — names, identifiers, qualifiers, methods, organisms, units, author or
+person surnames (e.g. "Libis", "Doudna"). If you are unsure whether a token
+is filler or content, KEEP it.
 
-If the query is already a clean scientific phrase, return it unchanged.
-If you cannot improve it confidently, return it unchanged.
+Produce TWO rewrites:
+
+1) WEB_QUERY — for keyword-driven academic databases (Semantic Scholar,
+   OpenAlex, PubMed, arXiv, Europe PMC). 3-7 words, noun-phrase style.
+   Strip chatty words. Keep proper nouns, gene/drug/species names, and
+   author surnames verbatim. Prefer established terminology when the query
+   is vague (e.g., "heart attack" → "myocardial infarction"), but do NOT
+   replace specific terms the user already chose. NO boolean operators,
+   field qualifiers, or quotes — plain text only. Resist adding extra
+   subject-area context unless the query is genuinely ambiguous without it.
+
+2) KB_QUERY — for dense / semantic retrieval over a user knowledge base.
+   A full grammatical sentence or rich noun phrase (8-20 words). Keep
+   the question shape if the original was a question. Domain context terms
+   ARE welcome here (they boost embedding similarity). Do not invent claims
+   the user did not state.
+
+Rules common to both:
+- Preserve the user's scientific intent exactly. Do not narrow or drift the topic.
+- Preserve specific terms the user already chose.
+- If the original is already optimal for that backend, return it unchanged
+  (the two outputs may be identical).
 
 Return JSON only:
-{{"searched_query": "..."}}
+{{"searched_query": "<WEB_QUERY>", "web_query": "<WEB_QUERY>", "kb_query": "<KB_QUERY>"}}
+
+The legacy ``searched_query`` field MUST equal ``web_query`` so older callers
+keep getting the web-friendly form.
 
 QUERY:
 {query}
@@ -74,6 +93,19 @@ class OptimizationResult:
     applied: bool
     context_used: bool
     fallback_reason: str | None
+    # Backend-specific variants (since 2026-05-19). ``web_query`` is
+    # tuned for keyword-driven academic databases; ``kb_query`` is a
+    # richer sentence form for dense / semantic vector retrieval. Both
+    # default to ``searched_query`` for back-compat when the LLM omits
+    # either field or when the optimizer is disabled / falls back.
+    web_query: str = ""
+    kb_query: str = ""
+
+    def for_target(self, target: str) -> str:
+        """Pick the right rewrite for ``target`` ("kb" or "web")."""
+        if target == "kb":
+            return self.kb_query or self.searched_query
+        return self.web_query or self.searched_query
 
 
 def _strip_code_fence(text: str) -> str:
@@ -125,6 +157,16 @@ async def optimize_query(
             context_used=False, fallback_reason=None,
         )
 
+    # Year-anchor preservation: author+year queries are identifier-style lookups
+    # (e.g. "retrieval augmented generation Lewis 2020"). Rewriting them strips
+    # the year/author, making the specific paper unfindable. Return verbatim.
+    if re.search(r'\b(19|20)\d{2}\b', query.strip()):
+        return OptimizationResult(
+            searched_query=query.strip(), enabled=True, applied=False,
+            context_used=False, fallback_reason="year_anchor_preserved",
+            web_query=query.strip(), kb_query=query.strip(),
+        )
+
     # Truncate context head-keep.
     ctx_str = context or ""
     if len(ctx_str) > qo_cfg.max_context_chars:
@@ -143,7 +185,7 @@ async def optimize_query(
                 model=model,
                 provider=provider,
                 temperature=0.2,
-                max_tokens=400,
+                max_tokens=800,
                 stage="search_optimize",
                 sink=sink,
             ),
@@ -183,8 +225,15 @@ async def optimize_query(
         )
 
     rewritten = rewritten.strip()
+    # Backend-specific forms. Fall back to ``rewritten`` if the LLM
+    # omitted either field (older prompts, mid-deploy mismatch).
+    web_q = obj.get("web_query")
+    kb_q = obj.get("kb_query")
+    web_q = web_q.strip() if isinstance(web_q, str) and web_q.strip() else rewritten
+    kb_q = kb_q.strip() if isinstance(kb_q, str) and kb_q.strip() else rewritten
     applied = rewritten != query.strip()
     return OptimizationResult(
         searched_query=rewritten, enabled=True, applied=applied,
         context_used=context_used, fallback_reason=None,
+        web_query=web_q, kb_query=kb_q,
     )

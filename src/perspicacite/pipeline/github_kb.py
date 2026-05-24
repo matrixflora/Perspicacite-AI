@@ -1,212 +1,699 @@
-"""Top-level orchestrator for GitHub repo + skill-bundle ingestion.
+"""Top-level orchestrator for GitHub-repo / skill-bundle KB ingest.
 
-Three public entry points:
+This is the public surface of the 2026-05-15 GitHub / skill-bundle
+ingest pipeline. Lower layers (``pipeline/github/fetcher.py``,
+``pipeline/github/bundle.py``, ``pipeline/github/walk.py``,
+``pipeline/github/chunk_producer.py``) do one job each; this module
+wires them together against a KB target.
 
-- :func:`ingest_github_repo` — ingest any repo URL or local path
-- :func:`ingest_skill_bundle` — ingest a single skill bundle (with optional
-  linked-paper ingest via DOI)
-- :func:`ingest_skill_bundles_batch` — ingest every bundle in a manifest list
+Three entry points:
+
+* :func:`ingest_github_repo` — fetch a GitHub repo, walk + chunk, add
+  Papers to a single KB. Never auto-routes linked papers (raw-repo
+  mode; the user opts into chunked README only).
+* :func:`ingest_skill_bundle` — parse the bundle.yml manifest (or fall
+  back to README-only), walk + chunk, and OPTIONALLY route the
+  manifest's deduplicated DOI list through
+  :func:`perspicacite.pipeline.search_to_kb.ingest_dois_into_kb` so
+  cited papers land in the same KB. ArXiv / PMC IDs surface in the
+  summary as ``linked_papers_skipped_non_doi`` but aren't routed (v1
+  routes DOIs only).
+* :func:`ingest_skill_bundles_batch` — iterate a directory full of
+  bundle subdirs. Per-skill mode produces one KB per bundle; composite
+  mode (``composite_kb=<name>``) routes every bundle's chunks into the
+  same KB, with ``source_skill`` chunk metadata differentiating them.
+
+Design references:
+- Spec: ``docs/superpowers/specs/2026-05-15-github-skill-bundle-ingest-design.md``
+- Plan: ``docs/superpowers/plans/2026-05-15-github-skill-bundle-ingest.md`` Task 5
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from perspicacite.logging import get_logger
+from perspicacite.config.schema import Config
+from perspicacite.models.kb import (
+    ChunkConfig,
+    KnowledgeBase,
+    chroma_collection_name_for_kb,
+)
+from perspicacite.pipeline.external_id_resolver import (
+    resolve_arxiv_to_doi,
+    resolve_pmc_to_doi,
+)
 from perspicacite.pipeline.github.bundle import (
     BundleManifest,
-    extract_links_from_text,
+    ContentSpec,
 )
 from perspicacite.pipeline.github.chunk_producer import papers_from_directory
+from perspicacite.pipeline.github.fetcher import (
+    GitHubFetcher,
+    parse_repo_url,
+)
+from perspicacite.pipeline.search_to_kb import ingest_dois_into_kb
+from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
 
-logger = get_logger("perspicacite.pipeline.github_kb")
+__all__ = [
+    "IngestSummary",
+    "ingest_github_repo",
+    "ingest_skill_bundle",
+    "ingest_skill_bundles_batch",
+]
+
+logger = logging.getLogger(__name__)
+
+
+IngestMode = Literal["repo", "per-skill", "composite"]
+
+
+# ---------------------------------------------------------------------------
+# Result dataclass
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class IngestSummary:
-    bundle_name: str | None = None
-    files_added: int = 0
-    chunks_added: int = 0
-    linked_papers_added: int = 0
-    linked_papers_failed: int = 0
-    errors: list[str] = field(default_factory=list)
+    """Per-target summary returned by the three orchestrators.
+
+    Attributes
+    ----------
+    kb_name : str
+        The KB that received the chunks. For composite-mode batch runs
+        this is the same name across every summary.
+    bundle_name : str | None
+        ``manifest.name`` when ingesting a bundle; ``None`` for raw
+        repos.
+    repo_org, repo_name : str | None
+        Owner + repo set only for the GitHub-repo path; ``None`` for
+        local bundle sources.
+    commit_sha : str | None
+        Resolved commit SHA when the source is a GitHub URL; ``None``
+        for local paths.
+    files_added : int
+        Count of files survived the include/exclude globs and produced
+        a Paper. (Files that survive globs but read empty produce a
+        Paper that the KB layer may drop — these still count here so
+        operators see what the chunker tried.)
+    chunks_added : int
+        Count of vector-store rows actually written. Returned by
+        :meth:`DynamicKnowledgeBase.add_papers`.
+    linked_papers_added : int
+        DOIs routed through :func:`ingest_dois_into_kb` that succeeded.
+        Always ``0`` for the raw-repo path and when
+        ``ingest_linked_papers=False``.
+    linked_papers_skipped_non_doi : list[tuple[str, str]]
+        Mined ``(kind, value)`` pairs that were NOT routed. ArXiv +
+        PMC ids are first run through
+        :mod:`perspicacite.pipeline.external_id_resolver`; only the
+        unresolvable ones land here. Everything else (any future
+        ``kind`` the manifest may grow) is reported as-is so the
+        operator can route them manually.
+    linked_papers_resolved_via_external_id : int
+        Count of arXiv / PMC ids that the upstream resolver (arXiv → DOI
+        and PMC → DOI) turned into DOIs before routing. Always ``0`` on
+        the raw-repo path and when ``ingest_linked_papers=False``.
+    external_links_logged : int
+        Count of ``external_link`` Wave-4.3 KB-log events emitted for
+        non-paper URLs (datasets / tools) mined from README + docs.
+        Always ``0`` on the raw-repo path; non-zero for bundle ingests
+        when the bundle's prose cites at least one non-paper URL.
+    mode : "repo" | "per-skill" | "composite"
+        Discriminates the call site so a single ``list[IngestSummary]``
+        from the batch path stays self-describing.
+    """
+
+    kb_name: str
+    bundle_name: str | None
+    repo_org: str | None
+    repo_name: str | None
+    commit_sha: str | None
+    files_added: int
+    chunks_added: int
+    linked_papers_added: int
+    linked_papers_skipped_non_doi: list[tuple[str, str]]
+    mode: IngestMode
+    external_links_logged: int = 0
+    linked_papers_resolved_via_external_id: int = 0
+
+
+# ---------------------------------------------------------------------------
+# ingest_github_repo
+# ---------------------------------------------------------------------------
 
 
 async def ingest_github_repo(
     *,
-    source: str | Path,
+    url: str,
     kb_name: str,
-    config: Any,
+    config: Config,
     vector_store: Any,
     embedding_service: Any,
     session_store: Any,
-    ingest_linked_papers: bool = True,
-    commit_sha: str = "unknown",
+    fetcher: GitHubFetcher | None = None,
+    content: ContentSpec | None = None,
 ) -> IngestSummary:
-    """Ingest a GitHub repository (URL or local path) into a KB.
+    """Fetch a GitHub repo, walk + chunk it, write Papers into ``kb_name``.
 
-    When ``source`` is a URL, fetches via :class:`GitHubFetcher`.
-    When it's a Path, uses the directory directly.
+    Args
+    ----
+    url : str
+        GitHub URL. See :func:`parse_repo_url` for accepted shapes.
+    kb_name : str
+        Target KB. Created if it doesn't exist.
+    config : Config
+        Pipeline config. The ``github`` and ``knowledge_base`` blocks
+        are consulted here; ``bundles`` is unused on the raw-repo path.
+    vector_store, embedding_service, session_store : Any
+        Storage seams. The orchestrator never reaches into AppState
+        directly so unit/integration tests can pass deterministic
+        fakes.
+    fetcher : GitHubFetcher, optional
+        Override for the fetcher. Tests pass a ``MagicMock(spec=...)``
+        so no network is touched. In production this is constructed
+        from ``config.github``.
+    content : ContentSpec, optional
+        Include/exclude globs for the walker. Defaults to the bundle
+        defaults (markdown + python + notebooks + yaml).
+
+    Notes
+    -----
+    *  Raw-repo mode never auto-routes linked papers — that's a
+       bundle-only feature (the bundle author signed off on the
+       citation list via ``papers:``; a random repo's mined DOIs are
+       too noisy to trust).
+    *  The synthetic manifest carries the org + repo on
+       :attr:`BundleManifest.raw` so the chunk producer's ``Paper.id``
+       prefix encodes the real repo coordinates rather than the
+       placeholder ``bundle/<name>``.
     """
-    source_str = str(source)
-    source_path: Path | None = None
+    ref = parse_repo_url(url)
 
-    if not source_str.startswith("https://"):
-        source_path = Path(source)
-    sha = commit_sha
+    if fetcher is None:
+        fetcher = _build_default_fetcher(config)
 
-    if source_path is None:
-        from perspicacite.pipeline.github.fetcher import GitHubFetcher, parse_repo_url
-        ref = parse_repo_url(source_str)
-        token = None
-        if hasattr(config, "github") and config.github.token_env_var:
-            import os
-            token = os.environ.get(config.github.token_env_var)
-        if hasattr(config, "github"):
-            cache_dir = Path(config.github.cache_dir)
-        else:
-            cache_dir = Path("data/github_cache")
-        fetcher = GitHubFetcher(token=token, cache_dir=cache_dir)
-        source_path, sha = await fetcher.fetch(ref)
+    root, sha = await fetcher.fetch(ref)
+    walk_root = Path(root) / ref.subpath if ref.subpath else Path(root)
 
-    manifest = BundleManifest.from_directory(source_path)
-    return await ingest_skill_bundle(
-        source=source_path,
+    # Synthetic manifest: the producer expects a BundleManifest for
+    # author propagation + source_skill metadata. We bake org + repo
+    # into ``raw`` so the chunk producer's id-builder picks them up.
+    manifest = BundleManifest(
+        name=f"{ref.org}__{ref.repo}",
+        readme_only=False,
+        raw={"org": ref.org, "repo": ref.repo},
+        directory=walk_root,
+    )
+
+    papers = papers_from_directory(
+        walk_root,
+        manifest,
+        commit_sha=sha,
+        content=content,
+    )
+
+    chunks_added = await _add_papers_to_kb(
         kb_name=kb_name,
+        papers=papers,
         config=config,
         vector_store=vector_store,
         embedding_service=embedding_service,
         session_store=session_store,
-        ingest_linked_papers=ingest_linked_papers,
-        commit_sha=sha,
-        _manifest=manifest,
+        description=f"GitHub repo ingest: {ref.org}/{ref.repo}@{sha}",
     )
+
+    return IngestSummary(
+        kb_name=kb_name,
+        bundle_name=None,
+        repo_org=ref.org,
+        repo_name=ref.repo,
+        commit_sha=sha,
+        files_added=len(papers),
+        chunks_added=chunks_added,
+        linked_papers_added=0,
+        linked_papers_skipped_non_doi=[],
+        mode="repo",
+    )
+
+
+# ---------------------------------------------------------------------------
+# ingest_skill_bundle
+# ---------------------------------------------------------------------------
 
 
 async def ingest_skill_bundle(
     *,
-    source: Path,
+    source: Path | str,
     kb_name: str | None,
-    config: Any,
+    config: Config,
     vector_store: Any,
     embedding_service: Any,
     session_store: Any,
+    fetcher: GitHubFetcher | None = None,
     ingest_linked_papers: bool = True,
-    commit_sha: str = "unknown",
-    _manifest: BundleManifest | None = None,
+    app_state_for_doi_ingest: Any = None,
 ) -> IngestSummary:
-    """Ingest a single skill bundle directory.
+    """Ingest one skill bundle into a KB.
 
-    If ``kb_name`` is None, uses ``bundle.name`` from the manifest.
+    Args
+    ----
+    source : Path | str
+        Local directory (``Path``) OR GitHub URL (``str``). Strings
+        that don't look like a URL are coerced to ``Path``.
+    kb_name : str | None
+        Target KB. When ``None`` the orchestrator derives one from
+        ``config.bundles.default_kb_name_template`` using the bundle's
+        ``name``.
+    ingest_linked_papers : bool
+        When ``True`` (default), the manifest's deduplicated DOI list
+        is routed through :func:`ingest_dois_into_kb`. ArXiv / PMC IDs
+        are reported in ``linked_papers_skipped_non_doi`` but not
+        routed (v1 only resolves DOIs).
+    app_state_for_doi_ingest : Any
+        Required when ``ingest_linked_papers=True`` because
+        :func:`ingest_dois_into_kb` reads PDF-download config, the
+        checkpoint store, and the vector store off it. The orchestrator
+        deliberately keeps it separate from the explicit
+        ``vector_store`` / ``session_store`` kwargs so the bundle-walk
+        path stays usable with mocks alone.
+
+    Raises
+    ------
+    ValueError
+        If ``ingest_linked_papers=True`` but no ``app_state_for_doi_ingest``
+        was supplied.
     """
-    manifest = _manifest or BundleManifest.from_directory(source)
-    effective_kb = kb_name or manifest.name
-    summary = IngestSummary(bundle_name=manifest.name)
+    bundle_dir = await _resolve_bundle_source(source, config=config, fetcher=fetcher)
+    manifest = BundleManifest.from_directory(bundle_dir)
 
-    # 1. Produce Paper fixtures from directory files
-    papers = papers_from_directory(source, manifest, commit_sha)
-    summary.files_added = len(papers)
+    if kb_name is None:
+        kb_name = config.bundles.default_kb_name_template.format(
+            name=manifest.name,
+        )
 
-    # 2. Store via DynamicKnowledgeBase
-    if papers:
-        try:
-            from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
-            dkb = DynamicKnowledgeBase(
-                vector_store,
-                embedding_service,
-            )
-            chunks_added = await dkb.add_papers(papers)
-            summary.chunks_added = chunks_added or 0
-        except Exception as exc:
-            logger.error("github_kb_add_papers_failed", error=str(exc))
-            summary.errors.append(f"add_papers: {exc}")
+    papers = papers_from_directory(bundle_dir, manifest, commit_sha=None)
 
-    # 3. Collect linked paper DOIs
-    if ingest_linked_papers:
-        # From manifest papers section
-        paper_refs = manifest.collect_paper_refs()
-        # From README text
-        if manifest.readme_text:
-            bag = extract_links_from_text(manifest.readme_text)
-            paper_refs += [("doi", d) for d in bag.dois]
-            paper_refs += [("arxiv", a) for a in bag.arxiv_ids]
-            paper_refs += [("pmc", p) for p in bag.pmc_ids]
+    chunks_added = await _add_papers_to_kb(
+        kb_name=kb_name,
+        papers=papers,
+        config=config,
+        vector_store=vector_store,
+        embedding_service=embedding_service,
+        session_store=session_store,
+        description=(manifest.description or f"Skill bundle: {manifest.name}"),
+    )
 
-        if paper_refs:
-            dois = [ref_id for _, ref_id in paper_refs]
-            try:
-                import types
+    linked_added, skipped_non_doi, resolved_count = await _route_linked_papers(
+        manifest=manifest,
+        kb_name=kb_name,
+        ingest_linked_papers=ingest_linked_papers,
+        app_state_for_doi_ingest=app_state_for_doi_ingest,
+    )
 
-                from perspicacite.pipeline.search_to_kb import ingest_dois_into_kb
+    external_links_logged = _emit_external_link_events(
+        manifest=manifest,
+        kb_name=kb_name,
+        config=config,
+    )
 
-                # Build a minimal app_state-compatible namespace for ingest_dois_into_kb
-                # which expects an app_state with vector_store, embedding_provider,
-                # session_store, config, and pdf_parser attributes.
-                app_state = types.SimpleNamespace(
-                    vector_store=vector_store,
-                    embedding_provider=embedding_service,
-                    session_store=session_store,
-                    config=config,
-                    pdf_parser=None,
-                )
-                result = await ingest_dois_into_kb(
-                    app_state,
-                    effective_kb,
-                    dois,
-                )
-                added = result.get("added_papers", 0) if isinstance(result, dict) else 0
-                summary.linked_papers_added = added
-            except Exception as exc:
-                logger.error("github_kb_linked_papers_failed", error=str(exc))
-                summary.errors.append(f"ingest_dois: {exc}")
-                summary.linked_papers_failed = len(paper_refs)
+    return IngestSummary(
+        kb_name=kb_name,
+        bundle_name=manifest.name,
+        repo_org=None,
+        repo_name=None,
+        commit_sha=None,
+        files_added=len(papers),
+        chunks_added=chunks_added,
+        linked_papers_added=linked_added,
+        linked_papers_skipped_non_doi=skipped_non_doi,
+        mode="per-skill",
+        external_links_logged=external_links_logged,
+        linked_papers_resolved_via_external_id=resolved_count,
+    )
 
-    # 4. Emit KB log events for external (non-paper) URLs
-    if manifest.readme_text:
-        bag = extract_links_from_text(manifest.readme_text)
-        if bag.urls:
-            try:
-                from perspicacite.pipeline.kb_log import KBEvent, KBLogWriter
-                log_dir = None
-                if hasattr(config, "knowledge_base") and hasattr(config.knowledge_base, "log_dir"):
-                    log_dir = config.knowledge_base.log_dir
-                if log_dir:
-                    kb_log = KBLogWriter(path=Path(log_dir) / f"{effective_kb}.jsonl")
-                    for url in bag.urls[:20]:  # cap at 20
-                        kb_log.append(KBEvent(
-                            event="paper_added",
-                            kb_name=effective_kb,
-                            paper_id=url,
-                            source_command="ingest_skill_bundle",
-                            extra={"url": url},
-                        ))
-            except Exception:
-                pass  # KB log is best-effort
 
-    return summary
+# ---------------------------------------------------------------------------
+# ingest_skill_bundles_batch
+# ---------------------------------------------------------------------------
 
 
 async def ingest_skill_bundles_batch(
     *,
-    sources: list[Path],
-    config: Any,
+    root: Path,
+    config: Config,
     vector_store: Any,
     embedding_service: Any,
     session_store: Any,
+    composite_kb: str | None = None,
     ingest_linked_papers: bool = True,
+    app_state_for_doi_ingest: Any = None,
 ) -> list[IngestSummary]:
-    """Ingest a list of skill bundle directories."""
+    """Walk ``root`` and ingest each immediate subdir as a bundle.
+
+    Composite mode (``composite_kb=<name>``) routes every bundle's
+    chunks into the same KB; per-skill mode (default) creates one KB
+    per bundle. Returns one :class:`IngestSummary` per discovered
+    bundle in deterministic (sorted) order.
+
+    Notes
+    -----
+    *  Order is deterministic so the resulting summary list survives
+       golden-file comparisons in downstream tests.
+    *  Composite mode rewrites each summary's ``mode`` to ``"composite"``
+       so the caller can distinguish a single-bundle ingest from one of
+       N composite shards without re-checking ``kb_name`` equality.
+    """
+    root = Path(root)
+    if not root.is_dir():
+        raise ValueError(f"batch root {root!r} is not a directory")
+
     summaries: list[IngestSummary] = []
-    for src in sources:
+    for sub in sorted(root.iterdir()):
+        if not sub.is_dir():
+            continue
+
+        target_kb = composite_kb if composite_kb else None
         summary = await ingest_skill_bundle(
-            source=src,
-            kb_name=None,
+            source=sub,
+            kb_name=target_kb,
             config=config,
             vector_store=vector_store,
             embedding_service=embedding_service,
             session_store=session_store,
             ingest_linked_papers=ingest_linked_papers,
+            app_state_for_doi_ingest=app_state_for_doi_ingest,
         )
+        if composite_kb:
+            # Re-stamp mode + kb_name so the summary reads as "composite"
+            # for downstream consumers without depending on the inner
+            # call having known the composite context.
+            summary = replace(summary, kb_name=composite_kb, mode="composite")
         summaries.append(summary)
+
     return summaries
+
+
+# ---------------------------------------------------------------------------
+# Internals — KB seam
+# ---------------------------------------------------------------------------
+
+
+async def _add_papers_to_kb(
+    *,
+    kb_name: str,
+    papers: list,
+    config: Config,
+    vector_store: Any,
+    embedding_service: Any,
+    session_store: Any,
+    description: str,
+) -> int:
+    """Create KB if missing, hydrate a DKB, add papers, update counts.
+
+    Mirrors the pattern from
+    :func:`perspicacite.pipeline.search_to_kb._create_kb_if_missing`
+    plus :func:`ingest_dois_into_kb`. Lives here (not a module helper)
+    so tests can intercept the orchestrator's behaviour without
+    monkey-patching the underlying KB primitives.
+
+    Raises :class:`~perspicacite.rag.kb_compat.EmbeddingModelConflictError`
+    if the KB already exists with a different ``embedding_model`` than
+    the current ``embedding_service`` reports. Check runs BEFORE any
+    ``create_collection`` / ``save_kb_metadata`` calls so a conflict
+    leaves no partial state behind.
+    """
+    from perspicacite.rag.kb_compat import check_embedding_compat_for_ingest
+
+    collection_name = chroma_collection_name_for_kb(kb_name)
+
+    kb_meta = await session_store.get_kb_metadata(kb_name)
+    check_embedding_compat_for_ingest(
+        kb_meta=kb_meta,
+        embedding_service=embedding_service,
+    )
+    if kb_meta is None:
+        await vector_store.create_collection(collection_name)
+        chunk_cfg = ChunkConfig(
+            chunk_size=config.knowledge_base.chunk_size,
+            chunk_overlap=config.knowledge_base.chunk_overlap,
+        )
+        kb_meta = KnowledgeBase(
+            name=kb_name,
+            description=description,
+            collection_name=collection_name,
+            embedding_model=getattr(
+                embedding_service, "model_name", "unknown"
+            ),
+            chunk_config=chunk_cfg,
+        )
+        await session_store.save_kb_metadata(kb_meta)
+
+    if not papers:
+        return 0
+
+    dkb = DynamicKnowledgeBase(vector_store, embedding_service)
+    dkb.collection_name = collection_name
+    dkb._initialized = True
+    added_chunks = await dkb.add_papers(papers, include_full_text=True)
+
+    kb_meta.paper_count = (kb_meta.paper_count or 0) + len(papers)
+    kb_meta.chunk_count = (kb_meta.chunk_count or 0) + added_chunks
+    await session_store.save_kb_metadata(kb_meta)
+    return added_chunks
+
+
+# ---------------------------------------------------------------------------
+# Internals — linked-paper routing
+# ---------------------------------------------------------------------------
+
+
+async def _route_linked_papers(
+    *,
+    manifest: BundleManifest,
+    kb_name: str,
+    ingest_linked_papers: bool,
+    app_state_for_doi_ingest: Any,
+) -> tuple[int, list[tuple[str, str]], int]:
+    """Route the manifest's linked papers through the DOI ingest pipeline.
+
+    arXiv + PMC refs are first translated to DOIs upstream via
+    :mod:`perspicacite.pipeline.external_id_resolver`; only the
+    unresolvable ones surface in the returned ``skipped`` list. Refs
+    of any future ``kind`` are passed through to ``skipped`` as-is.
+
+    Returns
+    -------
+    (added, skipped, resolved_via_external_id)
+        - ``added`` — papers ``ingest_dois_into_kb`` reported as added.
+        - ``skipped`` — ``(kind, value)`` tuples we could not route.
+        - ``resolved_via_external_id`` — count of arXiv/PMC ids whose
+          DOI resolution succeeded.
+    """
+    if not ingest_linked_papers:
+        return 0, [], 0
+
+    refs = manifest.collect_paper_refs()
+    # The manifest may yield (doi, "10.x/y"), (arxiv, "..."), (pmc, "..."),
+    # or anything else a future schema version adds. Bucket by kind so
+    # we know what to resolve vs. what to pass through unchanged.
+    dois: set[str] = {value for (kind, value) in refs if kind == "doi"}
+    arxiv_ids = sorted({value for (kind, value) in refs if kind == "arxiv"})
+    pmc_ids = sorted({value for (kind, value) in refs if kind == "pmc"})
+    other_refs: list[tuple[str, str]] = sorted(
+        (
+            (kind, value)
+            for (kind, value) in refs
+            if kind not in ("doi", "arxiv", "pmc")
+        ),
+        key=lambda kv: (kv[0], kv[1]),
+    )
+
+    resolved_count = 0
+    skipped: list[tuple[str, str]] = list(other_refs)
+
+    for arxiv_id in arxiv_ids:
+        try:
+            doi = await resolve_arxiv_to_doi(arxiv_id)
+        except Exception as exc:  # defensive — resolver is contracted not to raise
+            logger.warning(
+                "github_kb.arxiv_resolve_unexpected_error",
+                extra={"arxiv_id": arxiv_id, "error": str(exc)},
+            )
+            doi = None
+        if doi:
+            if doi not in dois:  # dedup against existing DOI set
+                dois.add(doi)
+            resolved_count += 1
+        else:
+            skipped.append(("arxiv", arxiv_id))
+
+    for pmc_id in pmc_ids:
+        try:
+            doi = await resolve_pmc_to_doi(pmc_id)
+        except Exception as exc:
+            logger.warning(
+                "github_kb.pmc_resolve_unexpected_error",
+                extra={"pmc_id": pmc_id, "error": str(exc)},
+            )
+            doi = None
+        if doi:
+            if doi not in dois:
+                dois.add(doi)
+            resolved_count += 1
+        else:
+            skipped.append(("pmc", pmc_id))
+
+    # Keep the returned skipped list sorted for deterministic golden-file
+    # comparisons in downstream tests.
+    skipped.sort(key=lambda kv: (kv[0], kv[1]))
+
+    if not dois:
+        return 0, skipped, resolved_count
+
+    if app_state_for_doi_ingest is None:
+        raise ValueError(
+            "app_state_for_doi_ingest is required when ingest_linked_papers=True"
+        )
+
+    try:
+        result = await ingest_dois_into_kb(
+            app_state_for_doi_ingest,
+            kb_name=kb_name,
+            dois=sorted(dois),
+        )
+    except Exception as exc:  # defensive: bundle ingest must still succeed
+        logger.warning(
+            "github_kb.linked_paper_ingest_failed",
+            extra={"kb_name": kb_name, "error": str(exc)},
+        )
+        return 0, skipped, resolved_count
+
+    if isinstance(result, dict):
+        added = (
+            result.get("added_papers")
+            or result.get("added")
+            or 0
+        )
+        try:
+            added = int(added)
+        except (TypeError, ValueError):
+            added = 0
+    else:
+        added = 0
+    return added, skipped, resolved_count
+
+
+# ---------------------------------------------------------------------------
+# Internals — external-link KB log emission (Task 9)
+# ---------------------------------------------------------------------------
+
+
+def _emit_external_link_events(
+    *,
+    manifest: BundleManifest,
+    kb_name: str,
+    config: Config,
+) -> int:
+    """Walk the manifest's README + docs prose, mine non-paper URLs,
+    and emit one ``external_link`` Wave-4.3 KB-log event per URL.
+
+    Returns the number of events emitted. Best-effort: a write failure
+    on the KB log doesn't propagate (the underlying :class:`KBLogWriter`
+    swallows write errors), and any unexpected error here is logged but
+    not surfaced.
+    """
+    try:
+        bag = manifest.collect_external_links()
+    except Exception as exc:  # defensive — provenance is best-effort
+        logger.warning(
+            "github_kb.external_link_mining_failed",
+            extra={"kb_name": kb_name, "error": str(exc)},
+        )
+        return 0
+
+    if not bag.datasets and not bag.tools:
+        return 0
+
+    # Local imports keep the orchestrator import-cycle-free for callers
+    # that mock these seams in unit tests.
+    from pathlib import Path as _Path
+
+    from perspicacite.pipeline.kb_log import KBEvent, KBLogWriter
+
+    log_dir = _Path(
+        getattr(config.knowledge_base, "log_dir", "data/kb_logs")
+    )
+    kb_log = KBLogWriter(path=log_dir / f"{kb_name}.jsonl")
+
+    emitted = 0
+    for url in bag.datasets:
+        kb_log.append(KBEvent(
+            event="external_link",
+            kb_name=kb_name,
+            paper_id="",
+            source_command="ingest_skill_bundle",
+            extra={"url": url, "category": "dataset"},
+        ))
+        emitted += 1
+    for url in bag.tools:
+        kb_log.append(KBEvent(
+            event="external_link",
+            kb_name=kb_name,
+            paper_id="",
+            source_command="ingest_skill_bundle",
+            extra={"url": url, "category": "tool"},
+        ))
+        emitted += 1
+    return emitted
+
+
+# ---------------------------------------------------------------------------
+# Internals — fetcher + source resolution
+# ---------------------------------------------------------------------------
+
+
+def _build_default_fetcher(config: Config) -> GitHubFetcher:
+    """Production-path fetcher constructor.
+
+    The orchestrator builds this lazily so tests can pass a mock
+    fetcher without paying for ``mkdir(cache_dir)`` on every test run.
+    """
+    import os
+
+    token = os.environ.get(config.github.token_env_var)
+    return GitHubFetcher(
+        token=token,
+        cache_dir=Path(config.github.cache_dir),
+        cache_max_mb=config.github.cache_max_mb,
+        user_agent=config.github.user_agent,
+        api_base=config.github.api_base,
+    )
+
+
+async def _resolve_bundle_source(
+    source: Path | str,
+    *,
+    config: Config,
+    fetcher: GitHubFetcher | None,
+) -> Path:
+    """Return a local directory to walk.
+
+    * ``Path`` → returned as-is.
+    * ``str`` that parses as a GitHub URL → fetched (with the optional
+      ``ref.subpath`` applied so a ``/tree/.../sub/bundle`` URL points
+      at the bundle root, not the repo root).
+    * Any other ``str`` → coerced to ``Path``.
+    """
+    if isinstance(source, Path):
+        return source
+
+    if isinstance(source, str) and source.startswith(("http://", "https://")):
+        if fetcher is None:
+            fetcher = _build_default_fetcher(config)
+        ref = parse_repo_url(source)
+        root, _sha = await fetcher.fetch(ref)
+        return Path(root) / ref.subpath if ref.subpath else Path(root)
+
+    return Path(source)

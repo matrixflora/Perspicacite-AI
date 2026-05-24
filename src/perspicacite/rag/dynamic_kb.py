@@ -4,11 +4,13 @@ Creates temporary vector collections for relevant papers,
 scoped to a single research session.
 """
 
+import json
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from perspicacite.logging import get_logger
+from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 from perspicacite.rag.query_scope import PaperScopeResult, merge_scope_with_candidates
 from perspicacite.retrieval.chroma_store import _metadata_to_chunk
 
@@ -146,6 +148,16 @@ class DynamicKnowledgeBase:
             )
             return 0
 
+        # JSON-encode ``paper.metadata`` once per paper so every chunk
+        # carries the same payload through chroma. Non-bundle papers
+        # (no ``metadata`` dict) leave the field as None.
+        paper_md_json: str | None = None
+        if isinstance(getattr(paper, "metadata", None), dict) and paper.metadata:
+            try:
+                paper_md_json = json.dumps(paper.metadata, default=str)
+            except (TypeError, ValueError):
+                paper_md_json = None
+
         chunks: list[DocumentChunk] = []
 
         # Create metadata chunk
@@ -176,6 +188,7 @@ Abstract:
                 url=paper.url,
                 content_type=paper_content_type,
                 section="metadata",
+                paper_metadata_json=paper_md_json,
             ),
         ))
 
@@ -207,6 +220,7 @@ Abstract:
                         doi=paper.doi,
                         url=paper.url,
                         content_type=paper_content_type,
+                        paper_metadata_json=paper_md_json,
                     ),
                 ))
 
@@ -457,6 +471,7 @@ Abstract:
                         "authors": getattr(hit["metadata"], "authors", None),
                         "year": getattr(hit["metadata"], "year", None),
                         "doi": getattr(hit["metadata"], "doi", None),
+                        "paper_metadata": decode_paper_metadata_json(hit["metadata"]),
                         "chunks": [{"chunk_index": 0, "text": hit["text"]}],
                         "full_text": hit["text"],
                         "kb_name": getattr(self, "kb_name", None),
@@ -492,6 +507,7 @@ Abstract:
                 "authors": getattr(meta, "authors", None),
                 "year": getattr(meta, "year", None),
                 "doi": getattr(meta, "doi", None),
+                "paper_metadata": decode_paper_metadata_json(meta),
                 "chunks": chunks_list,
                 "full_text": full_text,
                 # F-15: tag with the KB this retriever wraps so SourceReference

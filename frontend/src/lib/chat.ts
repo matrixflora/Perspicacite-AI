@@ -64,7 +64,8 @@ export type ChatStreamEvent =
   | { kind: "meta"; papers_found?: number; sources?: ChatSource[] }
   | { kind: "thinking"; step: ThinkingStep }
   | { kind: "done"; conversation_id?: string; answer?: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "metadata"; iteration_count: number; completion_reason: string; diagnostic: Record<string, unknown> | null };
 
 // Empty string → same-origin requests, proxied by Next.js rewrites in
 // next.config.ts. Override via NEXT_PUBLIC_PERSPICACITE_URL for direct
@@ -83,6 +84,8 @@ export async function* streamChat(opts: {
   conversationId?: string;
   maxPapers?: number;
   databases?: DatabaseId[];
+  bm25Weight?: number;
+  vectorWeight?: number;
   signal?: AbortSignal;
 }): AsyncGenerator<ChatStreamEvent> {
   // Drop kb_name when empty so the backend default kicks in.
@@ -94,6 +97,8 @@ export async function* streamChat(opts: {
     conversation_id: opts.conversationId,
     databases: opts.databases,
   };
+  if (opts.bm25Weight !== undefined) body.bm25_weight = opts.bm25Weight;
+  if (opts.vectorWeight !== undefined) body.vector_weight = opts.vectorWeight;
   if (opts.kbName) body.kb_name = opts.kbName;
 
   const res = await fetch(`${BACKEND}/api/chat`, {
@@ -159,7 +164,7 @@ function parseFrame(frame: string): ChatStreamEvent[] {
   }
   if (typeof obj.delta === "string") return [{ kind: "token", text: obj.delta }];
 
-  // Final-answer payload — some modes (basic, contradiction, profound)
+  // Final-answer payload — some modes (basic, contradiction, deep_research)
   // ship the full text in one `type:"answer"` frame instead of streaming
   // token by token. Mark this as `done` with `answer` so ChatPanel will
   // adopt it as the message body only when no streamed text is present.
@@ -189,6 +194,20 @@ function parseFrame(frame: string): ChatStreamEvent[] {
         kind: "meta",
         papers_found: obj.papers.length,
         sources: obj.papers as ChatSource[],
+      },
+    ];
+  }
+
+  if (obj.type === "metadata") {
+    return [
+      {
+        kind: "metadata" as const,
+        iteration_count: typeof obj.iteration_count === "number" ? obj.iteration_count : 1,
+        completion_reason: typeof obj.completion_reason === "string" ? obj.completion_reason : "complete",
+        diagnostic:
+          obj.diagnostic && typeof obj.diagnostic === "object" && !Array.isArray(obj.diagnostic)
+            ? (obj.diagnostic as Record<string, unknown>)
+            : null,
       },
     ];
   }

@@ -125,6 +125,7 @@ export default function KBDetailPage({
             >
               Export
             </a>
+            <ClaimGraphExportButton name={name} />
             <button
               type="button"
               onClick={handleDelete}
@@ -682,5 +683,35 @@ function BuildCapsulesButton({ name }: { name: string }) {
       </button>
       {status.kind !== "idle" && <StatusPill status={status} />}
     </div>
+  );
+}
+
+function ClaimGraphExportButton({ name }: { name: string }) {
+  const formats = [
+    { value: "nquads", label: "N-Quads (.nq)", desc: "Default — compact quad format" },
+    { value: "turtle", label: "Turtle (.ttl)", desc: "Human-readable RDF" },
+    { value: "jsonld", label: "JSON-LD (.jsonld)", desc: "Linked Data JSON" },
+    { value: "rocrate", label: "RO-Crate (.json)", desc: "Research Object Crate" },
+  ] as const;
+
+  return (
+    <details className="relative">
+      <summary className="cursor-pointer list-none rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:bg-[var(--cnrs-grey-light)]">
+        Claim graph ▾
+      </summary>
+      <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] shadow-lg">
+        {formats.map((f) => (
+          <a
+            key={f.value}
+            href={kb.claimGraphUrl(name, f.value)}
+            className="flex flex-col gap-0.5 px-3 py-2 text-sm hover:bg-[var(--cnrs-grey-light)]"
+            title={f.desc}
+          >
+            <span className="font-medium text-[var(--text-body)]">{f.label}</span>
+            <span className="text-[11px] text-[var(--text-muted)]">{f.desc}</span>
+          </a>
+        ))}
+      </div>
+    </details>
   );
 }

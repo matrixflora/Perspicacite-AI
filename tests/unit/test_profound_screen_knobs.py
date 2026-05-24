@@ -17,8 +17,8 @@ import pytest
 
 from perspicacite.config.schema import Config
 from perspicacite.models.rag import RAGRequest
-from perspicacite.rag.modes import profound as profound_mod
-from perspicacite.rag.modes.profound import ProfoundRAGMode
+from perspicacite.rag.modes import deep_research as profound_mod
+from perspicacite.rag.modes.deep_research import ProfoundRAGMode
 
 
 def _web_docs(n: int) -> list[dict[str, Any]]:
@@ -176,7 +176,7 @@ async def test_profound_emits_reflect_phase_progress_for_cycle(monkeypatch):
     the final-response stream is a no-op.
     """
     from perspicacite.models.rag import StreamEvent
-    from perspicacite.rag.modes.profound import ResearchStep
+    from perspicacite.rag.modes.deep_research import ResearchStep
 
     cfg = Config()
     mode = ProfoundRAGMode(cfg)

@@ -15,8 +15,10 @@ from perspicacite.rag.modes import (
     AgenticRAGMode,
     BasicRAGMode,
     ContradictionRAGMode,
+    DeepResearchRAGMode,
     LiteratureSurveyRAGMode,
     ProfoundRAGMode,
+    ReasoningRAGMode,
 )
 from perspicacite.rag.tools import ToolRegistry
 from perspicacite.retrieval.chroma_store import ChromaVectorStore
@@ -65,14 +67,22 @@ class RAGEngine:
         survey_mode = LiteratureSurveyRAGMode(config)
         survey_mode.session_store = session_store
 
-        # Initialize mode handlers for all supported modes
+        reasoning_mode = ReasoningRAGMode(config)
+        reasoning_mode.session_store = session_store
+
+        # Initialize mode handlers for all supported modes.
+        # DeepResearchRAGMode is the canonical handler; both DEEP_RESEARCH and
+        # PROFOUND keys point to the same instance for backward compat.
+        _deep_research_mode = DeepResearchRAGMode(config)
         self._modes: dict[RAGMode, Any] = {
             RAGMode.BASIC: BasicRAGMode(config),
             RAGMode.ADVANCED: AdvancedRAGMode(config),
-            RAGMode.PROFOUND: ProfoundRAGMode(config),
+            RAGMode.DEEP_RESEARCH: _deep_research_mode,
+            RAGMode.PROFOUND: _deep_research_mode,   # backward-compat alias
             RAGMode.AGENTIC: AgenticRAGMode(config),
             RAGMode.LITERATURE_SURVEY: survey_mode,
             RAGMode.CONTRADICTION: ContradictionRAGMode(config),
+            RAGMode.REASONING: reasoning_mode,
         }
 
     async def query(

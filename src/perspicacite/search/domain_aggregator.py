@@ -261,7 +261,28 @@ def build_aggregator(config: Any) -> DomainAwareAggregator:
     max_per = int(getattr(search_cfg, "max_results_per_provider", 25))
 
     providers: list[Any] = []
-    scilex_available = False
+
+    # Standalone PubMed (biopython Entrez) is the baseline biomedical provider:
+    # registered FIRST so it leads the fan-out (no API key needed, fast, reliable).
+    # Wired in unconditionally when biopython + a real email are available, even
+    # alongside SciLEx — the aggregator dedupes by DOI so the overlap is harmless
+    # and we get robust PubMed coverage even when SciLEx's Semantic Scholar /
+    # OpenAlex paths trip rate limits or return empty. To turn it off explicitly,
+    # list ``enabled_providers`` with ``"-pubmed"`` as a sentinel entry.
+    if "-pubmed" not in enabled_raw:
+        try:
+            from perspicacite.search.pubmed import PubMedSearchAdapter
+            pdf_cfg = getattr(config, "pdf_download", None)
+            email = getattr(pdf_cfg, "unpaywall_email", "") or ""
+            if email and email.strip().lower() not in _OBVIOUS_PLACEHOLDERS:
+                providers.append(PubMedSearchAdapter(email=email))
+            else:
+                logger.info(
+                    "build_aggregator_pubmed_skipped_no_email",
+                    hint="set pdf_download.unpaywall_email to a real address",
+                )
+        except Exception as exc:
+            logger.warning("build_aggregator_pubmed_unavailable", error=str(exc))
 
     if "scilex" in enabled:
         try:
@@ -269,20 +290,8 @@ def build_aggregator(config: Any) -> DomainAwareAggregator:
             adapter = SciLExAdapter.from_config(config)
             if adapter.available:
                 providers.append(adapter)
-                scilex_available = True
         except Exception as exc:
             logger.warning("build_aggregator_scilex_unavailable", error=str(exc))
-
-    # Standalone PubMed (biopython Entrez) — useful when SciLEx is absent
-    if "pubmed" in enabled and not scilex_available:
-        try:
-            from perspicacite.search.pubmed import PubMedSearchAdapter
-            pdf_cfg = getattr(config, "pdf_download", None)
-            email = getattr(pdf_cfg, "unpaywall_email", "") or ""
-            if email and email.strip().lower() not in _OBVIOUS_PLACEHOLDERS:
-                providers.append(PubMedSearchAdapter(email=email))
-        except Exception as exc:
-            logger.warning("build_aggregator_pubmed_unavailable", error=str(exc))
 
     if "europepmc" in enabled:
         try:
