@@ -196,14 +196,29 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         papers = await self._broad_search(request.query, request.databases, app_state=getattr(request, "app_state", None))
 
         # Pre-filter: remove papers already in any provided KB
+        _papers_searched = len(papers)
         papers = self._filter_known_papers(papers, known_paper_ids)
+        _filtered_as_known = _papers_searched - len(papers)
 
         if not papers:
+            _cancellation_reason = (
+                "all_known_no_fallback" if _filtered_as_known > 0 else "no_papers"
+            )
             return RAGResponse(
                 answer="No papers found for this topic. Try broadening your search terms.",
                 sources=[],
                 mode=RAGMode.LITERATURE_SURVEY,
-                metadata={"session_id": session_id, "phase": "search_failed"}
+                metadata={
+                    "session_id": session_id,
+                    "phase": "search_failed",
+                    "diagnostic": {
+                        "papers_searched": _papers_searched,
+                        "filtered_as_known": _filtered_as_known,
+                        "kb_fallback_tried": False,
+                        "kb_chunks_found": 0,
+                        "cancellation_reason": _cancellation_reason,
+                    },
+                },
             )
 
         # Convert to candidates
@@ -319,6 +334,15 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             request, vector_store, embedding_provider
         )
 
+        # Diagnostic counters — populated as the pipeline progresses and emitted
+        # in every early-return path so callers can diagnose empty results.
+        _diag: dict = {
+            "papers_searched": 0,
+            "filtered_as_known": 0,
+            "kb_fallback_tried": False,
+            "kb_chunks_found": 0,
+        }
+
         _phase_sink = getattr(request, "telemetry_sink", None)
         yield StreamEvent.status("Literature Survey: Initializing...")
 
@@ -375,7 +399,9 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     )
 
         # Pre-filter: remove papers already in any provided KB
+        _diag["papers_searched"] = len(papers)
         papers = self._filter_known_papers(papers, known_paper_ids)
+        _diag["filtered_as_known"] = _diag["papers_searched"] - len(papers)
 
         if not papers:
             # If a KB was explicitly provided and the broad search is empty (because
@@ -386,6 +412,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 yield StreamEvent.status(
                     "Literature Survey: Using KB papers as survey corpus (all new results already known)"
                 )
+                _diag["kb_fallback_tried"] = True
                 try:
                     retriever = self._build_kb_retriever(request, vector_store, embedding_provider)
                     kb_results = await retriever.search(request.query, top_k=30)
@@ -419,6 +446,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                             doi=doi,
                             citation_count=0,
                         ))
+                    _diag["kb_chunks_found"] = len(kb_candidates)
                     if kb_candidates:
                         session.papers = kb_candidates
                         emit_phase(_phase_sink, phase="collect", state="done")
@@ -427,6 +455,10 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                         )
                     else:
                         emit_phase(_phase_sink, phase="collect", state="done")
+                        yield StreamEvent.diagnostic(
+                            **_diag,
+                            cancellation_reason="kb_fallback_empty",
+                        )
                         yield StreamEvent.status("Literature Survey: No papers found")
                         yield StreamEvent.content(
                             "No papers found for this topic. Try broadening your search terms or adding papers to your KB."
@@ -441,6 +473,11 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                 except Exception as _kb_exc:
                     logger.warning("survey_kb_fallback_failed", error=str(_kb_exc))
                     emit_phase(_phase_sink, phase="collect", state="done")
+                    yield StreamEvent.diagnostic(
+                        **_diag,
+                        cancellation_reason="kb_fallback_failed",
+                        kb_fallback_error=str(_kb_exc),
+                    )
                     yield StreamEvent.status("Literature Survey: No papers found")
                     yield StreamEvent.content(
                         "No papers found for this topic. Try broadening your search terms."
@@ -454,6 +491,13 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     return
             else:
                 emit_phase(_phase_sink, phase="collect", state="done")
+                _cancellation_reason = (
+                    "all_known_no_fallback" if _diag["filtered_as_known"] > 0 else "no_papers"
+                )
+                yield StreamEvent.diagnostic(
+                    **_diag,
+                    cancellation_reason=_cancellation_reason,
+                )
                 yield StreamEvent.status("Literature Survey: No papers found")
                 yield StreamEvent.content("No papers found for this topic. Try broadening your search terms.")
                 yield StreamEvent.done(

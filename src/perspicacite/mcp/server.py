@@ -5295,6 +5295,7 @@ async def get_relevant_passages(
 
         return _json_ok(
             {
+                "passage_count": len(matches),
                 "passages": [
                     {
                         "text": m.chunk_text,
