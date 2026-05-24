@@ -512,12 +512,13 @@ class LLMConfig(BaseModel):
     #     contextual:         "claude-haiku-4-5"   # contextual retrieval per-chunk
     #     search_optimize:    "claude-haiku-4-5"   # query optimizer
     #     grounding:          "claude-haiku-4-5"   # GUI grounding extractor
+    #     claim_graph:        "deepseek/deepseek-v4-pro"  # claim extraction (structured output)
     models: dict[str, str] = Field(
         default_factory=dict,
         description=(
             "Per-stage model overrides. Keys: synthesis_basic, "
             "synthesis_heavy, routing, screening, rephrase, contextual, "
-            "search_optimize, grounding. "
+            "search_optimize, grounding, claim_graph. "
             "Value is the model name; uses default_provider unless the "
             "name contains a provider prefix like 'anthropic/claude-...'. "
             "Empty dict = every stage uses the global default pair."

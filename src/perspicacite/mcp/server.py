@@ -5706,6 +5706,16 @@ async def build_claim_graph(
 
     data_dir = pathlib.Path("data/claim_graphs") / kb_name
     store = ClaimGraphStore(kb_name, data_dir=data_dir, backend="oxigraph")
+
+    # Resolve the model: explicit override takes priority; otherwise use the
+    # "claim_graph" stage config (falls back to default_model).  Passing an
+    # explicit model to _build bypasses the free-auto chain so structured-output
+    # capable models are used for claim extraction.
+    if model is None:
+        from perspicacite.llm.client import resolve_stage_model
+
+        _, model = resolve_stage_model(state.config, "claim_graph")
+
     try:
         result = await _build(
             kb_name=kb_name,
