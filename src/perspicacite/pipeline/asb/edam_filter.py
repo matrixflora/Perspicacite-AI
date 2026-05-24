@@ -54,13 +54,11 @@ def edam_pre_filter(
         # or "edam_topics" keys at all is unannotated and passes through
         # (fail-open / backward-compat with legacy chunks).
         chunk_op: str | None = meta.get("edam_operation") or None
-        # Use sentinel to distinguish missing key from explicitly-empty list
-        _MISSING = object()
-        chunk_topics_raw = meta.get("edam_topics", _MISSING)
         has_op_key = "edam_operation" in meta
         has_topic_key = "edam_topics" in meta
 
-        # Fail-open: no EDAM keys at all → pass through
+        # Fail-open: no EDAM keys at all → pass through (backward-compat with
+        # legacy chunks that predate EDAM annotation).
         if not has_op_key and not has_topic_key:
             result.append(chunk)
             continue
@@ -70,12 +68,11 @@ def edam_pre_filter(
         if edam_operation:
             op_ok = (chunk_op == edam_operation)
 
-        # Check topic filter
+        # Check topic filter.  A chunk with "edam_topics": [] has the key but
+        # no matching topics — it is annotated (empty set) and may be filtered.
         topic_ok = True
         if target_topics:
-            # chunk_topics_raw may be _MISSING (no key) or a list (possibly empty)
-            raw_list = [] if (chunk_topics_raw is _MISSING) else (chunk_topics_raw or [])
-            chunk_topics: set[str] = set(raw_list)
+            chunk_topics: set[str] = set(meta.get("edam_topics") or [])
             topic_ok = bool(chunk_topics & target_topics)
 
         if op_ok and topic_ok:
