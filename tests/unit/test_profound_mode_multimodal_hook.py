@@ -35,7 +35,7 @@ def _doc(figure_refs=None):
 
 @pytest.mark.asyncio
 async def test_profound_final_draft_wraps_with_figures(tmp_path):
-    from perspicacite.rag.modes import profound as profound_mode
+    from perspicacite.rag.modes import deep_research as profound_mode
     cfg = _capsule(tmp_path)
     mode = profound_mode.ProfoundRAGMode(cfg)
 
@@ -62,7 +62,7 @@ async def test_profound_final_draft_wraps_with_figures(tmp_path):
 
 @pytest.mark.asyncio
 async def test_profound_final_draft_text_only_without_refs(tmp_path):
-    from perspicacite.rag.modes import profound as profound_mode
+    from perspicacite.rag.modes import deep_research as profound_mode
     cfg = _capsule(tmp_path)
     mode = profound_mode.ProfoundRAGMode(cfg)
 

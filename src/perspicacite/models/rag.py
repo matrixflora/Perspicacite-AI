@@ -13,7 +13,8 @@ class RAGMode(str, Enum):
 
     BASIC: Simple retrieval + generation (single query, no refinement)
     ADVANCED: Query rephrasing + hybrid retrieval + WRRF scoring + optional refinement
-    PROFOUND: Multi-cycle research with planning, web search, reflection (from v1)
+    DEEP_RESEARCH: Multi-cycle research with planning, web search, reflection (canonical name)
+    PROFOUND: Deprecated alias for DEEP_RESEARCH — kept for backward compat
     AGENTIC: Intent-based agentic RAG with tool use
     LITERATURE_SURVEY: Systematic field mapping with theme identification and structured output
     CONTRADICTION: Identify agreement / disagreement / open questions across papers
@@ -22,7 +23,8 @@ class RAGMode(str, Enum):
 
     BASIC = "basic"
     ADVANCED = "advanced"
-    PROFOUND = "profound"
+    DEEP_RESEARCH = "deep_research"    # canonical name
+    PROFOUND = "profound"              # deprecated alias — kept for backward compat
     AGENTIC = "agentic"
     LITERATURE_SURVEY = "literature_survey"
     CONTRADICTION = "contradiction"

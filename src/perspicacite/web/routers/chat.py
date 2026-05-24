@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 RAG_MODE_MAP = {
     "basic": RAGMode.BASIC,
     "advanced": RAGMode.ADVANCED,
-    "profound": RAGMode.PROFOUND,
+    "deep_research": RAGMode.DEEP_RESEARCH,
+    "profound": RAGMode.PROFOUND,   # backward-compat alias (deprecated)
     "literature_survey": RAGMode.LITERATURE_SURVEY,
     "contradiction": RAGMode.CONTRADICTION,
     "reasoning": RAGMode.REASONING,
@@ -329,7 +330,7 @@ class ChatRequest(BaseModel):
     mode: str = Field(
         default="basic",
         description=(
-            "RAG mode: basic, advanced, profound, agentic, literature_survey, contradiction"
+            "RAG mode: basic, advanced, deep_research, agentic, literature_survey, contradiction (profound is a deprecated alias for deep_research)"
         ),
     )
     stream: bool = Field(default=True, description="Stream the response")
@@ -542,7 +543,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
 
     Routes to appropriate handler based on request.mode:
     - agentic: Uses AgenticOrchestrator (intent-based, tool use)
-    - basic/advanced/profound: Uses RAGEngine with respective mode
+    - basic/advanced/deep_research: Uses RAGEngine with respective mode
 
     Yields SSE events with thinking steps, tool calls, and final answer.
     """
@@ -860,7 +861,7 @@ async def _stream_agentic(request: ChatRequest, conversation_id: str | None = No
 
 
 async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = None):
-    """Stream using RAGEngine with selected mode (basic, advanced, profound, contradiction…)."""
+    """Stream using RAGEngine with selected mode (basic, advanced, deep_research, contradiction…)."""
     from perspicacite.models.rag import RAGMode
     from perspicacite.models.rag import RAGRequest as RAGReq
 

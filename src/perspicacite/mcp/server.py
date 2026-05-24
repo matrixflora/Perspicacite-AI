@@ -1407,7 +1407,7 @@ async def generate_report(
             "advanced"). One of:
               - "basic": quick single-pass retrieval + synthesis, no rerank.
               - "advanced": screening + rerank with query expansion (default).
-              - "profound": deep multi-cycle research with planning + reflection.
+              - "deep_research": deep multi-cycle research with planning + reflection (recommended; "profound" is a deprecated alias that still works).
               - "contradiction": surfaces conflicting evidence across papers
                 (agreement / disagreement / open questions).
               - "agentic": multi-step, intent-driven orchestration — delegates
@@ -1418,7 +1418,7 @@ async def generate_report(
         recency_weight: Optional recency bias (0.0 = disabled, 1.0 = full recency). When > 0,
             retrieved chunks are re-scored toward more recent papers using exponential decay.
         max_total_seconds: Override the per-mode wall-clock budget (30–1800 s). Applies to
-            the "profound" mode's cycle loop. None uses the config-file default.
+            the "deep_research" mode's cycle loop. None uses the config-file default.
         batch_size: Override the abstract-analysis batch size for "literature_survey" mode
             (1–100 papers per batch). None uses the config-file default (20).
         crossref_concurrency: Override Crossref enrichment concurrency (1–10). None uses
@@ -1451,6 +1451,15 @@ async def generate_report(
     state = _require_state()
     if isinstance(state, str):
         return state
+
+    # Backward compat: "profound" is the deprecated alias for "deep_research"
+    if mode == "profound":
+        logger.warning(
+            "generate_report_deprecated_mode",
+            mode="profound",
+            suggested="deep_research",
+        )
+        mode = "deep_research"
 
     import uuid as _uuid
 
@@ -1527,6 +1536,7 @@ async def generate_report(
         mode_map = {
             "basic": RAGMode.BASIC,
             "advanced": RAGMode.ADVANCED,
+            "deep_research": RAGMode.DEEP_RESEARCH,
             "profound": RAGMode.PROFOUND,
             "agentic": RAGMode.AGENTIC,
             "literature_survey": RAGMode.LITERATURE_SURVEY,
@@ -1648,7 +1658,7 @@ async def generate_report(
         # Prevents the MCP tool from blocking indefinitely when a single RAG cycle
         # takes longer than expected. Default: 600 s (10 min).
         _generate_report_timeout_s: float = 600.0
-        if mode in ("profound",):
+        if mode in ("profound", "deep_research"):
             _generate_report_timeout_s = float(
                 getattr(rag_request, "max_total_seconds", None) or 540.0
             )

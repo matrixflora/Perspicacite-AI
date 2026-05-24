@@ -788,6 +788,16 @@ class RAGModesConfig(BaseModel):
         )
     )
 
+    # deep_research is the renamed user-facing name for "profound" mode.
+    # When None, engine falls back to the profound field for backward compat.
+    deep_research: RAGModeSettings | None = Field(
+        default=None,
+        description=(
+            "Settings for deep_research mode (renamed from profound). "
+            "When None, falls back to the profound field for backward compat."
+        ),
+    )
+
     # Agentic: Intent-based with tool selection
     agentic: RAGModeSettings = Field(
         default_factory=lambda: RAGModeSettings(

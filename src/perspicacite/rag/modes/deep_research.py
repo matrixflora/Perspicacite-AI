@@ -1,6 +1,6 @@
-"""Profound RAG Mode - Exact implementation from release package v1.
+"""Deep Research RAG Mode — formerly ProfoundRAGMode.
 
-Profound RAG (ProfondeChain) adds:
+Exact implementation from release package v1 (ProfondeChain). Adds:
 - Multi-cycle research with planning
 - Dynamic plan creation and review
 - Web search integration
@@ -63,7 +63,7 @@ from perspicacite.rag.wrrf_v1 import doc_page_content, select_wrrf_merged_docume
 from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 
-logger = get_logger("perspicacite.rag.modes.profound")
+logger = get_logger("perspicacite.rag.modes.deep_research")
 
 
 @dataclass
@@ -91,11 +91,11 @@ class PlanStep:
     expected_outcome: str = ""
 
 
-class ProfoundRAGMode(BaseRAGMode):
+class DeepResearchRAGMode(BaseRAGMode):
     """
-    Profound RAG Mode - Exact port from release package core/profonde.py
+    Deep Research RAG Mode — formerly ProfoundRAGMode.
 
-    This is the original "Profound" mode from Perspicacité v1 with:
+    Exact port from release package core/profonde.py with:
     - Multi-cycle research (up to max_cycles)
     - Planning with step-by-step approach
     - Plan review and adjustment
@@ -113,7 +113,9 @@ class ProfoundRAGMode(BaseRAGMode):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        rag_settings = getattr(config.rag_modes, "profound", None)
+        # Prefer deep_research config; fall back to profound for backward compat
+        rag_settings = getattr(config.rag_modes, "deep_research", None) \
+                       or getattr(config.rag_modes, "profound", None)
 
         # Handle both dict and Pydantic model
         if rag_settings is None:
@@ -727,7 +729,7 @@ class ProfoundRAGMode(BaseRAGMode):
             max_cycles = self.max_cycles
 
         yield StreamEvent.status(
-            f"Profond RAG: Initializing deep research ({max_cycles} cycle{'s' if max_cycles != 1 else ''})..."
+            f"Deep Research: Initializing deep research ({max_cycles} cycle{'s' if max_cycles != 1 else ''})..."
         )
 
         # Reset state
@@ -832,17 +834,17 @@ class ProfoundRAGMode(BaseRAGMode):
 
             self.iterations = cycle + 1
             yield StreamEvent.status(
-                f"Profond RAG: Research cycle {self.iterations}/{max_cycles}..."
+                f"Deep Research: Research cycle {self.iterations}/{max_cycles}..."
             )
 
             plan = await self._create_plan(query=request.query, llm=llm)
             yield StreamEvent.status_kind(
                 "tokens", kind="usage", tokens_in=_tok["in"], tokens_out=_tok["out"],
             )
-            yield StreamEvent.status(f"Profond RAG: Executing {len(plan)} research steps...")
+            yield StreamEvent.status(f"Deep Research: Executing {len(plan)} research steps...")
             if self.use_websearch and "web_search" in tools.list_tools():
                 yield StreamEvent.status(
-                    "Profond RAG: Web search is available — will consult live "
+                    "Deep Research: Web search is available — will consult live "
                     "databases when KB coverage is insufficient."
                 )
             _c_plan_s = get_collector()
@@ -921,7 +923,7 @@ class ProfoundRAGMode(BaseRAGMode):
             ]
             if _web_docs:
                 yield StreamEvent.status(
-                    f"Profond RAG: Cycle {self.iterations} consulted the web "
+                    f"Deep Research: Cycle {self.iterations} consulted the web "
                     f"({len(_web_docs)} document{'s' if len(_web_docs) != 1 else ''} from live search)."
                 )
 
@@ -974,7 +976,7 @@ class ProfoundRAGMode(BaseRAGMode):
                 emit_phase(_phase_sink, phase="retrieve", state="done")
                 emit_phase(_phase_sink, phase="reason", state="done")
                 emit_phase(_phase_sink, phase="synthesize", state="running")
-                yield StreamEvent.status("Profond RAG: Early exit — synthesizing final answer...")
+                yield StreamEvent.status("Deep Research: Early exit — synthesizing final answer...")
                 try:
                     async with asyncio.timeout(self.synthesis_timeout_s):
                         async for event in self._stream_final_response(
@@ -1002,7 +1004,7 @@ class ProfoundRAGMode(BaseRAGMode):
             if plan_limit_reason:
                 completion_reason = plan_limit_reason
                 yield StreamEvent.status(
-                    f"Profond RAG: Plan review ended research ({plan_limit_reason})"
+                    f"Deep Research: Plan review ended research ({plan_limit_reason})"
                 )
                 if plan_limit_reason in (
                     "unanswerable",
@@ -1054,14 +1056,14 @@ class ProfoundRAGMode(BaseRAGMode):
                 bool(summary.get("should_continue", False)) and cycle < max_cycles - 1
             )
             if not should_continue:
-                yield StreamEvent.status("Profond RAG: Research complete based on iteration summary")
+                yield StreamEvent.status("Deep Research: Research complete based on iteration summary")
                 break
 
             cycle_successes = sum(1 for s in cycle_steps if s.success)
             if cycle_successes == 0:
                 self.consecutive_failures += 1
                 if self.consecutive_failures >= self.max_consecutive_failures:
-                    yield StreamEvent.status("Profond RAG: Max consecutive failures reached")
+                    yield StreamEvent.status("Deep Research: Max consecutive failures reached")
                     break
             else:
                 self.consecutive_failures = 0
@@ -1072,7 +1074,7 @@ class ProfoundRAGMode(BaseRAGMode):
         yield StreamEvent.status_kind(
             "tokens", kind="usage", tokens_in=_tok["in"], tokens_out=_tok["out"],
         )
-        yield StreamEvent.status("Profond RAG: Synthesizing final answer...")
+        yield StreamEvent.status("Deep Research: Synthesizing final answer...")
         try:
             async with asyncio.timeout(self.synthesis_timeout_s):
                 async for event in self._stream_final_response(
@@ -2720,3 +2722,7 @@ Follow the system instructions for this situation."""
     def _format_references(self, sources: list[SourceReference]) -> str:
         """Format sources as a references section using shared utility."""
         return format_references(sources)
+
+
+# Backward-compatible alias — code that imports ProfoundRAGMode still works.
+ProfoundRAGMode = DeepResearchRAGMode

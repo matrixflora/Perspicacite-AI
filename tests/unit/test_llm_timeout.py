@@ -177,10 +177,11 @@ async def test_provider_timeout_overrides_global_default():
 def test_profound_mode_has_synthesis_timeout_s_attribute():
     """ProfoundRAGMode must expose synthesis_timeout_s read from config."""
     from unittest.mock import MagicMock
-    from perspicacite.rag.modes.profound import ProfoundRAGMode
+    from perspicacite.rag.modes.deep_research import ProfoundRAGMode
 
     cfg = MagicMock()
-    cfg.rag_modes.profound = None   # triggers dict fallback in __init__
+    cfg.rag_modes.deep_research = None   # triggers fallback to profound
+    cfg.rag_modes.profound = None        # both None triggers dict fallback in __init__
     mode = ProfoundRAGMode(cfg)
     assert hasattr(mode, "synthesis_timeout_s"), "synthesis_timeout_s attribute missing"
     assert mode.synthesis_timeout_s == 90.0, f"expected 90.0, got {mode.synthesis_timeout_s}"
