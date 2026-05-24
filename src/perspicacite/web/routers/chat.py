@@ -386,6 +386,24 @@ class ChatRequest(BaseModel):
             "(1) is used."
         ),
     )
+    bm25_weight: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Override BM25 weight for advanced-mode hybrid retrieval (0.0-1.0). "
+            "bm25_weight=1.0 + vector_weight=0.0 → pure BM25. None = LLM-determined."
+        ),
+    )
+    vector_weight: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Override vector (dense) weight for advanced-mode hybrid retrieval. "
+            "None = LLM-determined."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):
@@ -996,6 +1014,8 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
             if rag_mode == RAGMode.PROFOUND and request.profond_cycles is not None
             else None
         ),
+        bm25_weight=request.bm25_weight,
+        vector_weight=request.vector_weight,
     )
     # Thread app_state and grounding context onto the RAGRequest so that
     # BasicRAGMode.execute() can pass them to the optimizer.
