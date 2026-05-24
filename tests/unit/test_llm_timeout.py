@@ -135,3 +135,40 @@ async def test_per_call_kwarg_timeout_wins_over_all():
                     )
 
     assert captured_kwargs.get("timeout") == 30.0
+
+
+@pytest.mark.asyncio
+async def test_provider_timeout_overrides_global_default():
+    """Provider-level timeout wins over llm.default_timeout_s (tier 2 > config tier)."""
+    from perspicacite.llm.client import AsyncLLMClient
+
+    cfg = _make_config(default_timeout_s=120.0)
+    client = AsyncLLMClient(cfg)
+
+    captured_kwargs: dict = {}
+
+    async def fake_acompletion(**kwargs):
+        captured_kwargs.update(kwargs)
+        resp = MagicMock()
+        resp.choices = [MagicMock(message=MagicMock(content="ok"))]
+        resp.usage = MagicMock(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        resp.model = "deepseek/deepseek-chat"
+        resp.get = lambda k, d=None: {"usage": resp.usage}.get(k, d)
+        return resp
+
+    litellm_mock = MagicMock()
+    litellm_mock.acompletion = AsyncMock(side_effect=fake_acompletion)
+
+    with patch.object(client, "_get_litellm", return_value=litellm_mock):
+        with patch.object(client, "_get_provider_config") as mock_get_cfg:
+            mock_get_cfg.return_value = MagicMock(timeout=45, base_url="", max_retries=1)
+            with patch.object(client, "_build_model_string", return_value="deepseek/deepseek-chat"):
+                with patch.object(client, "_is_agent_cli_provider", return_value=False):
+                    await client.complete(
+                        messages=[{"role": "user", "content": "hello"}],
+                        model="deepseek-chat",
+                        provider="deepseek",
+                        # No explicit timeout kwarg — provider's 45s should win over config's 120s
+                    )
+
+    assert captured_kwargs.get("timeout") == 45.0

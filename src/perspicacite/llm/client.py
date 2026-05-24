@@ -662,7 +662,7 @@ class AsyncLLMClient:
             _call_timeout = kwargs.pop("timeout", None)
             if _call_timeout is not None:
                 _effective_timeout = float(_call_timeout)
-            elif provider_config.timeout:
+            elif provider_config.timeout is not None:
                 _effective_timeout = float(provider_config.timeout)
             else:
                 _effective_timeout = float(
@@ -696,7 +696,7 @@ class AsyncLLMClient:
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    timeout=provider_config.timeout,
+                    timeout=_effective_timeout,
                     api_key=minimax_api_key,
                     api_base=provider_config.base_url,
                     **kwargs,
@@ -854,6 +854,17 @@ class AsyncLLMClient:
         provider_config = self._get_provider_config(provider)
         model_str = self._build_model_string(provider, model)
 
+        # Three-tier timeout: per-call kwarg > provider config > global config > code constant
+        _call_timeout = kwargs.pop("timeout", None)
+        if _call_timeout is not None:
+            _effective_timeout = float(_call_timeout)
+        elif provider_config.timeout is not None:
+            _effective_timeout = float(provider_config.timeout)
+        else:
+            _effective_timeout = float(
+                getattr(self.config, "default_timeout_s", DEFAULT_LLM_TIMEOUT_S)
+            )
+
         logger.info(
             "llm_stream_start",
             provider=provider,
@@ -879,7 +890,7 @@ class AsyncLLMClient:
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    timeout=provider_config.timeout,
+                    timeout=_effective_timeout,
                     api_key=minimax_api_key,
                     api_base=provider_config.base_url,
                     stream=True,
@@ -919,7 +930,7 @@ class AsyncLLMClient:
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
-                "timeout": provider_config.timeout,
+                "timeout": _effective_timeout,
                 "stream": True,
                 "stream_options": {"include_usage": True},
             }
