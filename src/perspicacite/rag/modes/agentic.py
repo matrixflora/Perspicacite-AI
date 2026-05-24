@@ -270,7 +270,7 @@ class AgenticRAGMode(BaseRAGMode):
                     chunk_size = 100
                     for i in range(0, len(content), chunk_size):
                         chunk = content[i : i + chunk_size]
-                        yield StreamEvent.token(chunk)
+                        yield StreamEvent.content(chunk)
 
                 elif event_type == "papers_found":
                     papers = event.get("papers", [])
@@ -286,7 +286,12 @@ class AgenticRAGMode(BaseRAGMode):
         yield StreamEvent.metadata(
             **(_agentic_metadata if _agentic_metadata else {"iteration_count": 1, "completion_reason": "complete"})
         )
-        yield StreamEvent.done()
+        yield StreamEvent.done(
+            conversation_id="",
+            tokens_used=0,
+            mode="agentic",
+            iterations=_agentic_metadata.get("iteration_count", 1) if _agentic_metadata else 1,
+        )
 
 
 # Keep backward-compatible exports

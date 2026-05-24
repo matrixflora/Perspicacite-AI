@@ -815,6 +815,10 @@ class DeepResearchRAGMode(BaseRAGMode):
             _tid = getattr(request, "task_id", None)
             if _tid and is_cancelled(_tid):
                 logger.info("profound_cancelled", task_id=_tid, cycle=cycle)
+                yield StreamEvent.metadata(
+                    iteration_count=self.iterations,
+                    completion_reason="cancelled",
+                )
                 yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
                 return
 
