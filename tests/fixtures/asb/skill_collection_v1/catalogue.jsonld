@@ -1,0 +1,13 @@
+{
+  "@context": "https://schema.org/",
+  "@type": "DataCatalog",
+  "name": "metabolomics-v1",
+  "hasPart": [
+    {
+      "@type": "Dataset",
+      "identifier": "https://w3id.org/holobiomicslab/asb-skill/feature-detection-lcms",
+      "name": "feature-detection-lcms",
+      "description": "Use when analyzing LC-MS data for peak detection."
+    }
+  ]
+}
