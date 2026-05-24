@@ -1387,6 +1387,8 @@ async def generate_report(
     databases: list[str] | None = None,
     extract_claims: bool = False,
     domains: list[str] | None = None,
+    bm25_weight: float | None = None,
+    vector_weight: float | None = None,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1442,11 +1444,40 @@ async def generate_report(
             Multiple IDs are composed into a CompositeAdapter; applies when
             ``extract_claims=True``. Requires indicium-adapters; silently ignored
             if not available.
+        bm25_weight: Override BM25 retrieval weight in [0.0, 1.0] for hybrid
+            retrieval modes (advanced, deep_research). None uses the config
+            default (0.5). Set to 1.0 for pure keyword retrieval, 0.0 for
+            pure vector retrieval. Complementary to vector_weight.
+        vector_weight: Override vector (semantic) retrieval weight in [0.0, 1.0]
+            for hybrid retrieval modes. None uses the config default (0.5).
+            Complementary to bm25_weight. Both can be set independently for
+            asymmetric hybrid weighting.
 
     Returns:
-        JSON with the report text, cited sources, and metadata.
-        When ``extract_claims=True`` the payload also includes an ``indicia``
-        key containing a list of typed claim dicts (5-slot SuperPattern).
+        JSON object with the following keys:
+
+        Always present:
+          - ``report`` (str): synthesized answer with inline citations
+          - ``sources`` (list): cited papers (doi, title, authors, year, section)
+          - ``papers_used`` (int): number of sources cited
+          - ``query`` (str): echoed query
+          - ``kb_name`` / ``kb_names``: echoed KB selection
+          - ``mode`` (str): echoed RAG mode used
+          - ``message_id`` (str): unique report ID for referencing in conversations
+          - ``task_id`` (str | null): async task ID if one was provided
+          - ``asb_metadata`` (dict | null): ASB provenance block when run via ASB
+          - ``iteration_count`` (int): number of RAG cycles completed
+            (always 1 for basic/advanced; 1–N for deep_research; 0 on cancellation)
+          - ``completion_reason`` (str): why the run ended — ``"complete"``,
+            ``"time_budget_exceeded"``, ``"early_exit_confidence"``, or
+            ``"cancelled"``
+          - ``diagnostic`` (dict | null): mode-specific internals, e.g.
+            ``{"cycles_completed": 2, "papers_retrieved": 14}`` for deep_research
+
+        Present only when ``extract_claims=True``:
+          - ``indicia`` (list): typed claim dicts (5-slot SuperPattern + ECO/CiTO)
+          - ``claims_valid`` (bool): SHACL validation result
+          - ``validation_report`` (str): SHACL error detail (only when invalid)
     """
     state = _require_state()
     if isinstance(state, str):
@@ -1598,6 +1629,8 @@ async def generate_report(
             screen_threshold=screen_threshold,
             max_papers_to_download=max_papers_to_download,
             databases=filtered_databases,
+            bm25_weight=bm25_weight,
+            vector_weight=vector_weight,
         )
 
         # Build telemetry sink and attach to the request so each RAG mode

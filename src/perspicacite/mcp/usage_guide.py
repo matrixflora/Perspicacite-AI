@@ -133,7 +133,14 @@ _TOOL_ENTRIES: list[dict] = [
             "screen_method",
             "screen_threshold",
             "databases",
+            "bm25_weight (hybrid retrieval keyword bias, 0.0–1.0)",
+            "vector_weight (hybrid retrieval semantic bias, 0.0–1.0)",
         ],
+        "response_fields": (
+            "report, sources, papers_used, iteration_count, completion_reason, "
+            "diagnostic (cycles_completed/papers_retrieved for deep_research), "
+            "message_id, task_id, asb_metadata"
+        ),
     },
     {
         "name": "screen_papers",
@@ -321,13 +328,13 @@ _TOOL_ENTRIES: list[dict] = [
     {
         "name": "claim_graph_export",
         "purpose": (
-            "Export a KB's indicium claim graph as Turtle, JSON-LD, or RO-Crate."
+            "Export a KB's indicium claim graph as N-Quads (default), Turtle, JSON-LD, or RO-Crate."
         ),
         "when_to_use": (
             "Archive or hand off a KB's claim graph to an external triple-store, "
             "analysis pipeline, or research-object archive."
         ),
-        "key_knobs": ["kb_name (required)", "format (turtle|jsonld|rocrate)"],
+        "key_knobs": ["kb_name (required)", "format (nquads|turtle|jsonld|rocrate) — default: nquads"],
     },
     {
         "name": "get_claim_figures",
