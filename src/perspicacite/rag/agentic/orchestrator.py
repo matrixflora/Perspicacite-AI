@@ -1140,6 +1140,11 @@ class AgenticOrchestrator:
             yield {"type": "papers_found", "papers": _clean_papers_for_event(relevant_papers)}
 
         yield {"type": "phase_transition", "phase": "done"}
+        yield {
+            "type": "completion",
+            "iteration_count": locals().get("iteration", 0) + 1,
+            "completion_reason": "complete",
+        }
 
     async def _maybe_upgrade_single_kb_to_composite_parallel(
         self, plan: Plan, query: str, kb_name: str

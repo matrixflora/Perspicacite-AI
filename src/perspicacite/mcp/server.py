@@ -1663,6 +1663,10 @@ async def generate_report(
                 getattr(rag_request, "max_total_seconds", None) or 540.0
             )
 
+        report_iterations: int | None = None
+        report_completion_reason: str | None = None
+        report_diagnostic: dict | None = None
+
         cancelled_reason: str | None = None
         try:
             async with asyncio.timeout(_generate_report_timeout_s):
@@ -1688,6 +1692,16 @@ async def generate_report(
                                 "metadata": src.get("metadata"),
                             }
                         )
+                    elif event.event == "metadata":
+                        import json as _json
+
+                        _meta = _json.loads(event.data) if isinstance(event.data, str) else {}
+                        report_iterations = _meta.get("iteration_count")
+                        report_completion_reason = _meta.get("completion_reason")
+                    elif event.event == "diagnostic":
+                        import json as _json
+
+                        report_diagnostic = _json.loads(event.data) if isinstance(event.data, str) else {}
                     elif event.event == "error":
                         # Modes signal cancellation by yielding an error event with
                         # ``reason="cancelled"``. Surface this as a structured response
@@ -1733,6 +1747,9 @@ async def generate_report(
                 "cancelled": True,
                 "task_id": task_id,
                 "asb_metadata": asb_md,
+                "iterations": report_iterations,
+                "completion_reason": report_completion_reason,
+                "diagnostic": report_diagnostic,
             }
             _cancelled_payload.update(_response_collector.as_response_extras())
             return _json_ok(_cancelled_payload)
@@ -1785,6 +1802,9 @@ async def generate_report(
             "papers_used": len(sources),
             "message_id": message_id,
             "asb_metadata": asb_md,
+            "iterations": report_iterations,
+            "completion_reason": report_completion_reason,
+            "diagnostic": report_diagnostic,
         }
         _final_payload.update(_response_collector.as_response_extras())
         if indicia is not None:

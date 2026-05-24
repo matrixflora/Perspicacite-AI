@@ -998,6 +998,10 @@ class DeepResearchRAGMode(BaseRAGMode):
                     yield StreamEvent.status(
                         "Deep research: synthesis time budget reached — returning partial answer."
                     )
+                yield StreamEvent.metadata(
+                    iteration_count=self.iterations,
+                    completion_reason=completion_reason or "complete",
+                )
                 emit_phase(_phase_sink, phase="synthesize", state="done")
                 return
 
@@ -1096,6 +1100,10 @@ class DeepResearchRAGMode(BaseRAGMode):
                 "Deep research: synthesis time budget reached — returning partial answer."
             )
             completion_reason = "synthesis_timeout"
+        yield StreamEvent.metadata(
+            iteration_count=self.iterations,
+            completion_reason=completion_reason or "complete",
+        )
         emit_phase(_phase_sink, phase="synthesize", state="done")
 
     async def _create_plan(

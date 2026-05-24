@@ -296,6 +296,8 @@ class StreamEvent(BaseModel):
         "done",  # Stream complete
         "code_excerpt",  # Code-chunk attachment (sub-project C, 2026-05-15)
         "figure_ref",  # Figure-reference attachment (sub-project C, 2026-05-15)
+        "metadata",  # Run summary: iteration_count, completion_reason
+        "diagnostic",  # Early-return diagnostics: papers_searched, filtered_as_known, …
     ]
     data: str  # JSON-encoded payload
 
@@ -380,3 +382,22 @@ class StreamEvent(BaseModel):
         """Create a figure-ref event (sub-project C)."""
         import json
         return cls(event="figure_ref", data=json.dumps(payload))
+
+    @classmethod
+    def metadata(cls, **payload: Any) -> "StreamEvent":
+        """Create a metadata event carrying run summary fields.
+
+        Typical fields: ``iteration_count``, ``completion_reason``.
+        """
+        import json
+        return cls(event="metadata", data=json.dumps(payload))
+
+    @classmethod
+    def diagnostic(cls, **payload: Any) -> "StreamEvent":
+        """Create a diagnostic event for early-return paths.
+
+        Typical fields: ``papers_searched``, ``filtered_as_known``,
+        ``kb_chunks_found``, ``cancellation_reason``.
+        """
+        import json
+        return cls(event="diagnostic", data=json.dumps(payload))
