@@ -5,7 +5,7 @@
 const RAG_MODES = [
     { value: 'basic',             label: 'Quick Search',            desc: 'Fast single-pass retrieval' },
     { value: 'advanced',          label: 'Advanced (Hybrid)',        desc: 'Query expansion + BM25/vector hybrid' },
-    { value: 'profound',          label: 'Deep Research',            desc: 'Multi-cycle iterative research' },
+    { value: 'deep_research',     label: 'Deep Research',            desc: 'Multi-cycle iterative research' },
     { value: 'agentic',           label: 'Perspicacite Agentic',     desc: 'Intent-classified, tool-using agent' },
     { value: 'literature_survey', label: 'Literature Survey',        desc: 'Broad search + theme clustering' },
     { value: 'contradiction',     label: 'Contradiction',            desc: 'Agreement / disagreement across papers' },

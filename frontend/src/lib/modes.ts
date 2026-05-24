@@ -4,7 +4,7 @@
 export type RAGMode =
   | "basic"
   | "advanced"
-  | "profound"
+  | "deep_research"
   | "agentic"
   | "literature_survey"
   | "contradiction";
@@ -92,7 +92,7 @@ export const MODES: ModeDescriptor[] = [
     ],
   },
   {
-    id: "profound",
+    id: "deep_research",
     label: "Profond",
     blurb: "Deep reasoning over multiple passes — slower, more thorough.",
     helper:

@@ -238,7 +238,7 @@ async function sendQuery() {
                     addThinkingStep(data.message, 'analyzing', data.details);
                     if (data.message) setStatusLabel(String(data.message).slice(0, 80));
                 } else if (data.type === 'source') {
-                    // Source from RAG modes (basic, advanced, profound)
+                    // Source from RAG modes (basic, advanced, deep_research)
                     if (data.source) {
                         const src = data.source;
                         if (src.doi) {
@@ -726,7 +726,7 @@ function createThinkingMessage() {
     const modeLabels = {
         'basic': '📖 Basic Retrieval',
         'advanced': '🔍 Advanced Analysis',
-        'profound': '🔬 Profound Research',
+        'deep_research': '🔬 Deep Research',
         'agentic': '🤖 Agent Thinking',
         'literature_survey': '📚 Literature Survey',
         'contradiction': '⚖️ Contradiction Analysis',
@@ -734,8 +734,8 @@ function createThinkingMessage() {
     const label = modeLabels[mode] || '🧠 Processing';
     // Modes where multi-step reasoning is the point: auto-expand the
     // thinking panel so the user can watch progress without clicking.
-    const wantsExpanded = mode === 'agentic' || mode === 'profound' || mode === 'literature_survey';
-    const wantsPhaseStrip = mode === 'agentic' || mode === 'profound';
+    const wantsExpanded = mode === 'agentic' || mode === 'deep_research' || mode === 'literature_survey';
+    const wantsPhaseStrip = mode === 'agentic' || mode === 'deep_research';
 
     const phaseStripHtml = wantsPhaseStrip
         ? `<div class="thinking-phase-strip" aria-label="Agentic phases">

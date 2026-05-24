@@ -138,7 +138,7 @@ async function loadChatFromHistory(item) {
                 • Choose a <strong>Search Mode</strong> below:<br>
                 &nbsp;&nbsp;📚 <strong>Quick Search</strong> — Fast single-query retrieval<br>
                 &nbsp;&nbsp;⚡ <strong>Advanced</strong> — Query rephrasing + hybrid retrieval<br>
-                &nbsp;&nbsp;🔬 <strong>Deep Research</strong> — Multi-cycle profound research<br>
+                &nbsp;&nbsp;🔬 <strong>Deep Research</strong> — Multi-cycle iterative deep research<br>
                 &nbsp;&nbsp;🤖 <strong>Agentic</strong> — Intent-based with tool use<br>
                 &nbsp;&nbsp;📖 <strong>Literature Survey</strong> — Systematic field mapping with themes<br><br>
                 <strong>Features:</strong><br>

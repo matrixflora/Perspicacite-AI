@@ -159,7 +159,7 @@ function parseFrame(frame: string): ChatStreamEvent[] {
   }
   if (typeof obj.delta === "string") return [{ kind: "token", text: obj.delta }];
 
-  // Final-answer payload — some modes (basic, contradiction, profound)
+  // Final-answer payload — some modes (basic, contradiction, deep_research)
   // ship the full text in one `type:"answer"` frame instead of streaming
   // token by token. Mark this as `done` with `answer` so ChatPanel will
   // adopt it as the message body only when no streamed text is present.
