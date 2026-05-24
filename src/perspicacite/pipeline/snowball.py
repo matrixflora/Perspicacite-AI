@@ -37,7 +37,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from typing import Any
+
+# Allow 1-year lookahead for in-press / early-access articles.
+_MAX_VALID_YEAR: int = datetime.now().year + 1
 
 import httpx
 
@@ -79,6 +83,7 @@ class SnowballReport:
     dropped_existing: int = 0
     dropped_filtered: int = 0
     dropped_screened: int = 0
+    dropped_future_year: int = 0
     added_papers: int = 0
     added_chunks: int = 0
     pdf_download: dict[str, int] = field(default_factory=dict)
@@ -557,14 +562,33 @@ async def snowball_expand(
     return hits
 
 
-def _papers_from_hits(hits: list[ExpansionHit]) -> list[Paper]:
+def _papers_from_hits(hits: list[ExpansionHit]) -> tuple[list[Paper], int]:
     """Coerce ExpansionHit → Paper so we can run apply_filters /
     screen_candidates / ingest_dois_into_kb on the same shapes the
-    SciLEx path uses."""
+    SciLEx path uses.
+
+    Returns ``(papers, dropped_future_year_count)``.
+    """
     seen: set[str] = set()
     out: list[Paper] = []
+    dropped_future_year = 0
     for h in hits:
         if h.expanded_doi in seen:
+            continue
+        # Year-validity guard: drop papers with implausibly future years.
+        # Elsevier "available online" early-access records can carry a year
+        # that is 1-2 years ahead of their actual publication date, making
+        # them appear as valid "forward citations" of older papers. Allow a
+        # 1-year lookahead (in-press is ok), but reject anything beyond that.
+        if h.year is not None and h.year > _MAX_VALID_YEAR:
+            logger.warning(
+                "snowball_future_year_dropped",
+                doi=h.expanded_doi,
+                year=h.year,
+                max_valid_year=_MAX_VALID_YEAR,
+            )
+            dropped_future_year += 1
+            seen.add(h.expanded_doi)
             continue
         seen.add(h.expanded_doi)
         out.append(Paper(
@@ -578,7 +602,7 @@ def _papers_from_hits(hits: list[ExpansionHit]) -> list[Paper]:
             citation_count=h.citation_count,
             source=PaperSource.CITATION_FOLLOW,
         ))
-    return out
+    return out, dropped_future_year
 
 
 async def expand_kb_via_citations(
@@ -658,7 +682,8 @@ async def expand_kb_via_citations(
     )
     report.raw_hits = len(hits)
 
-    papers = _papers_from_hits(hits)
+    papers, _dropped_fy = _papers_from_hits(hits)
+    report.dropped_future_year = _dropped_fy
     report.unique_dois = len(papers)
 
     # Drop expanded DOIs already in the KB (no point re-ingesting).

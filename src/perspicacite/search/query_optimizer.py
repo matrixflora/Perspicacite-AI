@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -156,6 +157,16 @@ async def optimize_query(
             context_used=False, fallback_reason=None,
         )
 
+    # Year-anchor preservation: author+year queries are identifier-style lookups
+    # (e.g. "retrieval augmented generation Lewis 2020"). Rewriting them strips
+    # the year/author, making the specific paper unfindable. Return verbatim.
+    if re.search(r'\b(19|20)\d{2}\b', query.strip()):
+        return OptimizationResult(
+            searched_query=query.strip(), enabled=True, applied=False,
+            context_used=False, fallback_reason="year_anchor_preserved",
+            web_query=query.strip(), kb_query=query.strip(),
+        )
+
     # Truncate context head-keep.
     ctx_str = context or ""
     if len(ctx_str) > qo_cfg.max_context_chars:
@@ -174,7 +185,7 @@ async def optimize_query(
                 model=model,
                 provider=provider,
                 temperature=0.2,
-                max_tokens=400,
+                max_tokens=800,
                 stage="search_optimize",
                 sink=sink,
             ),

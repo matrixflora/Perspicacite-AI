@@ -40,6 +40,7 @@ KNOWN_DATABASES: frozenset[str] = frozenset({
     "pubchem",
     "inspire",
     "dblp",
+    "dblp_sparql",
     "google_scholar",
 })
 

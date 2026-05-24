@@ -250,11 +250,10 @@ class ResponseMetadataCollector:
         self.append(event)
 
     def as_response_extras(self) -> dict:
-        out: dict = {}
-        if self._attempts:
-            out["attempts"] = list(self._attempts)
-        if self._query_rephrasings:
-            out["query_rephrasings"] = list(self._query_rephrasings)
+        out: dict = {
+            "attempts": list(self._attempts),          # always present
+            "query_rephrasings": list(self._query_rephrasings),  # always present
+        }
         if (
             self._usage_tokens_in
             or self._usage_tokens_out

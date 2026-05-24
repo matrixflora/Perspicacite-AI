@@ -25,6 +25,7 @@ Tools exposed:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -558,7 +559,12 @@ async def search_literature(
             from perspicacite.pipeline.enrichment.crossref_enrich import enrich_papers
 
             try:
-                papers = await enrich_papers(papers)
+                papers = await asyncio.wait_for(enrich_papers(papers), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "mcp_search_literature_enrich_timeout", n_papers=len(papers)
+                )
+                # papers unchanged — proceed without enrichment
             except Exception as _ee:
                 logger.warning("mcp_search_literature_enrich_failed", error=str(_ee))
 
@@ -602,11 +608,14 @@ async def search_literature(
                 ]
             # Per-provider attribution: when the aggregator merged this Paper
             # from multiple providers, expose every contributing provider name.
-            # The single ``source`` above is the winner; ``metadata.sources``
-            # is the additive list (e.g. ["scilex", "dblp_sparql"]).
-            sources = (p.metadata or {}).get("sources")
-            if isinstance(sources, list) and sources:
-                pd["metadata"] = {"sources": list(sources)}
+            # Prefer ``discovery_sources`` (maintained by DomainAwareAggregator
+            # through dedup merges) then fall back to ``metadata["sources"]``
+            # (set by individual providers).  Union both so no attribution is lost.
+            discovery = list(p.discovery_sources or [])
+            meta_srcs = (p.metadata or {}).get("sources") or []
+            all_srcs = list(dict.fromkeys(discovery + [s for s in meta_srcs if s not in discovery]))
+            if all_srcs:
+                pd["metadata"] = {"sources": all_srcs}
             results.append(pd)
 
         # Optional relevance filtering (tiers A/B/C)
@@ -666,10 +675,13 @@ async def search_literature(
         # F-19: surface per-database failures so external agents can tell
         # "no matches" from "the upstream DB was down".
         errors_by_db = dict(getattr(aggregator, "last_errors_by_database", {}))
-        # PubMed leads the default fan-out (no key, reliable); Semantic Scholar
-        # is last (rate-limited). Keep in sync with the SciLEx adapter's
-        # default ``apis`` list in ``_scilex_search_sync``.
-        databases_queried = filtered_databases or ["pubmed", "openalex", "semantic_scholar"]
+        # Use the names of the actual providers that ran (accurate attribution).
+        # Fall back to filtered_databases or the hardcoded legacy default only
+        # when the aggregator has no _providers attribute.
+        _actual_providers: list[str] = [
+            getattr(p, "name", "unknown") for p in getattr(aggregator, "_providers", [])
+        ]
+        databases_queried = filtered_databases or _actual_providers or ["pubmed", "openalex", "semantic_scholar"]
         all_dbs_failed = (
             bool(errors_by_db) and len(errors_by_db) >= len(databases_queried) and not results
         )
@@ -1632,41 +1644,61 @@ async def generate_report(
         else:
             rag_request.telemetry_sink = _response_collector  # type: ignore[attr-defined]
 
+        # Hard wall-clock cap for long-running modes (profound, literature_survey).
+        # Prevents the MCP tool from blocking indefinitely when a single RAG cycle
+        # takes longer than expected. Default: 600 s (10 min).
+        _generate_report_timeout_s: float = 600.0
+        if mode in ("profound",):
+            _generate_report_timeout_s = float(
+                getattr(rag_request, "max_total_seconds", None) or 540.0
+            )
+
         cancelled_reason: str | None = None
-        async for event in engine.query_stream(rag_request, message_id=message_id):
-            if event.event == "content":
-                import json as _json
+        try:
+            async with asyncio.timeout(_generate_report_timeout_s):
+                async for event in engine.query_stream(rag_request, message_id=message_id):
+                    if event.event == "content":
+                        import json as _json
 
-                payload = _json.loads(event.data)
-                report_text += payload.get("delta", "")
-            elif event.event == "source":
-                import json as _json
+                        payload = _json.loads(event.data)
+                        report_text += payload.get("delta", "")
+                    elif event.event == "source":
+                        import json as _json
 
-                src = _json.loads(event.data)
-                sources.append(
-                    {
-                        "title": src.get("title"),
-                        "authors": src.get("authors"),
-                        "year": src.get("year"),
-                        "doi": src.get("doi"),
-                        "relevance_score": src.get("relevance_score"),
-                        "section": src.get("section"),
-                        "kb_name": src.get("kb_name"),
-                        "metadata": src.get("metadata"),
-                    }
-                )
-            elif event.event == "error":
-                # Modes signal cancellation by yielding an error event with
-                # ``reason="cancelled"``. Surface this as a structured response
-                # field so MCP clients can distinguish a cancelled partial
-                # result from a normally-completed report. Other error events
-                # (e.g. embedding-mismatch) flow through unchanged.
-                import json as _json
+                        src = _json.loads(event.data)
+                        sources.append(
+                            {
+                                "title": src.get("title"),
+                                "authors": src.get("authors"),
+                                "year": src.get("year"),
+                                "doi": src.get("doi"),
+                                "relevance_score": src.get("relevance_score"),
+                                "section": src.get("section"),
+                                "kb_name": src.get("kb_name"),
+                                "metadata": src.get("metadata"),
+                            }
+                        )
+                    elif event.event == "error":
+                        # Modes signal cancellation by yielding an error event with
+                        # ``reason="cancelled"``. Surface this as a structured response
+                        # field so MCP clients can distinguish a cancelled partial
+                        # result from a normally-completed report. Other error events
+                        # (e.g. embedding-mismatch) flow through unchanged.
+                        import json as _json
 
-                _err = _json.loads(event.data) if isinstance(event.data, str) else {}
-                if _err.get("reason") == "cancelled":
-                    cancelled_reason = "cancelled"
-                    break
+                        _err = _json.loads(event.data) if isinstance(event.data, str) else {}
+                        if _err.get("reason") == "cancelled":
+                            cancelled_reason = "cancelled"
+                            break
+        except asyncio.TimeoutError:
+            logger.warning(
+                "mcp_generate_report_timeout",
+                query=query,
+                mode=mode,
+                timeout_s=_generate_report_timeout_s,
+                partial_chars=len(report_text),
+            )
+            cancelled_reason = "time_budget_exceeded"
 
         asb_md = build_asb_response_metadata(
             [{"metadata": s.get("metadata") if isinstance(s, dict) else None} for s in sources]
@@ -5342,16 +5374,26 @@ async def extract_parameters_from_passages(
         prompt = _PARAM_EXTRACTION_PROMPT.format(context=context or "general")
         prompt += f"\nFocus on these families when relevant: {', '.join(families)}."
 
-        records = await extract_structured(
-            llm_client=state.llm_client,
-            passages=passage_objs,
-            prompt_template=prompt,
-            schema={},
-            what="parameters",
-            context=context,
-            dedup_key=lambda r: (r.get("name"), r.get("units")),
-            model=model,
-        )
+        # Hard cap: entire extraction (all batches) must finish within 80s.
+        try:
+            async with asyncio.timeout(80.0):
+                records = await extract_structured(
+                    llm_client=state.llm_client,
+                    passages=passage_objs,
+                    prompt_template=prompt,
+                    schema={},
+                    what="parameters",
+                    context=context,
+                    dedup_key=lambda r: (r.get("name"), r.get("units")),
+                    model=model,
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "mcp_extract_parameters_timeout",
+                n_passages=len(passage_objs),
+                timeout_s=80.0,
+            )
+            records = []  # return empty list on timeout rather than error
 
         # Apply license-tier policy to source_quote on each record.
         doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
@@ -5448,16 +5490,28 @@ async def extract_failure_modes_from_passages(
 
         prompt = _FAILURE_EXTRACTION_PROMPT.format(context=context or "general")
 
-        records = await extract_structured(
-            llm_client=state.llm_client,
-            passages=passage_objs,
-            prompt_template=prompt,
-            schema={},
-            what="failure_modes",
-            context=context,
-            dedup_key=lambda r: (str(r.get("symptom", "")).strip().lower(),),
-            model=model,
-        )
+        # Hard cap: entire extraction (all batches) must finish within 80s.
+        # Per-batch asyncio.wait_for(50s) doesn't help when LiteLLM/tenacity
+        # retries eat CancelledError — the outer timeout is the real guard.
+        try:
+            async with asyncio.timeout(80.0):
+                records = await extract_structured(
+                    llm_client=state.llm_client,
+                    passages=passage_objs,
+                    prompt_template=prompt,
+                    schema={},
+                    what="failure_modes",
+                    context=context,
+                    dedup_key=lambda r: (str(r.get("symptom", "")).strip().lower(),),
+                    model=model,
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "mcp_extract_failure_modes_timeout",
+                n_passages=len(passage_objs),
+                timeout_s=80.0,
+            )
+            records = []  # return empty list on timeout rather than error
 
         doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
         cleaned: list[dict] = []

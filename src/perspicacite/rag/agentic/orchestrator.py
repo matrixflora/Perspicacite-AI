@@ -1039,6 +1039,11 @@ class AgenticOrchestrator:
         all_from_kb = all(p.get("source") == "kb_search" for p in papers) if papers else False
         if all_from_kb and papers:
             logger.info("agentic_kb_papers_skip_relevance_scoring", count=len(papers))
+            # Ensure KB papers carry a non-zero relevance_score so they pass the
+            # download-candidates filter below (which requires >= relevance_threshold).
+            for p in papers:
+                if not p.get("relevance_score"):
+                    p["relevance_score"] = 4  # KB papers are pre-trusted
             yield {
                 "type": "thinking",
                 "message": f"Using {len(papers)} KB papers (relevance scoring skipped)",
@@ -2250,6 +2255,24 @@ Provide a synthesized summary that combines the key insights from all sources.""
 
         context = "\n\n".join(context_parts)
         logger.info("agentic_answer_context_length", context_chars=len(context))
+
+        if not context.strip() and papers:
+            # Abstract fallback: use paper abstracts when all context was
+            # dropped (e.g. every paper scored below min_score, leaving no
+            # map-reduce block and no step results). This prevents an empty
+            # synthesis call that returns an uninformative "no information" answer.
+            abstract_parts = []
+            for i, p in enumerate(papers[:10], 1):
+                abstract = p.get("abstract") or ""
+                title = p.get("title", "")
+                if abstract:
+                    abstract_parts.append(f"[{i}] {title}\n{abstract[:800]}")
+            if abstract_parts:
+                context = "Paper abstracts (KB source):\n\n" + "\n\n".join(abstract_parts)
+                logger.info(
+                    "agentic_answer_fallback_to_abstracts",
+                    count=len(abstract_parts),
+                )
 
         if not context.strip():
             logger.warning("agentic_answer_context_empty")

@@ -5,6 +5,7 @@ Shared core behind ``extract_parameters_from_passages`` and
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -144,14 +145,26 @@ async def extract_structured(
     for start in range(0, len(passages), _BATCH_SIZE):
         batch = passages[start : start + _BATCH_SIZE]
         prompt = _build_prompt(prompt_template, batch, context)
-        kwargs: dict[str, Any] = {"temperature": 0.1, "max_tokens": 1500}
+        # timeout: HTTP-level cap per attempt (LiteLLM).
+        # max_tokens=800: large enough for JSON extraction, small enough to stay fast.
+        # The outer asyncio.timeout(80s) in the MCP tool caps the total time across all batches.
+        kwargs: dict[str, Any] = {"temperature": 0.1, "max_tokens": 800, "timeout": 40}
         if model:
             kwargs["model"] = model
 
         try:
-            raw = await llm_client.complete(
-                messages=[{"role": "user", "content": prompt}], **kwargs
+            raw = await asyncio.wait_for(
+                llm_client.complete(
+                    messages=[{"role": "user", "content": prompt}], **kwargs
+                ),
+                timeout=50.0,
             )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "extraction_llm_call_timeout",
+                what=what, batch_start=start, timeout_s=45.0,
+            )
+            continue
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "extraction_llm_call_failed",

@@ -723,6 +723,16 @@ class ProfoundRAGMode(BaseRAGMode):
         kb_names = getattr(request, "kb_names", None) or [request.kb_name]
         collection_names = [chroma_collection_name_for_kb(n) for n in kb_names]
 
+        import time as _time
+        _start_time = _time.monotonic()
+
+        # Per-call budget override: request.max_total_seconds takes
+        # precedence over the config-file default stored on self.
+        max_total_seconds = (
+            getattr(request, "max_total_seconds", None)
+            or self.max_total_seconds
+        )
+
         # Run the keyword optimizer UPFRONT so the rephrase event lands
         # immediately. Without this, the rephrase only fires when the
         # per-step web search runs the optimizer internally — visible
@@ -756,6 +766,20 @@ class ProfoundRAGMode(BaseRAGMode):
                 logger.info("profound_cancelled", task_id=_tid, cycle=cycle)
                 yield StreamEvent(event="error", data={"reason": "cancelled", "task_id": _tid})
                 return
+
+            # F-17: hard wall-clock budget. Break before starting a new
+            # cycle if we've already burned the budget — the answer so
+            # far is still finalized below.
+            elapsed = _time.monotonic() - _start_time
+            if elapsed > max_total_seconds:
+                logger.warning(
+                    "profound_time_budget_exceeded",
+                    cycle=cycle,
+                    elapsed_s=round(elapsed, 1),
+                    budget_s=max_total_seconds,
+                )
+                completion_reason = "time_budget_exceeded"
+                break
 
             self.iterations = cycle + 1
             yield StreamEvent.status(
