@@ -1015,6 +1015,14 @@ class DeepResearchRAGMode(BaseRAGMode):
                     yield StreamEvent.status(
                         "Deep research: synthesis time budget reached — returning partial answer."
                     )
+                    _fallback = self._build_fallback_report(
+                        query=request.query,
+                        steps=all_steps,
+                        documents=all_documents,
+                        reason="synthesis_timeout",
+                    )
+                    if _fallback.strip():
+                        yield StreamEvent.content(_fallback)
                 yield StreamEvent.metadata(
                     iteration_count=self.iterations,
                     completion_reason=completion_reason or "complete",
@@ -1116,6 +1124,14 @@ class DeepResearchRAGMode(BaseRAGMode):
             yield StreamEvent.status(
                 "Deep research: synthesis time budget reached — returning partial answer."
             )
+            _fallback = self._build_fallback_report(
+                query=request.query,
+                steps=all_steps,
+                documents=all_documents,
+                reason="synthesis_timeout",
+            )
+            if _fallback.strip():
+                yield StreamEvent.content(_fallback)
             completion_reason = "synthesis_timeout"
         yield StreamEvent.diagnostic(**_diag)
         yield StreamEvent.metadata(
@@ -1123,6 +1139,51 @@ class DeepResearchRAGMode(BaseRAGMode):
             completion_reason=completion_reason or "complete",
         )
         emit_phase(_phase_sink, phase="synthesize", state="done")
+
+    def _build_fallback_report(
+        self,
+        query: str,
+        steps: list,
+        documents: list,
+        reason: str = "synthesis_timeout",
+    ) -> str:
+        """Build a minimal report from research step summaries when LLM synthesis times out."""
+        lines: list[str] = [
+            f"**Research Summary** *(synthesis {reason} — partial results)*\n",
+            f"**Query:** {query}\n",
+        ]
+        # Step analyses
+        if steps:
+            lines.append(f"**Research steps completed ({self.iterations} cycle(s)):**\n")
+            for i, step in enumerate(steps, 1):
+                analysis = getattr(step, "analysis", "") or ""
+                if analysis.strip():
+                    lines.append(f"{i}. {analysis[:600]}{'…' if len(analysis) > 600 else ''}\n")
+        # Key documents found
+        docs_shown = 0
+        if documents:
+            lines.append("\n**Sources retrieved:**\n")
+            for d in documents[:5]:
+                if isinstance(d, dict):
+                    title = (d.get("title") or "Untitled").strip()
+                    year = d.get("year") or ""
+                    authors = d.get("authors") or []
+                    author_str = ", ".join(str(a) for a in authors[:2]) if authors else ""
+                    lines.append(
+                        f"- {title}"
+                        + (f" ({author_str}, {year})" if (author_str or year) else "")
+                        + "\n"
+                    )
+                    docs_shown += 1
+                elif hasattr(d, "chunk") and hasattr(d.chunk, "metadata"):
+                    meta = d.chunk.metadata
+                    title = (getattr(meta, "title", None) or "Untitled").strip()
+                    year = getattr(meta, "year", None) or ""
+                    lines.append(f"- {title}" + (f" ({year})" if year else "") + "\n")
+                    docs_shown += 1
+        if docs_shown == 0:
+            lines.append("*(No documents retrieved)*\n")
+        return "".join(lines)
 
     async def _create_plan(
         self,
@@ -2283,21 +2344,21 @@ Follow the system instructions for this situation."""
                         model=request.model,
                         provider=request.provider,
                         max_tokens=2000,
-                    )
+                    ) or ""
                 return await llm.complete(
                     messages=messages,
                     model=request.model,
                     provider=request.provider,
                     max_tokens=2000,
                     temperature=0.3,
-                )
+                ) or ""
             if is_o_series:
                 return await llm.complete(
                     messages=messages,
                     model=request.model,
                     provider=request.provider,
                     max_tokens=2000,
-                )
+                ) or ""
             if self.use_relevancy_optimization:
                 qc = assess_query_complexity(query)
                 return await llm.complete(
@@ -2307,7 +2368,7 @@ Follow the system instructions for this situation."""
                     max_tokens=2000,
                     temperature=(0.3 if qc < 0.7 else 0.5),
                     stage="profound.draft",
-                )
+                ) or ""
             return await llm.complete(
                 messages=messages,
                 model=request.model,
@@ -2315,7 +2376,7 @@ Follow the system instructions for this situation."""
                 max_tokens=2000,
                 temperature=0.3,
                 stage="profound.draft",
-            )
+            ) or ""
         except Exception as e:
             logger.error("profound_final_answer_error", error=str(e))
             return f"Error generating response: {e}"
