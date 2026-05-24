@@ -84,6 +84,10 @@ except Exception:  # pragma: no cover — litellm is a hard dep
 _stdlib_logging.getLogger("LiteLLM").setLevel(_stdlib_logging.ERROR)
 _stdlib_logging.getLogger("litellm").setLevel(_stdlib_logging.ERROR)
 
+# Global LiteLLM timeout fallback (Issue 1 — three-tier policy).
+# Overridden by llm.default_timeout_s in config, or by timeout= kwarg per call.
+DEFAULT_LLM_TIMEOUT_S: float = 60.0
+
 
 def _maybe_wrap_error(exc: Exception, provider: str) -> Exception:
     """If ``exc`` is a known LLM-error pattern (rate limit, auth),
@@ -654,13 +658,24 @@ class AsyncLLMClient:
         try:
             litellm = self._get_litellm()
 
+            # Three-tier timeout: per-call kwarg > provider config > global config > code constant
+            _call_timeout = kwargs.pop("timeout", None)
+            if _call_timeout is not None:
+                _effective_timeout = float(_call_timeout)
+            elif provider_config.timeout:
+                _effective_timeout = float(provider_config.timeout)
+            else:
+                _effective_timeout = float(
+                    getattr(self.config, "default_timeout_s", DEFAULT_LLM_TIMEOUT_S)
+                )
+
             # Prepare API call parameters
             completion_kwargs = {
                 "model": model_str,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
-                "timeout": provider_config.timeout,
+                "timeout": _effective_timeout,
             }
 
             # TODO: Minimax implementation needs fixes

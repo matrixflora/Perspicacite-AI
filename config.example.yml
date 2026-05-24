@@ -23,6 +23,7 @@ server:
 llm:
   default_provider: "anthropic"
   default_model: "claude-sonnet-4-5"
+  default_timeout_s: 60  # applied to every LLM call that doesn't set its own timeout
 
   # ── Free-tier auto-rotation (zero-cost alternative) ──────────────────────
   # Set free_auto_mode: true + add your OPENROUTER_API_KEY (free account at

@@ -551,6 +551,15 @@ class LLMConfig(BaseModel):
             "inside MCP tools that wrap their body with use_mcp_context."
         ),
     )
+    default_timeout_s: float = Field(
+        default=60.0,
+        ge=1.0,
+        description=(
+            "Global LiteLLM call timeout in seconds, applied when the "
+            "per-provider config has no timeout set and the caller does "
+            "not pass a timeout= kwarg. Per-call kwargs always win."
+        ),
+    )
     budget: BudgetConfig = Field(
         default_factory=BudgetConfig,
         description="Per-process token / dollar caps. See BudgetConfig.",
