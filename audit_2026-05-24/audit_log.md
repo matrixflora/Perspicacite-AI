@@ -682,25 +682,34 @@ All fixes below were implemented and committed in the same session as the audit.
 | R-4 (BibTeX null fields) | Audit script content-type issue suspected — script needs fix, not product |
 | R-18 (0 chunks on search_knowledge_base) | Race condition in test — needs ingest+wait in script |
 
-### Live verification
+### Live verification (post-restart, fixed code)
 
-A post-fix live probe of `generate_report` with `mode="deep_research"` against the `live-probe-r7` KB
-(1 paper: arXiv EvoPrompt) on the **pre-restart server** (old code) returned:
+Server restarted after all commits. Two targeted probes run against the `live-probe-r7` KB (1 paper: arXiv EvoPrompt).
 
+**N-5 probe — `basic` mode:**
 ```
-report_chars     = 2461   ✅  (non-zero — synthesis completed normally with deepseek-v4-pro)
-completion_reason = complete   (server-side default — old code didn't populate field)
-iteration_count  = None         (old "iterations" key — confirms server restart needed)
-elapsed_s        = 410.7
+iteration_count   = 1         ✅  (was absent pre-fix)
+completion_reason = 'complete' ✅  (was null pre-fix)
+report_chars      = 2556      ✅
 ```
 
-The non-zero report chars confirms that when deepseek-v4-pro responds within the synthesis window
-the fallback is not needed. The synthesis fallback (`_build_fallback_report`) activates only when
-the LLM call inside the `asyncio.timeout(synthesis_timeout_s)` block fails or returns `None`.
+**R-7 probe — `deep_research` mode:**
+```
+report_chars      = 344                                  ✅  (was 0 — F-R3-2 fixed)
+iteration_count   = 1                                    ✅  (was null — F-R3-3 fixed)
+completion_reason = 'time_budget_exceeded'               ✅  (was null — F-R3-4 fixed)
+diagnostic        = {'cycles_completed': 1,
+                     'papers_retrieved': 0}              ✅  (was null — F-R3-7 fixed)
+elapsed           = 996.4s
+```
 
-**Server restart:** Required to activate commits `7798cd6` through `141ff07`.
-After restart, re-run the N-5 / R-7 cases to verify `iteration_count` and `completion_reason`
-are now populated in the `generate_report` response.
+`completion_reason='time_budget_exceeded'` reflects the internal `max_total_seconds` budget
+expiring after the first cycle (single slow fallback LLM call). Synthesis ran normally and
+returned a "no matching documents" response (344 chars). The synthesis fallback
+(`_build_fallback_report`) was not triggered this run — it activates only when
+`asyncio.TimeoutError` fires inside the `asyncio.timeout(synthesis_timeout_s)` block.
+
+All four F-R3-2/3/4/7 fixes confirmed live. ✅
 
 ---
 
