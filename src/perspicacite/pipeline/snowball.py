@@ -84,7 +84,7 @@ class SnowballReport:
     dropped_filtered: int = 0
     dropped_screened: int = 0
     dropped_future_year: int = 0
-    added_papers: int = 0
+    papers_added: int = 0
     added_chunks: int = 0
     pdf_download: dict[str, int] = field(default_factory=dict)
     ingested_dois: list[str] = field(default_factory=list)
@@ -721,13 +721,13 @@ async def expand_kb_via_citations(
         return report
 
     res = await ingest_dois_into_kb(app_state, kb_name, selected_dois)
-    report.added_papers = res["added_papers"]
+    report.papers_added = res["added_papers"]
     report.added_chunks = res["added_chunks"]
     report.failed = res["failed"]
     report.pdf_download = res["pdf_download"]
     logger.info(
         "expand_kb_via_citations_done",
         kb=kb_name, seeds=len(seed_dois),
-        added=report.added_papers, dropped_existing=report.dropped_existing,
+        added=report.papers_added, dropped_existing=report.dropped_existing,
     )
     return report

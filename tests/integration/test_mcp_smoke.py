@@ -351,7 +351,7 @@ def _fake_expand_kb(**kwargs):
         raw_hits=0,
         after_filter=0,
         after_screen=0,
-        added_papers=0,
+        papers_added=0,
         added_chunks=0,
         failed=0,
         selected_dois=[],

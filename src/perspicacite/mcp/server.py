@@ -3875,7 +3875,7 @@ async def expand_kb_via_citations(
             kb=kb_name,
             direction=direction,
             raw_hits=report.raw_hits,
-            added=report.added_papers,
+            added=report.papers_added,
         )
         return _json_ok(report.to_dict())
     except Exception as e:

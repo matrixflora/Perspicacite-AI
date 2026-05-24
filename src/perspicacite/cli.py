@@ -1463,7 +1463,7 @@ def expand_kb_cmd(
                 click.echo(f"      … and {len(report.ingested_dois) - 25} more")
             return
         click.echo(
-            f"  • added: {report.added_papers} papers, "
+            f"  • added: {report.papers_added} papers, "
             f"{report.added_chunks} chunks"
         )
         st = report.pdf_download
