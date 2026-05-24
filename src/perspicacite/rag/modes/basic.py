@@ -38,6 +38,64 @@ from perspicacite.rag.utils import (
 logger = get_logger("perspicacite.rag.modes.basic")
 
 
+async def _apply_hybrid_if_requested(
+    request: Any,
+    paper_results: list[dict],
+    query: str,
+    llm: Any,
+) -> list[dict]:
+    """Re-score paper_results with the hybrid retriever when the caller supplies
+    explicit bm25_weight / vector_weight overrides.
+
+    Only fires when at least one weight field is non-None on the request.
+    Uses full_text (present in both two-pass and single-pass outputs) for BM25
+    scoring.  Does NOT call the LLM — weights are resolved from request fields
+    with (0.5, 0.5) as fallback default.
+
+    Returns the same list re-sorted by hybrid score, paper_score updated.
+    """
+    from types import SimpleNamespace
+
+    from perspicacite.retrieval.hybrid import hybrid_retrieval, resolve_hybrid_weights
+
+    req_bw = getattr(request, "bm25_weight", None)
+    req_vw = getattr(request, "vector_weight", None)
+    if (req_bw is None and req_vw is None) or not paper_results:
+        return paper_results
+
+    final_vw, final_bw = resolve_hybrid_weights(request, default=(0.5, 0.5))
+    docs = [
+        SimpleNamespace(page_content=p.get("full_text", ""), score=p.get("paper_score", 0.0))
+        for p in paper_results
+    ]
+    vector_scores = [p.get("paper_score", 0.0) for p in paper_results]
+
+    hybrid_ranked = await hybrid_retrieval(
+        query=query,
+        documents=docs,
+        vector_scores=vector_scores,
+        vector_weight=final_vw,
+        bm25_weight=final_bw,
+        use_llm_weights=False,
+        llm=llm,
+    )
+
+    doc_to_paper = {id(d): p for d, p in zip(docs, paper_results)}
+    reranked = []
+    for doc, hybrid_score in hybrid_ranked:
+        paper = dict(doc_to_paper[id(doc)])
+        paper["paper_score"] = float(hybrid_score)
+        reranked.append(paper)
+
+    logger.info(
+        "basic_hybrid_applied",
+        vector_weight=final_vw,
+        bm25_weight=final_bw,
+        n=len(reranked),
+    )
+    return reranked
+
+
 def _clean_query_for_keyword_search(q: str) -> str:
     # SciLEx / SemanticScholar wrap the query in quotes for exact-phrase
     # matching. That kills natural-language questions and hyphenated terms
@@ -295,6 +353,11 @@ class BasicRAGMode(BaseRAGMode):
                 )
             logger.info("basic_chunk_retrieval", chunks=len(chunk_results))
 
+        # Hybrid re-scoring: honour bm25_weight / vector_weight when supplied.
+        paper_results = await _apply_hybrid_if_requested(
+            request, paper_results, retrieval_query, llm
+        )
+
         # Web-search fallback when the KB returned nothing (no KB selected,
         # KB doesn't exist, or KB has no relevant docs). Mirrors the same
         # logic in execute_stream so non-streaming callers behave the same.
@@ -479,6 +542,11 @@ class BasicRAGMode(BaseRAGMode):
                         "kb_name": r.get("kb_name"),
                     }
                 )
+
+        # Hybrid re-scoring: honour bm25_weight / vector_weight when supplied.
+        paper_results = await _apply_hybrid_if_requested(
+            request, paper_results, retrieval_query, llm
+        )
 
         # Web-search fallback: if the KB query produced no documents (no KB
         # selected, KB doesn't exist, or KB is empty), do a live literature
