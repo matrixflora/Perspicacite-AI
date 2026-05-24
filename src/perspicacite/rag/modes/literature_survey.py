@@ -155,6 +155,8 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
             _ls_settings = _ls_settings.model_dump()
         elif hasattr(_ls_settings, "dict"):
             _ls_settings = _ls_settings.dict()
+        elif not isinstance(_ls_settings, dict):
+            _ls_settings = {}
         self.seed_known_max: int = int(_ls_settings.get("seed_known_max", 5))
 
         # SciLEx for multi-API search

@@ -3,6 +3,8 @@
 import json
 import pytest
 
+pyoxigraph = pytest.importorskip("pyoxigraph", reason="pyoxigraph (indicia extra) not installed")
+
 
 async def test_build_claim_graph_returns_summary(monkeypatch, tmp_path):
     monkeypatch.setattr(

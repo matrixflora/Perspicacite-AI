@@ -20,6 +20,8 @@ def test_no_legacy_metadata_sources_writes():
             continue
         text = f.read_text(encoding="utf-8", errors="replace")
         for ln, line in enumerate(text.splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue  # comments are documentation, not live usage
             if _LEGACY_PAT.search(line):
                 hits.append(f"{f}:{ln}: {line.strip()}")
     assert hits == [], (

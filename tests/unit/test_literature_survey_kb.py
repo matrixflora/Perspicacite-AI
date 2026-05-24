@@ -223,6 +223,7 @@ async def test_execute_calls_prepare_kb_context_and_store_references():
         patch.object(mode, "_convert_to_candidates", return_value=[fake_candidate]),
         patch.object(mode, "_analyze_abstracts_batch", new=AsyncMock(return_value=[])),
         patch.object(mode, "_generate_recommendations", new=AsyncMock(return_value=None)),
+        patch.object(mode, "_generate_survey_report", new=AsyncMock(return_value="Survey text.")),
     ):
         request = RAGRequest(
             query="protein folding",
@@ -276,6 +277,7 @@ async def test_execute_stream_calls_prepare_kb_context_and_store_references():
         patch.object(mode, "_convert_to_candidates", return_value=[fake_candidate]),
         patch.object(mode, "_analyze_abstracts_batch", new=AsyncMock(return_value=[])),
         patch.object(mode, "_generate_recommendations", new=AsyncMock(return_value=None)),
+        patch.object(mode, "_generate_survey_report", new=AsyncMock(return_value="Survey text.")),
     ):
         request = RAGRequest(
             query="protein folding",

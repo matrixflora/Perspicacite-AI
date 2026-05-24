@@ -40,9 +40,9 @@ def test_claim_links_for_claim_sparql_returns_list():
     assert isinstance(rows, list)
 
 
-def test_get_claim_links_mcp_tool_response_structure():
+@pytest.mark.asyncio
+async def test_get_claim_links_mcp_tool_response_structure():
     """get_claim_links MCP tool returns valid JSON with success envelope."""
-    import asyncio
     from unittest.mock import patch, MagicMock
 
     # Import server module first so patch targets resolve
@@ -65,9 +65,7 @@ def test_get_claim_links_mcp_tool_response_structure():
         tool_fn = getattr(_server.get_claim_links, "fn",
                           getattr(_server.get_claim_links, "func",
                                   _server.get_claim_links))
-        result_str = asyncio.get_event_loop().run_until_complete(
-            tool_fn(kb_name="test_kb", claim_iri="urn:a")
-        )
+        result_str = await tool_fn(kb_name="test_kb", claim_iri="urn:a")
         result = json.loads(result_str)
         assert result["success"] is True
         assert result["kb_name"] == "test_kb"

@@ -68,7 +68,7 @@ def test_snowball_expansion_hit_uses_citation_follow_enum():
             year=2024, abstract="…", journal="Journal", citation_count=3,
         )
     ]
-    papers = _papers_from_hits(hits)
+    papers, _ = _papers_from_hits(hits)
     assert len(papers) == 1
     assert papers[0].source is PaperSource.CITATION_FOLLOW
 
@@ -245,6 +245,6 @@ def test_snowball_ss_provenance_papers_still_use_citation_follow_enum():
         citation_count=3,
         provenance="semantic_scholar",
     )
-    papers = _papers_from_hits([h])
+    papers, _ = _papers_from_hits([h])
     assert len(papers) == 1
     assert papers[0].source is PaperSource.CITATION_FOLLOW
