@@ -2905,7 +2905,10 @@ Generate your answer:"""
         try:
             from perspicacite.retrieval.reranker import CrossEncoderReranker
             if getattr(self, "_relevance_reranker", None) is None:
-                self._relevance_reranker = CrossEncoderReranker()
+                _reranker_model = getattr(
+                    getattr(self.config, "rag_modes", None), "reranker_model", None
+                ) or "cross-encoder/ms-marco-MiniLM-L-6-v2"
+                self._relevance_reranker = CrossEncoderReranker(model_name=_reranker_model)
             texts = [
                 f"{p.title or ''}. {(p.abstract or '')[:1000]}" for p in papers
             ]

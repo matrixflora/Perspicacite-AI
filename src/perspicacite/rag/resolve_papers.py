@@ -55,6 +55,11 @@ async def resolve_papers_pipeline(
     if rerank and papers and len(papers) > 1:
         try:
             from perspicacite.search.screening import screen_papers_rerank
+            _reranker_model = getattr(
+                getattr(getattr(app_state, "config", None), "rag_modes", None),
+                "reranker_model",
+                "cross-encoder/ms-marco-MiniLM-L-6-v2",
+            )
             items = [
                 {
                     "_paper": p,
@@ -64,7 +69,7 @@ async def resolve_papers_pipeline(
                 for p in papers
             ]
             results = await screen_papers_rerank(
-                items, query=query, threshold=min_relevance,
+                items, query=query, threshold=min_relevance, model_name=_reranker_model,
             )
             # ScreenResult has .score (float) and .item (dict with "_paper" key)
             scored = sorted(

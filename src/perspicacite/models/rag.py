@@ -165,7 +165,7 @@ class RAGRequest(BaseModel):
     max_papers_retrieval: int | None = Field(
         default=None,
         ge=1,
-        le=10,
+        le=50,
         description="Hard cap on papers loaded in two-pass; None uses mode default",
     )
     bm25_weight: float | None = Field(default=None, ge=0.0, le=1.0)

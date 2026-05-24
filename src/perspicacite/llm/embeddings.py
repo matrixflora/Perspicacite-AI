@@ -163,13 +163,22 @@ class SentenceTransformerEmbeddingProvider:
     def dimension(self) -> int:
         """Get embedding dimension."""
         if self._model is None:
-            # Common dimensions
+            # Common dimensions — 768 is the default for scientific/BERT-size models.
+            # Add entries here when using a model whose pre-load dimension is needed
+            # for ChromaDB collection creation (create_collection is called before the
+            # first embed(), so the lazy-loaded model isn't available yet).
             dimensions = {
                 "all-MiniLM-L6-v2": 384,
                 "all-MiniLM-L12-v2": 384,
                 "all-mpnet-base-v2": 768,
+                # SPECTER2 and SPECTER v1 scientific embedding models
+                "allenai/specter2_base": 768,
+                "allenai/specter2": 768,
+                "sentence-transformers/allenai-specter": 768,
+                # PubMed BERT / BioMedical ST models (768-dim BERT backbone)
+                "pritamdeka/S-PubMedBert-MS-MARCO": 768,
             }
-            return dimensions.get(self.model_name, 384)
+            return dimensions.get(self.model_name, 768)
         return self._model.get_sentence_embedding_dimension()
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -519,11 +528,28 @@ def create_embedding_provider(
         cache key reflects the routed model.
     """
     def _build_single(m: str) -> EmbeddingProvider:
-        # Inner-provider selection rule retained from the legacy factory:
-        # sentence-transformers for local model names ("all-...") or
-        # bare names without a slash/embedding marker; otherwise
-        # LiteLLM-backed with optional local fallback.
+        # Inner-provider selection rule:
+        # sentence-transformers for:
+        #   - models starting with "all-" (e.g. all-MiniLM-L6-v2)
+        #   - bare names without "/" and without "embedding"
+        #     (e.g. custom local model names)
+        #   - "st:" prefix as an explicit override  (e.g. st:allenai/specter2_base)
+        #   - models on the ST-hosted HuggingFace hub that are known to load
+        #     via sentence_transformers.SentenceTransformer directly — detected
+        #     by a known-namespace prefix list (allenai/, sentence-transformers/,
+        #     pritamdeka/, cross-encoder/)
+        # Otherwise → LiteLLM-backed with optional local fallback.
+        _st_namespaces = (
+            "allenai/",
+            "sentence-transformers/",
+            "pritamdeka/",
+            "cross-encoder/",
+        )
+        if m.startswith("st:"):
+            return SentenceTransformerEmbeddingProvider(model=m[3:])
         if m.startswith("all-") or ("/" not in m and "embedding" not in m):
+            return SentenceTransformerEmbeddingProvider(model=m)
+        if any(m.startswith(ns) for ns in _st_namespaces):
             return SentenceTransformerEmbeddingProvider(model=m)
         primary = LiteLLMEmbeddingProvider(model=m)
         if use_local_fallback:

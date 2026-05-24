@@ -335,7 +335,7 @@ class ChatRequest(BaseModel):
     )
     stream: bool = Field(default=True, description="Stream the response")
     max_papers: int = Field(
-        default=3, ge=1, le=10, description="Maximum papers to display in results"
+        default=3, ge=1, le=50, description="Maximum papers to display in results"
     )
     max_papers_to_download: int = Field(
         default=10,
