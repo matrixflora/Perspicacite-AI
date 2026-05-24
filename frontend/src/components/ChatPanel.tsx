@@ -38,6 +38,9 @@ type Turn = {
   tokensOut?: number;
   phase?: ChatPhase;
   error?: string;
+  iterationCount?: number;
+  completionReason?: string;
+  diagnostic?: Record<string, unknown> | null;
 };
 
 function nid(): string {
@@ -284,6 +287,19 @@ export function ChatPanel({
                       ...t,
                       steps: [...(t.steps ?? []), ev.step],
                       phase: phaseFromStep(ev.step) ?? t.phase,
+                    }
+                  : t,
+              ),
+            );
+          } else if (ev.kind === "metadata") {
+            setTurns((ts) =>
+              ts.map((t) =>
+                t.id === asstTurn.id
+                  ? {
+                      ...t,
+                      iterationCount: ev.iteration_count,
+                      completionReason: ev.completion_reason,
+                      diagnostic: ev.diagnostic,
                     }
                   : t,
               ),
@@ -786,6 +802,28 @@ function AssistantMessage({
           running={!!(turn.streaming && streaming)}
           modeId={turn.mode}
         />
+      )}
+
+      {/* Deep Research diagnostic badge — cycles + papers + completion reason.
+          Only shown for completed deep_research turns where metadata arrived. */}
+      {turn.iterationCount !== undefined && turn.mode === "deep_research" && (
+        <div className="mt-1 flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+          <span className="font-mono">
+            {turn.iterationCount} cycle{turn.iterationCount !== 1 ? "s" : ""}
+          </span>
+          {turn.diagnostic?.papers_retrieved !== undefined && (
+            <>
+              <span aria-hidden>·</span>
+              <span className="font-mono">{turn.diagnostic.papers_retrieved as number} papers</span>
+            </>
+          )}
+          {turn.completionReason && turn.completionReason !== "complete" && (
+            <>
+              <span aria-hidden>·</span>
+              <span className="italic">{turn.completionReason.replace(/_/g, " ")}</span>
+            </>
+          )}
+        </div>
       )}
 
       {/* Sources first (Perplexity pattern). The grid uses .cnrs-stagger

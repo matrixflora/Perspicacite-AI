@@ -64,7 +64,8 @@ export type ChatStreamEvent =
   | { kind: "meta"; papers_found?: number; sources?: ChatSource[] }
   | { kind: "thinking"; step: ThinkingStep }
   | { kind: "done"; conversation_id?: string; answer?: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "metadata"; iteration_count: number; completion_reason: string; diagnostic: Record<string, unknown> | null };
 
 // Empty string → same-origin requests, proxied by Next.js rewrites in
 // next.config.ts. Override via NEXT_PUBLIC_PERSPICACITE_URL for direct
@@ -189,6 +190,20 @@ function parseFrame(frame: string): ChatStreamEvent[] {
         kind: "meta",
         papers_found: obj.papers.length,
         sources: obj.papers as ChatSource[],
+      },
+    ];
+  }
+
+  if (obj.type === "metadata") {
+    return [
+      {
+        kind: "metadata" as const,
+        iteration_count: typeof obj.iteration_count === "number" ? obj.iteration_count : 1,
+        completion_reason: typeof obj.completion_reason === "string" ? obj.completion_reason : "complete",
+        diagnostic:
+          obj.diagnostic && typeof obj.diagnostic === "object" && !Array.isArray(obj.diagnostic)
+            ? (obj.diagnostic as Record<string, unknown>)
+            : null,
       },
     ];
   }

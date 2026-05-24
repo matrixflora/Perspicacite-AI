@@ -1136,6 +1136,13 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
                 except Exception as _exc:
                     logger.warning(f"figure_ref_forward_failed: {_exc}")
 
+            elif event.event == "metadata":
+                try:
+                    payload = json.loads(event.data)
+                    yield f"data: {json.dumps({'type': 'metadata', **payload})}\n\n"
+                except Exception as _exc:
+                    logger.warning(f"metadata_forward_failed: {_exc}")
+
             elif event.event == "error":
                 yield f"data: {json.dumps({'type': 'error', 'message': event.data})}\n\n"
                 return
