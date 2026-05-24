@@ -572,16 +572,38 @@ class ProfoundRAGMode(BaseRAGMode):
 
             if early_exit:
                 logger.info("profound_early_exit", cycle=self.iterations)
-                return await self._finalize_response(
-                    query=request.query,
-                    steps=all_steps,
-                    documents=all_documents,
-                    llm=llm,
-                    request=request,
-                    exited_early=True,
-                    completion_reason="question_answered",
-                    cancelled_tid=_cancelled_tid,
-                )
+                try:
+                    async with asyncio.timeout(self.synthesis_timeout_s):
+                        return await self._finalize_response(
+                            query=request.query,
+                            steps=all_steps,
+                            documents=all_documents,
+                            llm=llm,
+                            request=request,
+                            exited_early=True,
+                            completion_reason="question_answered",
+                            cancelled_tid=_cancelled_tid,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "profound_synthesis_timeout_execute",
+                        synthesis_timeout_s=self.synthesis_timeout_s,
+                    )
+                    sources = self._prepare_sources(all_documents)
+                    return RAGResponse(
+                        answer=(
+                            "Research synthesis exceeded the time budget. "
+                            "Partial research was completed but the final answer could not be generated."
+                        ),
+                        sources=sources,
+                        mode=RAGMode.PROFOUND,
+                        iterations=self.iterations,
+                        web_search_used=any(
+                            isinstance(d, dict) and d.get("source") == "web_search"
+                            for d in all_documents
+                        ),
+                        metadata={"completion_reason": "synthesis_timeout"},
+                    )
 
             if plan_limit_reason:
                 completion_reason = plan_limit_reason
@@ -646,16 +668,38 @@ class ProfoundRAGMode(BaseRAGMode):
             else:
                 self.consecutive_failures = 0
 
-        return await self._finalize_response(
-            query=request.query,
-            steps=all_steps,
-            documents=all_documents,
-            llm=llm,
-            request=request,
-            exited_early=False,
-            completion_reason=completion_reason,
-            cancelled_tid=_cancelled_tid,
-        )
+        try:
+            async with asyncio.timeout(self.synthesis_timeout_s):
+                return await self._finalize_response(
+                    query=request.query,
+                    steps=all_steps,
+                    documents=all_documents,
+                    llm=llm,
+                    request=request,
+                    exited_early=False,
+                    completion_reason=completion_reason,
+                    cancelled_tid=_cancelled_tid,
+                )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "profound_synthesis_timeout_execute",
+                synthesis_timeout_s=self.synthesis_timeout_s,
+            )
+            sources = self._prepare_sources(all_documents)
+            return RAGResponse(
+                answer=(
+                    "Research synthesis exceeded the time budget. "
+                    "Partial research was completed but the final answer could not be generated."
+                ),
+                sources=sources,
+                mode=RAGMode.PROFOUND,
+                iterations=self.iterations,
+                web_search_used=any(
+                    isinstance(d, dict) and d.get("source") == "web_search"
+                    for d in all_documents
+                ),
+                metadata={"completion_reason": "synthesis_timeout"},
+            )
 
     async def execute_stream(
         self,
@@ -945,9 +989,10 @@ class ProfoundRAGMode(BaseRAGMode):
                             yield event
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "profound_synthesis_timeout",
+                        "profound_synthesis_timeout_early_exit",
                         synthesis_timeout_s=self.synthesis_timeout_s,
                     )
+                    completion_reason = "synthesis_timeout"
                     yield StreamEvent.status(
                         "Deep research: synthesis time budget reached — returning partial answer."
                     )
@@ -1042,7 +1087,7 @@ class ProfoundRAGMode(BaseRAGMode):
                     yield event
         except asyncio.TimeoutError:
             logger.warning(
-                "profound_synthesis_timeout",
+                "profound_synthesis_timeout_normal",
                 synthesis_timeout_s=self.synthesis_timeout_s,
             )
             yield StreamEvent.status(

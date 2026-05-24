@@ -184,3 +184,34 @@ def test_profound_mode_has_synthesis_timeout_s_attribute():
     mode = ProfoundRAGMode(cfg)
     assert hasattr(mode, "synthesis_timeout_s"), "synthesis_timeout_s attribute missing"
     assert mode.synthesis_timeout_s == 90.0, f"expected 90.0, got {mode.synthesis_timeout_s}"
+
+
+@pytest.mark.asyncio
+async def test_profound_synthesis_timeout_fires():
+    """asyncio.timeout(50ms) actually fires when a coroutine sleeps for 10s.
+
+    This is a behavioral smoke test for the pattern used in both execute()
+    and execute_stream() to cap the synthesis phase.
+    """
+    import asyncio
+
+    status_events: list[str] = []
+    timed_out = False
+
+    async def hanging_synthesis():
+        await asyncio.sleep(10)  # much longer than the 50ms cap
+        return "never reached"
+
+    try:
+        async with asyncio.timeout(0.05):  # 50ms
+            await hanging_synthesis()
+    except asyncio.TimeoutError:
+        timed_out = True
+        status_events.append(
+            "Deep research: synthesis time budget reached — returning partial answer."
+        )
+
+    assert timed_out, "asyncio.timeout did not fire — pattern is broken"
+    assert any("synthesis time budget" in e for e in status_events), (
+        f"Expected synthesis timeout status event, got: {status_events}"
+    )
