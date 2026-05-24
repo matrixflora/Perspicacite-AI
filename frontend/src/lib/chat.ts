@@ -84,6 +84,8 @@ export async function* streamChat(opts: {
   conversationId?: string;
   maxPapers?: number;
   databases?: DatabaseId[];
+  bm25Weight?: number;
+  vectorWeight?: number;
   signal?: AbortSignal;
 }): AsyncGenerator<ChatStreamEvent> {
   // Drop kb_name when empty so the backend default kicks in.
@@ -95,6 +97,8 @@ export async function* streamChat(opts: {
     conversation_id: opts.conversationId,
     databases: opts.databases,
   };
+  if (opts.bm25Weight !== undefined) body.bm25_weight = opts.bm25Weight;
+  if (opts.vectorWeight !== undefined) body.vector_weight = opts.vectorWeight;
   if (opts.kbName) body.kb_name = opts.kbName;
 
   const res = await fetch(`${BACKEND}/api/chat`, {

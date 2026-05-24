@@ -82,6 +82,8 @@ export function ChatPanel({
   const [showDbPicker, setShowDbPicker] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [maxPapers, setMaxPapers] = useState<number>(5);
+  // Hybrid retrieval weight: 0 = pure BM25, 0.5 = default, 1 = pure vector
+  const [hybridWeight, setHybridWeight] = useState<number>(0.5);
   const [kbName, setKbName] = useState<string | null>(null);
 
   // Honour user preferences on first mount (default mode, max papers,
@@ -224,6 +226,10 @@ export function ChatPanel({
           databases,
           kbName: kbName ?? undefined,
           maxPapers,
+          // Only send when mode uses hybrid retrieval AND weight is non-default
+          ...(["advanced", "deep_research"].includes(mode) && hybridWeight !== 0.5
+            ? { bm25Weight: parseFloat((1 - hybridWeight).toFixed(2)), vectorWeight: parseFloat(hybridWeight.toFixed(2)) }
+            : {}),
           signal: ctrl.signal,
         })) {
           if (ev.kind === "token") {
@@ -377,7 +383,7 @@ export function ChatPanel({
         );
       }
     },
-    [draft, mode, streaming, databases, initialConversationId, kbName, maxPapers],
+    [draft, mode, streaming, databases, initialConversationId, kbName, maxPapers, hybridWeight],
   );
 
   const cancel = useCallback(() => {
@@ -499,6 +505,38 @@ export function ChatPanel({
               </span>
             )}
           </div>
+
+          {/* Hybrid retrieval weight slider — only shown for modes that use it. */}
+          {(mode === "advanced" || mode === "deep_research") && (
+            <div className="flex items-center gap-2 border-t border-[var(--border)] px-3 py-1 text-[11px] text-[var(--text-muted)]">
+              <span className="shrink-0">BM25</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={hybridWeight}
+                onChange={(e) => setHybridWeight(parseFloat(e.target.value))}
+                className="h-1 w-24 accent-[var(--cnrs-blue)]"
+                title={`Retrieval: BM25 ${Math.round((1 - hybridWeight) * 100)}% / Vector ${Math.round(hybridWeight * 100)}%`}
+                aria-label="Hybrid retrieval weight"
+              />
+              <span className="shrink-0">Vector</span>
+              {hybridWeight !== 0.5 && (
+                <button
+                  type="button"
+                  onClick={() => setHybridWeight(0.5)}
+                  className="ml-1 rounded px-1 text-[10px] text-[var(--cnrs-blue)] hover:underline"
+                  title="Reset to 50/50"
+                >
+                  reset
+                </button>
+              )}
+              <span className="ml-auto font-mono text-[10px] tabular-nums">
+                {Math.round((1 - hybridWeight) * 100)}/{Math.round(hybridWeight * 100)}
+              </span>
+            </div>
+          )}
 
           {/* Toolbar: mode picker + DB favicons + Ask button on the same row. */}
           <div className="flex flex-wrap items-center gap-1.5 border-t border-[var(--border)] px-3 py-2">
