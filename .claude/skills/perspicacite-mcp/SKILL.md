@@ -51,6 +51,7 @@ Known databases: `semantic_scholar`, `openalex`, `pubmed`, `europepmc`,
 | Ambiguous or multi-step research | `generate_report(mode="agentic")` |
 | Which of my KBs is most relevant to a query | `route_kbs` |
 | Grow a KB by following citation edges | `expand_kb_via_citations` |
+| Search a skill KB with EDAM IRI pre-filter (L2 skill routing) | `search_skill_kb` |
 
 Use `adaptive=True` on `get_relevant_passages` for terse or jargon-heavy
 queries: the server runs the optimizer once and retries if the first pass
@@ -127,7 +128,39 @@ fan across several knowledge bases (they must share an embedding model).
 - `add_dois_to_kb` response carries `added`, `skipped`, and `errored` counts.
   Treat `added == 0` as a signal to investigate access before proceeding.
 
-# 8. Live reference
+# 8. Perspicacité-deeper-work principle
+
+Perspicacité KB is used **after** the L1/L2 router has identified a relevant
+skill — for deeper work *within* that skill's domain. Not as primary
+search-from-cold-start.
+
+The four-layer routing architecture (ASB-Skills release design §6):
+
+| Layer | Mechanism | When it fires |
+|-------|-----------|---------------|
+| **L0** | Plugin README + router SKILL.md description | Session start |
+| **L1** | `_router/SKILL.md` (auto-generated per collection), loaded by default; calls `search_skill_kb` | First domain mention |
+| **L2** | `search_skill_kb(query, edam_topics?)` — EDAM-pre-filtered → embed-ranked | Router invokes it |
+| **L3** | Load specific SKILL.md body via Read tool | After top-k decision |
+| **L4** | Indicium claim verification | On-demand, accuracy-critical |
+
+**When to use Perspicacité KB (correct):**
+- The router has identified a relevant skill domain (L1 has fired)
+- You need parameter ranges, failure modes, or related papers for *that* skill's domain
+- You need claim evidence against the original literature
+
+**When NOT to use Perspicacité KB as primary search:**
+- Cold-start: user asks a question with no prior domain routing
+- Use `search_literature` or `generate_report` from the live database instead
+
+**`search_skill_kb` vs `search_knowledge_base`:**
+Use `search_skill_kb` (not `search_knowledge_base`) when searching a KB that was
+ingested from an ASB-Skill collection (`source_format=asb-skill-collection-v1`).
+It adds an EDAM IRI pre-filter that cuts the candidate set ~10× before embedding
+ranking — the precision multiplier that makes large skill libraries scale. Pass
+`edam_topics` from the collection's known topics for best results.
+
+# 9. Live reference
 
 Treat this file as a snapshot. For the authoritative current capabilities,
 decision rules, full tool index, and knob defaults, call `get_usage_guide` —
