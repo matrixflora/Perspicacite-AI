@@ -212,19 +212,24 @@ async def case_R5_url_batch(client):
     ]
     async with httpx.AsyncClient(timeout=200.0) as http:
         await _cleanup_kb(http, kb)
-        await client.call_tool("create_knowledge_base", {"name": kb, "description": "url batch"})
-        resp = await http.post(f"{BASE}/api/kb/{kb}/urls", json={"urls": urls})
-        data = resp.json()
-
-    papers = data.get("papers") or []
+    await client.call_tool("create_knowledge_base", {"name": kb, "description": "url batch"})
+    t0 = time.monotonic()
+    r = await client.call_tool("ingest_urls_to_kb", {
+        "kb_name": kb, "urls": urls, "youtube_correct": False,
+    })
+    dt = time.monotonic() - t0
+    data = _extract(r)
+    async with httpx.AsyncClient(timeout=60.0) as http:
+        stats = (await http.get(f"{BASE}/api/kb/{kb}/stats")).json()
+    print(f"  elapsed {dt:.1f}s, added_chunks={data.get('added_chunks')}, files={data.get('files')}")
+    for res in (data.get("results") or []):
+        print(f"  {res.get('status')}: {res.get('url')} -> chars={res.get('chars')}, ct={res.get('content_type')}")
+    print(f"  stats by_content_type: {stats.get('by_content_type')}")
     out = {
-        "total": len(papers),
-        "papers": [{"url": p.get("url") or p.get("source_url"), "ct": p.get("content_type"), "chars": p.get("chars")} for p in papers],
-        "stats": data.get("stats"),
+        "total": data.get("added_chunks"),
+        "results": data.get("results") or [],
+        "stats": stats,
     }
-    print(f"  ingested {len(papers)} URLs")
-    for p in out["papers"]:
-        print(f"    url={str(p.get('url','?'))[:60]}, ct={p.get('ct')}, chars={p.get('chars')}")
     return out
 
 
