@@ -10,6 +10,7 @@ Profound RAG (ProfondeChain) adds:
 - WRRF multi-query fusion (vector-only retrieval, matching v1 profonde)
 """
 
+import asyncio
 import contextlib
 import json
 import math
@@ -132,6 +133,10 @@ class ProfoundRAGMode(BaseRAGMode):
         # can't run away when the LLM is slow (the audit hit a >13min hang
         # on DeepSeek V4 Flash with the default settings).
         self.max_total_seconds = float(rag_settings.get("max_total_seconds", 360.0))
+        # Issue 2: independent cap on the final synthesis phase.
+        # Cycles are never starved — total wall-clock is at most
+        # max_total_seconds + synthesis_timeout_s + overhead.
+        self.synthesis_timeout_s = float(rag_settings.get("synthesis_timeout_s", 90.0))
         # Per-cycle LLM call cap — defends against the planning/reflection
         # loop fanning out indefinitely. Default 15 covers a typical cycle
         # (plan + 3-5 steps + reflection + finalize) with headroom.
@@ -926,16 +931,26 @@ class ProfoundRAGMode(BaseRAGMode):
                 emit_phase(_phase_sink, phase="reason", state="done")
                 emit_phase(_phase_sink, phase="synthesize", state="running")
                 yield StreamEvent.status("Profond RAG: Early exit — synthesizing final answer...")
-                async for event in self._stream_final_response(
-                    query=request.query,
-                    steps=all_steps,
-                    documents=all_documents,
-                    llm=llm,
-                    request=request,
-                    exited_early=True,
-                    completion_reason="question_answered",
-                ):
-                    yield event
+                try:
+                    async with asyncio.timeout(self.synthesis_timeout_s):
+                        async for event in self._stream_final_response(
+                            query=request.query,
+                            steps=all_steps,
+                            documents=all_documents,
+                            llm=llm,
+                            request=request,
+                            exited_early=True,
+                            completion_reason="question_answered",
+                        ):
+                            yield event
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "profound_synthesis_timeout",
+                        synthesis_timeout_s=self.synthesis_timeout_s,
+                    )
+                    yield StreamEvent.status(
+                        "Deep research: synthesis time budget reached — returning partial answer."
+                    )
                 emit_phase(_phase_sink, phase="synthesize", state="done")
                 return
 
@@ -1013,16 +1028,27 @@ class ProfoundRAGMode(BaseRAGMode):
             "tokens", kind="usage", tokens_in=_tok["in"], tokens_out=_tok["out"],
         )
         yield StreamEvent.status("Profond RAG: Synthesizing final answer...")
-        async for event in self._stream_final_response(
-            query=request.query,
-            steps=all_steps,
-            documents=all_documents,
-            llm=llm,
-            request=request,
-            exited_early=False,
-            completion_reason=completion_reason,
-        ):
-            yield event
+        try:
+            async with asyncio.timeout(self.synthesis_timeout_s):
+                async for event in self._stream_final_response(
+                    query=request.query,
+                    steps=all_steps,
+                    documents=all_documents,
+                    llm=llm,
+                    request=request,
+                    exited_early=False,
+                    completion_reason=completion_reason,
+                ):
+                    yield event
+        except asyncio.TimeoutError:
+            logger.warning(
+                "profound_synthesis_timeout",
+                synthesis_timeout_s=self.synthesis_timeout_s,
+            )
+            yield StreamEvent.status(
+                "Deep research: synthesis time budget reached — returning partial answer."
+            )
+            completion_reason = "synthesis_timeout"
         emit_phase(_phase_sink, phase="synthesize", state="done")
 
     async def _create_plan(

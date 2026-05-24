@@ -136,6 +136,8 @@ rag_modes:
     use_wrrf: true
     enable_planning: true
     enable_reflection: true
+    max_total_seconds: 540     # F-17: hard cycle budget; synthesis runs on top of this
+    synthesis_timeout_s: 90    # independent cap on final answer generation phase
 
   agentic:
     max_iterations: 5
