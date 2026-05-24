@@ -93,7 +93,7 @@ export const MODES: ModeDescriptor[] = [
   },
   {
     id: "deep_research",
-    label: "Profond",
+    label: "Deep Research",
     blurb: "Deep reasoning over multiple passes — slower, more thorough.",
     helper:
       "Multi-pass deep reasoning with critique + revision loops. For hard questions — expect ~1–3 min.",
