@@ -134,12 +134,18 @@ indicia = [
   "pyoxigraph>=0.4",
 ]
 
-# indicium-adapters — optional domain adapter protocol + built-in adapters
-# (e.g. MetabolomicsAdapter). Enables domain_adapter= kwarg in extract_claims().
+# indicium-adapters — optional domain adapter protocol. Core package (>=0.4.0)
+# no longer ships the metabolomics adapters; those live in the sibling package
+# indicium-adapters-metabolomics (MetabolomicsAdapter, MetaboKGAdapter,
+# EMIAdapter). Both are needed so discover_adapters() returns all three.
+# Enables domain_adapter= kwarg in extract_claims().
 #
 # Install with:
 #   uv sync --extra adapters
-adapters = ["indicium-adapters"]
+adapters = [
+    "indicium-adapters>=0.4.0",
+    "indicium-adapters-metabolomics>=0.1.0",
+]
 
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
@@ -166,6 +172,7 @@ override-dependencies = ["httpx>=0.28.1"]
 [tool.uv.sources]
 indicium = { path = "../indicium", editable = true }
 indicium-adapters = { path = "../indicium-adapters", editable = true }
+indicium-adapters-metabolomics = { path = "../indicium-adapters-metabolomics", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
