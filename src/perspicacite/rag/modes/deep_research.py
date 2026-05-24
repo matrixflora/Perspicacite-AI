@@ -738,6 +738,11 @@ class DeepResearchRAGMode(BaseRAGMode):
         self.research_history = []
         self._iteration_summaries = []
 
+        _diag: dict = {
+            "cycles_completed": 0,
+            "papers_retrieved": 0,
+        }
+
         # Live token counters. Each LLM call this Profond run makes goes
         # through the wrapper below, which accumulates into these dicts;
         # we yield a `usage` status frame between research steps so the
@@ -815,6 +820,7 @@ class DeepResearchRAGMode(BaseRAGMode):
             _tid = getattr(request, "task_id", None)
             if _tid and is_cancelled(_tid):
                 logger.info("profound_cancelled", task_id=_tid, cycle=cycle)
+                yield StreamEvent.diagnostic(**_diag, cancellation_reason="cancelled")
                 yield StreamEvent.metadata(
                     iteration_count=self.iterations,
                     completion_reason="cancelled",
@@ -969,6 +975,11 @@ class DeepResearchRAGMode(BaseRAGMode):
             all_steps.extend(cycle_steps)
             all_documents.extend(cycle_documents)
 
+            _diag["cycles_completed"] = self.iterations
+            _diag["papers_retrieved"] = max(
+                _diag["papers_retrieved"], len(cycle_documents)
+            )
+
             # Surface cumulative LLM token usage for this cycle so the
             # status bar updates live instead of waiting for the final
             # synthesis to stream.
@@ -977,6 +988,8 @@ class DeepResearchRAGMode(BaseRAGMode):
             )
 
             if early_exit:
+                _diag["cycles_completed"] = self.iterations
+                yield StreamEvent.diagnostic(**_diag, cancellation_reason="early_exit_confidence")
                 emit_phase(_phase_sink, phase="retrieve", state="done")
                 emit_phase(_phase_sink, phase="reason", state="done")
                 emit_phase(_phase_sink, phase="synthesize", state="running")
@@ -1104,6 +1117,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                 "Deep research: synthesis time budget reached — returning partial answer."
             )
             completion_reason = "synthesis_timeout"
+        yield StreamEvent.diagnostic(**_diag)
         yield StreamEvent.metadata(
             iteration_count=self.iterations,
             completion_reason=completion_reason or "complete",
