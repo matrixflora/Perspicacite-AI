@@ -43,6 +43,9 @@ from perspicacite.pipeline.github_kb import (
 from perspicacite.pipeline.github_kb import (
     ingest_skill_bundle as ingest_skill_bundle_pipeline,
 )
+from perspicacite.pipeline.asb.collection_ingest import (
+    ingest_asb_skill_collection,
+)
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 
 logger = get_logger("perspicacite.mcp.server")
@@ -4195,34 +4198,90 @@ async def ingest_skill_bundle(
     source: str,
     kb_name: str | None = None,
     ingest_linked_papers: bool = True,
+    source_format: str = "legacy",
 ) -> str:
     """Ingest an agentic-science-builder skill bundle into Perspicacité.
 
-    The bundle source can be a local directory path OR a GitHub URL
-    pointing at a repo containing ``bundle.yml``. Linked papers (DOIs
-    in the manifest + README) are routed through the existing DOI
-    ingest path when ``ingest_linked_papers=True``.
+    Supports two source formats:
 
-    **Latency:** 60-600s depending on bundle + linked-paper count.
-    Each linked DOI runs the full PDF-resolve + embed pipeline.
-    Use >=600s timeout for production runs.
+    * **``legacy``** (default) — original ASB run-dir format with
+      ``bundle.yml`` / ``bundle.yaml``. The bundle source can be a local
+      directory path OR a GitHub URL. Linked papers (DOIs in the manifest
+      + README) are routed through the existing DOI ingest path when
+      ``ingest_linked_papers=True``.
+
+    * **``asb-skill-collection-v1``** — reads an ASB-Skills release
+      collection directory containing ``collection.yaml``,
+      ``tools.lock.yaml``, ``tools/*.yaml``, ``catalogue.jsonld``, and
+      ``skills/<slug>/SKILL.md`` per §7.1 of the 2026-05-24 ASB-Skills
+      release design. Produces three chunk-types per skill:
+      ``summary`` (Overview section), ``procedure`` (Procedure section),
+      and ``tools`` (tool registry entries). Writes
+      ``kb_metadata/ontology_refs.json`` and
+      ``kb_metadata/skill_index.json`` as side-files.
+
+    **Latency:**
+    - ``legacy``: 60-600s per bundle + linked-paper count. Use >=600s timeout.
+    - ``asb-skill-collection-v1``: 30-300s depending on skill count + DOI ingest.
 
     Args:
-        source: Local path OR GitHub URL.
-        kb_name: Target KB name. None → derived from bundle.yml's name
-            via config.bundles.default_kb_name_template.
-        ingest_linked_papers: If True (default), DOIs mined from the
-            bundle are added to the same KB.
+        source: Local path OR (legacy only) GitHub URL.
+        kb_name: Target KB name. None → derived from bundle name.
+        ingest_linked_papers: If True (default), DOIs from the bundle are
+            added to the same KB.
+        source_format: ``"legacy"`` (default) or ``"asb-skill-collection-v1"``.
 
     Returns:
-        JSON envelope with kb_name, bundle_name, files_added,
-        chunks_added, linked_papers_added,
-        linked_papers_skipped_non_doi.
+        JSON envelope. For ``legacy``: kb_name, bundle_name, files_added,
+        chunks_added, linked_papers_added, linked_papers_skipped_non_doi.
+        For ``asb-skill-collection-v1``: kb_name, collection_name,
+        skills_ingested, papers_added, failed, kb_metadata_written.
     """
+    _VALID_FORMATS = {"legacy", "asb-skill-collection-v1"}
+    if source_format not in _VALID_FORMATS:
+        return _json_error(
+            f"Unknown source_format '{source_format}'. "
+            f"Valid values: {sorted(_VALID_FORMATS)}"
+        )
+
     state = _require_state()
     if isinstance(state, str):
         return state  # already _json_error
 
+    # ---- asb-skill-collection-v1 branch ----
+    if source_format == "asb-skill-collection-v1":
+        collection_dir = Path(source)
+        if not collection_dir.is_dir():
+            return _json_error(
+                f"source_format='asb-skill-collection-v1' requires a local "
+                f"directory path; got: {source!r}"
+            )
+        target_kb = kb_name or collection_dir.name
+
+        try:
+            result = await ingest_asb_skill_collection(
+                collection_dir=collection_dir,
+                kb_name=target_kb,
+                app_state=state,
+                ingest_linked_papers=ingest_linked_papers,
+            )
+        except Exception as e:
+            logger.error(
+                "mcp_ingest_skill_bundle_v1_error",
+                source=source,
+                error=str(e),
+            )
+            return _json_error(f"ASB-Skill collection v1 ingest failed: {e}")
+
+        logger.info(
+            "mcp_ingest_skill_bundle_v1",
+            source=source,
+            kb_name=result["kb_name"],
+            skills_ingested=result["skills_ingested"],
+        )
+        return _json_ok(result)
+
+    # ---- legacy branch (original logic, unchanged) ----
     # Match the CLI's path-vs-URL detection: existing local path → Path,
     # anything else (URL or non-existent path) → raw string. The
     # orchestrator parses URL strings itself.
