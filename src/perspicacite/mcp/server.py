@@ -5913,9 +5913,9 @@ async def get_claim_links(
 @mcp.tool()
 async def claim_graph_export(
     kb_name: str,
-    format: str = "turtle",
+    format: str = "nquads",
 ) -> str:
-    """Export a KB's claim graph as Turtle, JSON-LD, or RO-Crate.
+    """Export a KB's claim graph as N-Quads, Turtle, JSON-LD, or RO-Crate.
 
     Serialises every triple in the KB's indicium claim graph to the requested
     format and returns the result inline. Useful for archiving a KB's claim
@@ -5924,19 +5924,19 @@ async def claim_graph_export(
 
     Args:
         kb_name: KB whose claim graph to export.
-        format: Serialisation format — one of ``"turtle"``, ``"jsonld"``,
-            ``"rocrate"`` (default: ``"turtle"``).
+        format: Serialisation format — one of ``"nquads"``, ``"turtle"``,
+            ``"jsonld"``, ``"rocrate"`` (default: ``"nquads"``).
 
     Returns:
         JSON ``{success, kb_name, format, data}`` where ``data`` is a string
-        (turtle) or a list/dict (jsonld/rocrate).
+        (nquads/turtle) or a list/dict (jsonld/rocrate).
     """
     try:
         import indicium  # noqa: F401
     except ImportError:
         return _json_error("indicia extra not installed; uv sync --extra indicia")
 
-    _valid_formats = ("turtle", "jsonld", "rocrate")
+    _valid_formats = ("nquads", "turtle", "jsonld", "rocrate")
     if format not in _valid_formats:
         return _json_error(
             f"unsupported format '{format}'; choose one of: {list(_valid_formats)}"
@@ -5947,9 +5947,11 @@ async def claim_graph_export(
         if store._backend == "memory":
             # rdflib ConjunctiveGraph — full serialisation support
             assert store._g is not None
-            if format == "turtle":
+            if format == "nquads":
+                result: Any = store._g.serialize(format="nquads")
+            elif format == "turtle":
                 serialised = store._g.serialize(format="turtle")
-                result: Any = serialised
+                result = serialised
             else:
                 raw_jld = store._g.serialize(format="json-ld")
                 try:
@@ -5993,7 +5995,9 @@ async def claim_graph_export(
             g = _CG()
             g.parse(data=buf.getvalue().decode("utf-8"), format="nquads")
 
-            if format == "turtle":
+            if format == "nquads":
+                result = buf.getvalue().decode("utf-8")
+            elif format == "turtle":
                 result = g.serialize(format="turtle")
             else:
                 raw_jld = g.serialize(format="json-ld")
