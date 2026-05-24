@@ -665,7 +665,7 @@ async def agentic_chat_stream(request: ChatRequest, conversation_id: str | None 
                         pass
                 yield event
         else:
-            # Use RAGEngine for other modes (basic, advanced, profound)
+            # Use RAGEngine for other modes (basic, advanced, deep_research)
             async for event in _stream_rag_mode(request, conversation_id):
                 # Collect assistant content and message_id for saving
                 if event.startswith("data:"):

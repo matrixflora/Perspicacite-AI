@@ -431,7 +431,7 @@ def list_kb(ctx: click.Context, as_json: bool) -> None:
 @click.option(
     "--mode",
     "-m",
-    type=click.Choice(["basic", "advanced", "profound", "contradiction"]),
+    type=click.Choice(["basic", "advanced", "deep_research", "profound", "contradiction"]),
     default="basic",
     help="RAG mode. agentic + literature_survey aren't supported by the CLI ask path.",
 )
@@ -617,7 +617,8 @@ async def _run_query(
     mode_map = {
         "basic": RAGMode.BASIC,
         "advanced": RAGMode.ADVANCED,
-        "profound": RAGMode.PROFOUND,
+        "deep_research": RAGMode.DEEP_RESEARCH,
+        "profound": RAGMode.PROFOUND,  # backward-compat alias
         "contradiction": RAGMode.CONTRADICTION,
     }
     rag_mode = mode_map.get(mode, RAGMode.BASIC)

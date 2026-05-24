@@ -26,7 +26,7 @@ class TestRAGModesStructure:
         """Test that all RAG mode files exist."""
         required_files = [
             'base.py', 'basic.py', 'advanced.py',
-            'profound.py', 'agentic.py', '__init__.py'
+            'deep_research.py', 'agentic.py', '__init__.py'
         ]
 
         for file in required_files:
@@ -36,7 +36,7 @@ class TestRAGModesStructure:
     @pytest.mark.parametrize("file,methods", [
         ('basic.py', ['execute', 'execute_stream', '_generate_response']),
         ('advanced.py', ['execute', 'execute_stream', '_generate_similar_queries', '_wrrf_retrieval']),
-        ('profound.py', ['execute', 'execute_stream', '_create_plan', '_execute_step']),
+        ('deep_research.py', ['execute', 'execute_stream', '_create_plan', '_execute_step']),
         ('agentic.py', ['execute', 'execute_stream']),  # Now a wrapper around AgenticOrchestrator
     ])
     def test_mode_has_required_methods(self, modes_dir, file, methods):

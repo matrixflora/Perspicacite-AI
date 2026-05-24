@@ -123,7 +123,7 @@ _TOOL_ENTRIES: list[dict] = [
     },
     {
         "name": "generate_report",
-        "purpose": "Run a full RAG report over a KB (basic/advanced/profound/agentic/literature_survey/contradiction).",
+        "purpose": "Run a full RAG report over a KB (basic/advanced/deep_research/agentic/literature_survey/contradiction; \"profound\" is a deprecated alias for deep_research).",
         "when_to_use": "Synthesise an answer with citations from KB content.",
         "key_knobs": [
             "mode",
@@ -359,7 +359,7 @@ _TOOL_ENTRIES: list[dict] = [
 _CAPABILITIES: list[str] = [
     "Live multi-database literature search with enrichment and rerank.",
     "Personal knowledge bases (KBs): build, ingest (DOIs/local/GitHub/Zotero), search, export.",
-    "RAG report generation in modes basic/advanced/profound/agentic/literature_survey/contradiction.",
+    "RAG report generation in modes basic/advanced/deep_research/agentic/literature_survey/contradiction (\"profound\" still accepted as alias).",
     "Passage-level retrieval and citable source/license records.",
     "LLM extraction of numeric parameters and failure modes from passages.",
     "Citation-graph expansion and evidence-capsule building.",
@@ -375,7 +375,7 @@ _DECISION_RULES: list[str] = [
     "Pick the tool: search_literature/web_search for discovery; "
     "search_knowledge_base/search_by_passage/get_relevant_passages for KB retrieval; "
     "generate_report to synthesise an answer.",
-    "Pick the mode (advanced default; profound for depth; contradiction for claim conflicts) "
+    "Pick the mode (advanced default; deep_research for depth; contradiction for claim conflicts; \"profound\" is a deprecated alias for deep_research) "
     "and screening (screen_method/screen_threshold) for generate_report.",
     "Always read the {success: true/false} envelope on every response before continuing.",
 ]

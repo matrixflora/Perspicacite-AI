@@ -2496,7 +2496,7 @@ Follow the system instructions for this situation."""
         yield StreamEvent.done(
             conversation_id="",
             tokens_used=0,
-            mode="profound",
+            mode="deep_research",
             iterations=self.iterations,
         )
 
