@@ -92,6 +92,17 @@ _TOOL_ENTRIES: list[dict] = [
         "key_knobs": ["kb_names", "k"],
     },
     {
+        "name": "search_skill_kb",
+        "purpose": "EDAM-IRI pre-filtered semantic search over an ASB-Skill collection KB.",
+        "when_to_use": (
+            "L2 layer of layered skill routing: called by the collection router after "
+            "L1 (router SKILL.md) has identified the domain. Cuts candidate set ~10× "
+            "before embedding ranking when EDAM filters are supplied. Returns top-k "
+            "skill IRIs alongside filtered chunks."
+        ),
+        "key_knobs": ["edam_operation", "edam_topics", "top_k"],
+    },
+    {
         "name": "search_by_passage",
         "purpose": "Retrieve KB passages similar to an arbitrary input text, with source/license records.",
         "when_to_use": "Find citable supporting passages for a given sentence/paragraph.",

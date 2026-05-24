@@ -46,6 +46,7 @@ from perspicacite.pipeline.github_kb import (
 from perspicacite.pipeline.asb.collection_ingest import (
     ingest_asb_skill_collection,
 )
+from perspicacite.pipeline.asb.edam_filter import edam_pre_filter
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
 
 logger = get_logger("perspicacite.mcp.server")
@@ -1139,6 +1140,104 @@ async def search_knowledge_base(
     except Exception as e:
         logger.error("mcp_search_kb_error", kb_name=kb_name, error=str(e))
         return _json_error(f"KB search failed: {e}")
+
+
+# =============================================================================
+# Tool 5b: search_skill_kb  (EDAM-prefiltered skill search)
+# =============================================================================
+
+
+@mcp.tool()
+async def search_skill_kb(
+    query: str,
+    kb_name: str = "default",
+    top_k: int = 10,
+    edam_operation: str | None = None,
+    edam_topics: list[str] | None = None,
+) -> str:
+    """Search a skill KB with an optional EDAM IRI pre-filter.
+
+    Wraps ``search_knowledge_base`` with an EDAM-IRI metadata pre-filter
+    that cuts the candidate set before embedding ranking — ~10× precision
+    multiplier at scale for skill libraries with EDAM annotations.
+
+    Used by the L2 layer of the layered skill-retrieval architecture (§6 of
+    the 2026-05-24 ASB-Skills release design):
+
+      L0: Collection README description
+      L1: ``_router/SKILL.md`` (auto-generated per collection), loaded by default
+      L2: **this tool** — EDAM pre-filter + embed rank
+      L3: Load specific SKILL.md body via ``Read`` tool
+
+    Returns top-k skill IRIs (from ``metadata.skill_iri``) plus the
+    filtered chunk list for the caller to use or forward to L3.
+
+    **Fail-open:** chunks with no EDAM metadata always pass through to
+    preserve backward compat with legacy skill bundles that predate EDAM
+    annotation.
+
+    Args:
+        query: Free-text question or topic.
+        kb_name: Target KB containing the skill collection.
+        top_k: Number of chunks to request from the underlying KB search.
+            EDAM filtering happens post-retrieval; the final result may
+            have fewer items than top_k when filtering is active.
+        edam_operation: Optional EDAM operation IRI
+            (e.g. ``"http://edamontology.org/operation_3215"``).
+            When provided, restricts to skills annotated with this operation.
+        edam_topics: Optional list of EDAM topic IRIs
+            (e.g. ``["http://edamontology.org/topic_3172"]``).
+            When provided, restricts to skills sharing at least one topic.
+
+    Returns:
+        JSON with ``success``, ``query``, ``kb_name``, ``results``
+        (filtered chunks), ``skill_iris`` (deduplicated, score-ordered),
+        and ``edam_filter_applied`` (bool).
+    """
+    import json as _json
+
+    # Step 1: run the standard search
+    raw_str = await search_knowledge_base(
+        query=query,
+        kb_name=kb_name,
+        top_k=top_k,
+    )
+    raw = _json.loads(raw_str)
+
+    # Propagate failures immediately
+    if not raw.get("success"):
+        return raw_str
+
+    chunks = raw.get("results") or []
+
+    # Step 2: EDAM pre-filter
+    edam_filter_applied = bool(edam_operation or edam_topics)
+    if edam_filter_applied:
+        chunks = edam_pre_filter(
+            chunks,
+            edam_operation=edam_operation,
+            edam_topics=edam_topics,
+        )
+
+    # Step 3: Deduplicate skill IRIs (preserve score order)
+    seen_iris: set[str] = set()
+    skill_iris: list[str] = []
+    for chunk in chunks:
+        meta = chunk.get("metadata") or {}
+        iri = meta.get("skill_iri") or ""
+        if iri and iri not in seen_iris:
+            seen_iris.add(iri)
+            skill_iris.append(iri)
+
+    return _json_ok({
+        "query": query,
+        "kb_name": kb_name,
+        "results": chunks,
+        "skill_iris": skill_iris,
+        "edam_filter_applied": edam_filter_applied,
+        "edam_operation": edam_operation,
+        "edam_topics": edam_topics,
+    })
 
 
 # =============================================================================
@@ -6241,6 +6340,7 @@ _TOOL_NAMES: list[str] = [
     "get_paper_references",
     "list_knowledge_bases",
     "search_knowledge_base",
+    "search_skill_kb",
     "search_by_passage",
     "get_relevant_passages",
     "extract_parameters_from_passages",
