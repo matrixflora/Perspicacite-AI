@@ -147,6 +147,16 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
         self.max_themes = 8
         self.min_themes = 3
 
+        # Issue 3: keep up to seed_known_max known papers as anchor seeds when
+        # the broad search returns ONLY already-indexed papers. Prevents the
+        # empty-results → KB-vector-fallback → poor diversity loop.
+        _ls_settings = getattr(config.rag_modes, "literature_survey", None) or {}
+        if hasattr(_ls_settings, "model_dump"):
+            _ls_settings = _ls_settings.model_dump()
+        elif hasattr(_ls_settings, "dict"):
+            _ls_settings = _ls_settings.dict()
+        self.seed_known_max: int = int(_ls_settings.get("seed_known_max", 5))
+
         # SciLEx for multi-API search
         self.scilex_adapter = SciLExAdapter()
 
@@ -866,21 +876,43 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
     ) -> list[Any]:
         """Remove papers already present in any provided KB.
 
+        When ALL results are already in the KB (a common case for well-indexed
+        topics), keep up to ``self.seed_known_max`` of them as anchor seeds to
+        preserve survey diversity.  Falls back to pure KB vector search only
+        when the broad search returns zero results.
+
         A paper is excluded when its ``id`` or ``doi`` appears in
         ``known_paper_ids``.  Papers with no identifiers are kept.
         """
         if not known_paper_ids or not papers:
             return papers
+
         before_count = len(papers)
-        filtered = [
+        new_papers = [
             p for p in papers
             if (getattr(p, "id", None) not in known_paper_ids)
             and (not getattr(p, "doi", None) or getattr(p, "doi", None) not in known_paper_ids)
         ]
-        filtered_count = before_count - len(filtered)
+        filtered_count = before_count - len(new_papers)
         if filtered_count:
             logger.info("survey_known_papers_filtered", count=filtered_count)
-        return filtered
+
+        if new_papers:
+            return new_papers
+
+        # All results are known — keep top-N as anchor seeds for survey diversity.
+        # Only fall back to pure KB vector search when the broad search itself
+        # returns zero results (empty papers list), not when all are known.
+        seeds = [p for p in papers if (
+            getattr(p, "id", None) in known_paper_ids
+            or (getattr(p, "doi", None) and getattr(p, "doi", None) in known_paper_ids)
+        )][:self.seed_known_max]
+        logger.info(
+            "survey_using_known_seeds",
+            seed_count=len(seeds),
+            seed_known_max=self.seed_known_max,
+        )
+        return seeds
 
     async def _store_references_to_all_kbs(
         self,

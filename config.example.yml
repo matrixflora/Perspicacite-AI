@@ -148,6 +148,9 @@ rag_modes:
     # Range: 1–64; default is 8.
     map_reduce_max_papers: 8
 
+  literature_survey:
+    seed_known_max: 5   # known papers to keep as survey anchors when all results are already in KB
+
 # =============================================================================
 # SciLEx Integration
 # =============================================================================
