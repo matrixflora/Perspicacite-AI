@@ -32,6 +32,9 @@ async def test_scilex_search_substitutes_rewritten_query():
     with patch(
         "perspicacite.search.query_optimizer.optimize_query",
         side_effect=capture_optimize,
+    ), patch(
+        "perspicacite.search.domain_aggregator.build_aggregator",
+        side_effect=RuntimeError("no aggregator in unit test"),
     ):
         from perspicacite.rag.agentic.orchestrator import AgenticOrchestrator
 
@@ -77,6 +80,9 @@ async def test_scilex_search_optimizer_failure_falls_back_to_original():
     with patch(
         "perspicacite.search.query_optimizer.optimize_query",
         side_effect=raise_on_optimize,
+    ), patch(
+        "perspicacite.search.domain_aggregator.build_aggregator",
+        side_effect=RuntimeError("no aggregator in unit test"),
     ):
         from perspicacite.rag.agentic.orchestrator import AgenticOrchestrator
 

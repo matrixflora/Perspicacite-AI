@@ -232,7 +232,7 @@ def test_agentic_orchestrator_consolidation():
     assert 'early_exit_confidence' in content, "Missing early_exit_confidence"
     print("    ✅ Has early_exit_confidence (early exit)")
 
-    assert '_extract_documents_from_result' in content, "Missing document extraction"
+    assert '_extract_papers_from_results' in content, "Missing document extraction"
     print("    ✅ Has document extraction for quality assessment")
 
     # Check that it's unified
