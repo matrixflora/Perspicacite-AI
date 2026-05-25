@@ -14,10 +14,9 @@ abstracts, 300 dev claims), and shows how to configure each one.
 | **1 — Default** | `all-MiniLM-L6-v2` | 0.857 | ~90 MB | free | Any machine, quick setup |
 | **2 — OpenAI** | `text-embedding-3-large` | 0.910* | ~0 MB local | ~$0.13 / M tokens | Best accuracy, cloud cost OK |
 | **3a — Biomedical local** | `S-PubMedBert-MS-MARCO` | **0.873** | ~440 MB | free | Biomedical / life science |
-| **3b — General local SOTA** | `BAAI/bge-m3` | ~0.85† | ~2.3 GB | free | General-domain, GPU recommended |
+| **3b — General local SOTA** | `BAAI/bge-m3` | **0.879** | ~2.3 GB | free | New best overall — beats OpenAI on SciFact |
 
-\* OpenAI vector=0.864 + `bge-reranker-v2-m3` cross-encoder rerank (OR+4= estimate)  
-† BGE-M3 evaluation in progress; preliminary results pending KB validation
+\* OpenAI vector=0.864 + `ms-marco-MiniLM-L-12-v2` CE rerank (OR×4)
 
 All NDCG@10 figures are with `over_retrieve=4×, BAAI/bge-reranker-v2-m3` reranker unless
 noted. Base (no rerank) figures are 5–14 pp lower.
@@ -199,10 +198,12 @@ knowledge_base:
   similarity_threshold: 0.0
 ```
 
-> **Note:** BGE-M3 evaluation is ongoing. Preliminary results are lower than expected
-> (~0.655 NDCG@10) — we suspect a KB name mismatch during initial testing. A clean
-> ingest + re-eval is planned. BGE-M3 typically achieves 0.85+ on retrieval benchmarks;
-> results will be updated once confirmed.
+> **Benchmark result (SciFact dev, 300 claims, 5 183 PubMed abstracts):**
+> NDCG@10 = **0.879** with `BAAI/bge-reranker-v2-m3` reranker (over_retrieve=4×).
+> This is the **current best overall**, beating PubMedBERT (0.873) and OpenAI 3-large + ms-marco (0.872).
+> Note: an earlier result of 0.655 was invalid — that run accidentally targeted the MiniLM server
+> (port 8000) where `similarity_threshold: 0.7` filtered most bge-m3 results.
+> The corrected run uses port 8004 with `similarity_threshold: 0.0`.
 
 GPU launch:
 ```bash
