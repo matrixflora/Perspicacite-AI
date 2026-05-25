@@ -559,6 +559,19 @@ class BasicRAGMode(BaseRAGMode):
             _db_pretty = ", ".join(
                 d.replace("_", " ").title() for d in (request.databases or [])
             ) or "Semantic Scholar, OpenAlex, PubMed"
+            # Announce the fall-back FIRST. The keyword optimizer below
+            # is a ~1–5 s LLM call and used to run silently between
+            # "Retrieving documents…" and this status, leaving the user
+            # staring at a frozen-looking "Retrieving documents…" with
+            # no idea why it was slow. Emitting the transition message
+            # immediately gives them a visible heartbeat while the
+            # optimizer works.
+            yield StreamEvent.status(
+                f"No KB results — falling back to web literature search across {_db_pretty}…"
+            )
+            # Tiny optimizer-running status so users know the next ~5 s
+            # of silence is the rewrite step, not a hang.
+            yield StreamEvent.status("Optimizing search query…")
             # Run the keyword optimizer UPFRONT so the user sees the
             # rewritten query BEFORE the slow aggregator call starts.
             # Previously this fired inside ``_web_fallback_papers`` and its
@@ -586,9 +599,6 @@ class BasicRAGMode(BaseRAGMode):
                     )
             except Exception as _qe:
                 logger.debug("basic_upfront_optimizer_failed", error=str(_qe))
-            yield StreamEvent.status(
-                f"No KB results — falling back to web literature search across {_db_pretty}…"
-            )
             _telemetry = getattr(request, "telemetry_sink", None) or []
             paper_results = await _web_fallback_papers(
                 query=search_query,
@@ -632,6 +642,18 @@ class BasicRAGMode(BaseRAGMode):
                             phase="start",
                             providers=_ev.get("providers", []),
                             searched_query=_sq,
+                        )
+                    elif _k == "selection_unavailable":
+                        # User picked databases that the server's config didn't
+                        # build. Surface a clear status so the UI doesn't show
+                        # "got results" when really the picks were silently
+                        # dropped (or, with the matching fix in web_search,
+                        # so the UI sees WHY zero results came back).
+                        yield StreamEvent.status_kind(
+                            _ev.get("message", "Selected databases unavailable on this server."),
+                            kind="selection_unavailable",
+                            requested=_ev.get("requested", []),
+                            available=_ev.get("available", []),
                         )
                     elif _k == "provider_progress" and _ev.get("phase") == "done":
                         _bp = _ev.get("by_provider", {}) or {}

@@ -47,7 +47,15 @@ class CrossEncoderReranker:
                     "loading_cross_encoder",
                     model=self.model_name,
                 )
-                self._model = CrossEncoder(self.model_name)
+                # Try cache-only first to avoid HuggingFace's 429-prone
+                # staleness HEAD on every cold load. See same pattern in
+                # search/screening.py for context.
+                try:
+                    self._model = CrossEncoder(
+                        self.model_name, local_files_only=True
+                    )
+                except Exception:
+                    self._model = CrossEncoder(self.model_name)
             except ImportError:
                 raise ImportError(
                     "sentence-transformers not installed. "

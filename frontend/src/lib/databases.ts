@@ -175,6 +175,9 @@ export function providerToneClasses(
   }
 }
 
-// Defaults: the six priority providers — gives reasonable breadth out of
-// the box without overloading every query with the slower scrapers.
-export const DEFAULT_DATABASES: DatabaseId[] = PRIORITY_DATABASES.map((d) => d.id);
+// Default selection: PubMed only. Picked as the single sensible default
+// because (1) it has no API key requirement, (2) it always builds in
+// the aggregator when pdf_download.unpaywall_email is set, and (3) the
+// alternative — all six priority DBs — sent slow scrapers (Google
+// Scholar, etc.) on every query. The user can add more from the picker.
+export const DEFAULT_DATABASES: DatabaseId[] = ["pubmed"];

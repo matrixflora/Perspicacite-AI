@@ -151,7 +151,7 @@ export default function SettingsPage() {
               <input
                 type="range"
                 min={1}
-                max={10}
+                max={25}
                 step={1}
                 value={prefs.maxPapers}
                 onChange={(e) => update("maxPapers", Number(e.target.value))}

@@ -93,7 +93,7 @@ export async function* streamChat(opts: {
     query: opts.query,
     mode: opts.mode,
     stream: true,
-    max_papers: opts.maxPapers ?? 5,
+    max_papers: opts.maxPapers ?? 10,
     conversation_id: opts.conversationId,
     databases: opts.databases,
   };

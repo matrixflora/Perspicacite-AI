@@ -959,19 +959,30 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                 )
 
                 # Clean and add the generated query. Guard against the
-                # LLM returning None (provider returned empty body) which
-                # would crash with "'NoneType' object has no attribute
-                # 'strip'" and abort the whole query-expansion loop.
+                # LLM returning None / empty (some free-tier providers do
+                # this intermittently — observed with deepseek-v4-flash).
+                # Continue to the next iteration instead of breaking the
+                # whole loop, so one transient empty response doesn't
+                # collapse "3 variations" down to just the original.
                 if not response:
-                    logger.warning("advanced_generated_query_empty_response")
-                    break
+                    logger.warning(
+                        "advanced_generated_query_empty_response",
+                        attempt=i + 1, of=number,
+                    )
+                    continue
                 new_query = response.strip()
                 if new_query and new_query not in queries:
                     queries.append(new_query)
                     logger.debug("advanced_generated_query", query=new_query[:100])
 
             except Exception as e:
-                logger.warning("advanced_query_generation_error", error=str(e))
+                # Provider/network errors are likely to repeat — break
+                # rather than burn quota looping. Empty-response is
+                # different (handled above with continue).
+                logger.warning(
+                    "advanced_query_generation_error",
+                    error=str(e), attempt=i + 1, of=number,
+                )
                 break
 
         return queries

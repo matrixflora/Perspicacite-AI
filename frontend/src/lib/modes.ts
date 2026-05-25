@@ -84,11 +84,19 @@ export const MODES: ModeDescriptor[] = [
     accent: "yellow",
     latency: "~30s",
     phases: [
-      { id: "rewrite", label: "Rewrite query", glyph: "rewrite", match: ["rewrite", "rephras", "refined"] },
+      // "generating query variations" is advanced.py's rewrite step —
+      // matched here so the bucketer attributes it to rewrite rather
+      // than synthesize (which previously stole it via the loose
+      // "generat" matcher and made every later phase mistakenly show
+      // as done before retrieval even began).
+      { id: "rewrite", label: "Rewrite query", glyph: "rewrite", match: ["rewrite", "rephras", "refined", "query variation", "generating query"] },
       { id: "retrieve_kb", label: "Search KB", glyph: "retrieve", match: ["kb", "knowledge base"] },
       { id: "retrieve_web", label: "Search web databases", glyph: "retrieve", match: ["querying database", "web fallback", "search returned", "provider"] },
       { id: "screen", label: "Screen for relevance", glyph: "screen", match: ["screen", "relevance", "rerank"] },
-      { id: "synthesize", label: "Generate answer", glyph: "synthesize", match: ["generat", "synthes"] },
+      // Tightened from "generat" → specific synthesis phrases so it
+      // can't false-match earlier "generating query variations"
+      // status events.
+      { id: "synthesize", label: "Generate answer", glyph: "synthesize", match: ["generating response", "generating answer", "generate answer", "synthes"] },
     ],
   },
   {

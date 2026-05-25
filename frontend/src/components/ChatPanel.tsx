@@ -81,7 +81,7 @@ export function ChatPanel({
   const [databases, setDatabases] = useState<DatabaseId[]>(DEFAULT_DATABASES);
   const [showDbPicker, setShowDbPicker] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [maxPapers, setMaxPapers] = useState<number>(5);
+  const [maxPapers, setMaxPapers] = useState<number>(10);
   // Hybrid retrieval weight: 0 = pure BM25, 0.5 = default, 1 = pure vector
   const [hybridWeight, setHybridWeight] = useState<number>(0.5);
   const [kbName, setKbName] = useState<string | null>(null);
@@ -214,6 +214,9 @@ export function ChatPanel({
       setTurns((t) => [...t, userTurn, asstTurn]);
       setDraft("");
       setStreaming(true);
+      // Auto-collapse the database panel on submit so the answer + sources
+      // get the full window. The user can reopen it from the favicon row.
+      setShowDbPicker(false);
 
       const ctrl = new AbortController();
       abortRef.current = ctrl;
@@ -551,6 +554,11 @@ export function ChatPanel({
               expanded={showDbPicker}
               disabled={streaming}
             />
+            <TopNPill
+              value={maxPapers}
+              onChange={setMaxPapers}
+              disabled={streaming}
+            />
             <div className="ml-auto">
               {streaming ? (
                 <button
@@ -677,6 +685,50 @@ function DbFaviconRow({
         {count}/{DATABASES.length} databases active
       </span>
     </button>
+  );
+}
+
+// Compact stepper for the per-query "Top-N retrieved papers" cap.
+// Sits inline next to the database picker so the cap is visible at a
+// glance and can be tweaked without opening Settings. Range 1–25 matches
+// the backend RAGRequest.max_papers_retrieval bounds.
+function TopNPill({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  disabled?: boolean;
+}) {
+  const clamp = (n: number) => Math.max(1, Math.min(25, Math.round(n)));
+  return (
+    <div
+      title={`Cap on retrieved papers per query · current: ${value}. Click − / + to adjust (1–25).`}
+      className="ml-1 inline-flex items-stretch overflow-hidden rounded-[var(--radius-md)] border border-[var(--border)] text-[11px] font-medium leading-none transition focus-within:border-[var(--cnrs-blue)] hover:border-[var(--cnrs-blue)]"
+    >
+      <button
+        type="button"
+        onClick={() => onChange(clamp(value - 1))}
+        disabled={disabled || value <= 1}
+        aria-label="Decrease top-N papers"
+        className="grid w-6 place-items-center text-[var(--text-muted)] transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)] disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        −
+      </button>
+      <span className="grid place-items-center border-x border-[var(--border)] px-2 font-mono text-[var(--text-body)]">
+        Top {value}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(clamp(value + 1))}
+        disabled={disabled || value >= 25}
+        aria-label="Increase top-N papers"
+        className="grid w-6 place-items-center text-[var(--text-muted)] transition hover:bg-[var(--cnrs-grey-light)] hover:text-[var(--cnrs-blue)] disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        +
+      </button>
+    </div>
   );
 }
 

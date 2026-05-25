@@ -76,26 +76,41 @@ Also set `pdf_download.unpaywall_email` in `config.yml` for open-access PDF disc
 
 ### Run
 
-The app is two processes — a Python backend (REST API + MCP) and a Next.js
-frontend (web UI). For local development, one launcher starts both, and a
-single **Ctrl+C** stops both:
+The app is one Python backend process plus an optional Next.js frontend.
+For local development the launcher starts both, and a single **Ctrl+C**
+stops both:
 
 ```bash
 ./dev.sh
 ```
 
-Then open **http://localhost:3000** for the web UI. The backend's REST API and
-MCP server are at **http://localhost:8000** (`/mcp`), which the frontend proxies.
+Then open **http://localhost:3000** for the recommended (Next.js + CNRS
+charte) web UI.
 
-**Which address do I open?**
+#### Two web UIs ship in this repo
 
-- **Researchers / everyday use → http://localhost:3000.** That's the whole
-  app. You never need to open `:8000` or know anything about MCP.
-- **Developers / tool integrations → http://localhost:8000.** This is the
-  backend: the REST API (`/api/...`) and the MCP server (`/mcp`) that agents
-  like Mimosa-AI or Claude Code connect to. The web UI talks to it for you, so
-  it has no human-facing pages of its own — opening `:8000` in a browser is
-  expected to look bare.
+| URL | UI | Served by | When to use |
+| --- | --- | --- | --- |
+| **http://localhost:3000** | **Next.js / CNRS-charte (recommended)** | `frontend/` (Next.js 16 + React 19 + Tailwind) | Everyday research. Newer UI, streaming chat, CNRS visual identity, configurable database picker, settings page. Proxies `/api/*` to the backend at `:8000` (overridable via `PERSPICACITE_BACKEND_URL`). |
+| **http://localhost:8000** | **Legacy server-rendered (Jinja)** | FastAPI directly via `templates/index.html` | Same backend, no Node required. Older UX, still maintained. Useful when you want to skip the Next.js install or are running on a server without Node. The historical pre-fork snapshot lives on the `backup/gui-vanilla-jinja` branch. |
+
+Both UIs talk to the same FastAPI backend at `:8000`, which also exposes
+the REST API at `/api/...` and the MCP server at `/mcp`.
+
+#### Running the frontend on its own
+
+```bash
+# Backend — REST API on :8000, MCP at /mcp (loads ML models — ~1 min cold start)
+uv run perspicacite -c config.yml serve
+
+# Optional Next.js frontend — :3000 (separate terminal)
+cd frontend
+npm install                          # first time only
+npm run dev                          # http://localhost:3000
+
+# Or point the frontend at a different backend (e.g. the OpenAI port):
+PERSPICACITE_BACKEND_URL=http://localhost:8002 npm run dev
+```
 
 > **Heads-up — the backend is slow to start.** It loads ML models (PyTorch,
 > sentence-transformers) on boot, so expect roughly a minute before it's ready
@@ -104,24 +119,36 @@ MCP server are at **http://localhost:8000** (`/mcp`), which the frontend proxies
 > substantially. The UI shows connection errors until the backend finishes
 > booting; just wait for it.
 
-Prefer separate terminals (e.g. to watch each log stream)?
+#### Optional: Google Scholar via Playwright
+
+Google Scholar is opt-in because it relies on either the [SerpApi](https://serpapi.com/)
+managed scraper (recommended, requires `SERPAPI_API_KEY`; free tier ~100/mo)
+or headless Chromium via Playwright.
+
+To enable headless Chromium scraping:
 
 ```bash
-# Backend — REST API on :8000, MCP at /mcp
-uv run perspicacite -c config.yml serve
-
-# Frontend — Next.js dev server on :3000 (separate terminal)
-cd frontend && npm install && npm run dev
+uv sync --extra browser              # installs the playwright Python package
+uv run playwright install chromium   # downloads the browser binary (~150 MB)
 ```
 
-> The previous server-rendered (Jinja) UI lived on `:8000`; it's preserved on
-> the **`backup/gui-vanilla-jinja`** branch.
+Then in `config.yml`:
 
-> **Google Scholar (optional):** in `config.yml`, add `google_scholar` to
-> `search.enabled_providers` and set `google_scholar.enabled: true`. Provide
-> `SERPAPI_API_KEY` in the environment for the reliable SerpApi backend (free
-> tier 100 searches/mo); otherwise it falls back to headless-Chromium scraping
-> (the `[browser]` extra).
+```yaml
+search:
+  enabled_providers:
+    # ...
+    - google_scholar
+
+google_scholar:
+  enabled: true
+  headless: true
+```
+
+Without both steps the server logs `google_scholar_playwright_missing` and
+Scholar silently returns zero results. SerpApi-only setups can skip the
+`uv sync --extra browser` and `playwright install` commands — set
+`SERPAPI_API_KEY` instead and Scholar will route through SerpApi.
 
 > Keys can live in either the shell environment (`export ANTHROPIC_API_KEY=...`)
 > or in `.env` at the project root — the CLI loads `.env` on startup. Shell

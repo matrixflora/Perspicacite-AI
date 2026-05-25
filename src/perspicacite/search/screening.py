@@ -223,7 +223,19 @@ async def screen_papers_rerank(
     import math
 
     loop = asyncio.get_running_loop()
-    model = await loop.run_in_executor(None, lambda: CrossEncoder(model_name))
+    # Try the cache first. CrossEncoder's default load does a HEAD against
+    # huggingface.co to check for updates, which 429s under modest load and
+    # then sleeps 31 s × 5 retries — wedging the whole RAG path. When the
+    # model is already cached locally (the common case), local_files_only
+    # skips the network entirely. Fall back to a full load only when the
+    # cache miss raises.
+    def _load_offline_or_fallback() -> "CrossEncoder":
+        try:
+            return CrossEncoder(model_name, local_files_only=True)
+        except Exception:
+            return CrossEncoder(model_name)
+
+    model = await loop.run_in_executor(None, _load_offline_or_fallback)
 
     pairs = [
         (query, _candidate_text(c)[:2000])  # cap each input for throughput
