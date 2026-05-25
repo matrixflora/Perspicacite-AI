@@ -120,8 +120,17 @@ cd frontend && npm install && npm run dev
 > **Google Scholar (optional):** in `config.yml`, add `google_scholar` to
 > `search.enabled_providers` and set `google_scholar.enabled: true`. Provide
 > `SERPAPI_API_KEY` in the environment for the reliable SerpApi backend (free
-> tier 100 searches/mo); otherwise it falls back to headless-Chromium scraping
-> (the `[browser]` extra).
+> tier 100 searches/mo); otherwise it falls back to headless-Chromium scraping,
+> which needs the `[browser]` extra **plus** a one-time Chromium download:
+>
+> ```bash
+> uv sync --extra browser           # installs playwright Python package
+> uv run playwright install chromium # downloads the browser binary (~150MB)
+> ```
+>
+> Without these steps, log lines like `google_scholar_playwright_missing`
+> will appear and Scholar will silently return zero results. SerpApi-only
+> setups can skip both commands.
 
 > Keys can live in either the shell environment (`export ANTHROPIC_API_KEY=...`)
 > or in `.env` at the project root — the CLI loads `.env` on startup. Shell
