@@ -117,7 +117,7 @@ class MCPState:
 
         # Vector store
         self.vector_store = ChromaVectorStore(
-            persist_dir="./chroma_db",
+            persist_dir=str(config.database.chroma_path),
             embedding_provider=self.embedding_provider,
         )
 
@@ -1302,12 +1302,44 @@ async def add_papers_to_kb(
             }
 
         from perspicacite.pipeline.download import retrieve_paper_content
+        import asyncio as _asyncio_local
 
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-            for paper in paper_models:
+            # First pass: handle papers that need no network (pre-supplied
+            # full_text, skip_content_fetch, missing/non-canonical DOI). These
+            # are O(1) per paper and don't benefit from parallelism.
+            fetch_idxs: list[int] = []
+            for i, (paper, pd) in enumerate(zip(paper_models, papers)):
+                # Caller can supply pre-fetched text directly via `full_text`
+                # (or pass `skip_content_fetch=True`) to bypass the slow
+                # Crossref/PMC/Unpaywall lookup loop. Useful for benchmark
+                # corpora where the abstract is the only signal we want and
+                # the supplied "doi" is a non-resolvable benchmark id
+                # (e.g. ``scifact:4983`` or ``beir:nfcorpus:MED-10``).
+                supplied_full_text = pd.get("full_text")
+                if supplied_full_text:
+                    paper.full_text = supplied_full_text
+                    continue
+                if pd.get("skip_content_fetch"):
+                    continue
                 if not paper.doi:
                     continue
-                pdf_stats["attempted"] += 1
+                # Heuristic: real DOIs start with "10." (Crossref prefix). Anything
+                # else is a synthetic benchmark id; skipping saves 1-5 s of
+                # failed lookups per paper at no information loss.
+                if not paper.doi.startswith("10."):
+                    continue
+                fetch_idxs.append(i)
+
+            # Second pass: fetch the real-DOI papers in parallel. The previous
+            # implementation iterated serially, so a batch of 5 took 5 × per-paper
+            # time. With asyncio.gather we issue all fetches concurrently against
+            # the shared httpx client; the upstream APIs (PMC, Unpaywall, Crossref,
+            # OpenAlex) all support concurrent connections fine.
+            pdf_stats["attempted"] += len(fetch_idxs)
+
+            async def _fetch(idx: int) -> tuple[int, str | None, bool]:
+                paper = paper_models[idx]
                 try:
                     result = await retrieve_paper_content(
                         paper.doi,
@@ -1317,12 +1349,22 @@ async def add_papers_to_kb(
                         **pdf_kwargs,
                     )
                     if result.success and result.full_text:
-                        paper.full_text = result.full_text
-                        pdf_stats["success"] += 1
-                        continue
-                    pdf_stats["failed"] += 1
+                        return idx, result.full_text, True
+                    return idx, None, False
                 except Exception:
-                    pdf_stats["failed"] += 1
+                    return idx, None, False
+
+            if fetch_idxs:
+                outcomes = await _asyncio_local.gather(
+                    *[_fetch(i) for i in fetch_idxs],
+                    return_exceptions=False,
+                )
+                for idx, full_text, ok in outcomes:
+                    if ok and full_text:
+                        paper_models[idx].full_text = full_text
+                        pdf_stats["success"] += 1
+                    else:
+                        pdf_stats["failed"] += 1
 
         # Add to vector store
         dkb_config = KnowledgeBaseConfig(

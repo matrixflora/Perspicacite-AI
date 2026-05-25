@@ -1,0 +1,89 @@
+# Perspicacité config — SPECTER2 base on port 8001
+# Used for dual_rrf experiments alongside the MiniLM server on :8000.
+# See perspicacite-eval session notes 2026-05-24 for context.
+#
+# Key overrides vs config.yml:
+#   server.port:                       8001 (so it can coexist with MiniLM on :8000)
+#   knowledge_base.embedding_model:    allenai/specter2_base   (768-dim scientific)
+#   knowledge_base.similarity_threshold: 0.0  (SPECTER2 cosine scores are lower than MiniLM;
+#                                              0.7 default filters everything → 0 results)
+# Launch:
+#   TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+#       uv run perspicacite -c config_specter2.yml serve
+#
+# TRANSFORMERS_OFFLINE/HF_DATASETS_OFFLINE prevent the model from trying
+# to re-fetch on every startup (we got hit by HF 429s in the previous
+# session). Requires the SPECTER2 model to be already cached at
+#   ~/.cache/huggingface/hub/models--allenai--specter2_base/
+# If missing, do ONE online startup first (drop the env vars) and let
+# sentence-transformers pull the ~440MB.
+
+version: "2.0.0"
+config_name: "specter2-port8001"
+
+server:
+  host: "0.0.0.0"
+  port: 8001
+  reload: false
+
+llm:
+  default_provider: "openrouter"
+  default_model: "deepseek/deepseek-v4-flash"
+  providers:
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      timeout: 120
+      max_retries: 3
+    anthropic:
+      base_url: "https://api.anthropic.com"
+      timeout: 120
+      max_retries: 3
+    openai:
+      base_url: "https://api.openai.com/v1"
+      timeout: 60
+      max_retries: 3
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+    summarize_threshold: 20
+
+knowledge_base:
+  embedding_model: "allenai/specter2_base"
+  chunk_size: 1000
+  chunk_overlap: 200
+  chunking_method: "token"
+  default_top_k: 10
+  # CRITICAL: SPECTER2 base produces lower cosine similarity scores than
+  # MiniLM. With the default 0.7 threshold, every result gets filtered.
+  # 0.0 keeps all results; ranking still works because we sort by score.
+  similarity_threshold: 0.0
+
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "./chroma_db"
+
+rag_modes:
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  basic:
+    max_iterations: 1
+    use_hybrid: true
+  advanced:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+    enable_planning: false
+    enable_reflection: false
+    query_expansion: true
+  deep_research:
+    max_iterations: 3
+    use_hybrid: true
+    use_wrrf: true
+    enable_planning: true
+    enable_reflection: true
+  agentic:
+    max_iterations: 5
+    use_hybrid: true
+    map_reduce_max_papers: 8
+
+pdf_download:
+  unpaywall_email: "louisfelix.nothias@gmail.com"

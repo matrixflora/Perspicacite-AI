@@ -1107,6 +1107,33 @@ class AgenticOrchestrator:
 
         overall_conf = session.evidence.overall_confidence() if session.evidence else None
 
+        # Bug B-9: when synthesis returns an empty / whitespace-only answer
+        # (most often because every download_papers call failed and the
+        # answer-generation prompt ended up content-less), the chat router
+        # ships answer.content="" + sources=[]. Replace with a graceful
+        # fallback so the user sees what *was* retrieved.
+        if not (answer or "").strip():
+            if papers:
+                bullet_list = "\n".join(
+                    f"- {(p.get('title') or 'Untitled')[:160]}"
+                    for p in papers[:8]
+                )
+                answer = (
+                    "I could not synthesize a coherent narrative from the "
+                    "retrieved sources, but the following papers were found "
+                    "to be relevant to your query:\n\n" + bullet_list
+                )
+                logger.warning(
+                    "agentic_empty_answer_replaced_with_paper_list",
+                    n_papers=len(papers),
+                )
+            else:
+                answer = (
+                    "I could not find any relevant papers for this query. "
+                    "Try rephrasing or broadening the search terms."
+                )
+                logger.warning("agentic_empty_answer_no_papers")
+
         session.add_message(
             "assistant",
             answer,
@@ -1127,17 +1154,37 @@ class AgenticOrchestrator:
             answer_event["confidence"] = round(overall_conf, 3)
         yield answer_event
 
-        # Yield found papers so the UI can offer "Add to KB"
-        # Only include papers that:
-        # 1. Passed relevance filtering (score >= 3)
-        # 2. Are NOT already in the KB (source != "kb_search")
-        # Default 0: missing score means scoring failed or paper was excluded — do not
-        # treat as "passed" (previously default 3 falsely showed all hits as relevant).
+        # Yield found papers so the UI can offer "Add to KB" and so SSE
+        # clients can render source cards.
+        #
+        # Two emissions:
+        #   1. papers_found  → ALL retrieved papers, regardless of relevance
+        #      filtering. Previously this was filtered to (source=="kb_search"
+        #      OR relevance_score>=3), which silently dropped papers when the
+        #      LLM relevance scorer was strict — leading to empty source cards
+        #      even when KB retrieval found the right paper (Bug B-9 in the
+        #      2026-05-25 mode-consistency audit). UI clients can distinguish
+        #      KB vs web by inspecting source=="kb_search" / relevance_score.
+        #   2. papers_to_curate → the original "relevance ≥ 3 and not in KB"
+        #      subset. Kept as a separate event so the UI's "Add to KB"
+        #      block (which calls /api/kb/{name}/papers) doesn't re-ingest
+        #      papers that are already there.
+        if papers:
+            yield {"type": "papers_found", "papers": _clean_papers_for_event(papers)}
+        elif getattr(self, "_found_papers", None):
+            # papers list was filtered to empty but raw retrievals exist —
+            # surface them so the UI shows *something* (with the caveat that
+            # the LLM judged them low-relevance).
+            yield {
+                "type": "papers_found",
+                "papers": _clean_papers_for_event(list(self._found_papers)[:10]),
+            }
+
         relevant_papers = [
             p for p in papers if p.get("relevance_score", 0) >= 3 and p.get("source") != "kb_search"
         ]
         if relevant_papers:
-            yield {"type": "papers_found", "papers": _clean_papers_for_event(relevant_papers)}
+            yield {"type": "papers_to_curate", "papers": _clean_papers_for_event(relevant_papers)}
 
         yield {"type": "phase_transition", "phase": "done"}
         yield {

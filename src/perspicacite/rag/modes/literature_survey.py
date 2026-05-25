@@ -1595,14 +1595,33 @@ Respond with theme names separated by commas, or "None" if no match."""
         return "\n".join(lines)
 
     def _convert_to_sources(self, papers: list[PaperCandidate]) -> list[SourceReference]:
-        """Convert papers to source references."""
+        """Convert papers to source references.
+
+        SourceReference.relevance_score is constrained to [0.0, 1.0] by its
+        pydantic schema, but PaperCandidate.relevance_score can carry the
+        raw 0-5 LLM rating (set at literature_survey.py:1090 from
+        ``analysis.get("relevance_score", 0)``). Without normalization the
+        entire stream errors out with `Input should be less than or equal
+        to 1`. Clamp + divide-by-5 when the score is clearly on a 0-5 scale,
+        otherwise clamp to [0,1] directly. Bug B-7 in the 2026-05-25
+        mode-runner audit.
+        """
+        def _normalize(raw: float | int | None) -> float:
+            if raw is None:
+                return 0.0
+            r = float(raw)
+            if r > 1.0:
+                # LLM rating scale (e.g. 0-5) — rescale to [0,1].
+                r = r / 5.0
+            return max(0.0, min(1.0, r))
+
         return [
             SourceReference(
                 title=p.title,
                 authors=", ".join(p.authors[:3]) if p.authors else None,
                 year=p.year,
                 doi=p.doi,
-                relevance_score=p.relevance_score,
+                relevance_score=_normalize(p.relevance_score),
             )
             for p in papers
         ]

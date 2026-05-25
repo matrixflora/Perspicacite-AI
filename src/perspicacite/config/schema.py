@@ -36,7 +36,7 @@ class DatabaseConfig(BaseModel):
     """Database configuration."""
 
     path: Path = Field(default=Path("~/.local/share/perspicacite/memory.db"))
-    chroma_path: Path = Field(default=Path("~/.local/share/perspicacite/chroma"))
+    chroma_path: Path = Field(default=Path("./chroma_db"))
 
     @field_validator("path", "chroma_path")
     @classmethod

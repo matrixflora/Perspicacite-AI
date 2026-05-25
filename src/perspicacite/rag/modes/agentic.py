@@ -273,8 +273,46 @@ class AgenticRAGMode(BaseRAGMode):
                         yield StreamEvent.content(chunk)
 
                 elif event_type == "papers_found":
-                    papers = event.get("papers", [])
+                    papers = event.get("papers", []) or []
                     yield StreamEvent.status(f"Found {len(papers)} relevant papers")
+                    # Emit each paper as a SourceReference so SSE clients can
+                    # render source cards in agentic mode the same way they do
+                    # for basic / advanced / contradiction. Without this, the
+                    # agentic stream contains only status + content events and
+                    # no provenance — consistency bug B-5 in the 2026-05-25
+                    # mode-runner audit.
+                    for p in papers:
+                        if not isinstance(p, dict):
+                            continue
+                        try:
+                            from perspicacite.models.rag import SourceReference
+                            authors_raw = p.get("authors") or []
+                            authors: list[str] = []
+                            for a in authors_raw:
+                                if isinstance(a, str):
+                                    authors.append(a)
+                                elif isinstance(a, dict):
+                                    name = a.get("name") or a.get("family") or ""
+                                    if name:
+                                        authors.append(name)
+                            yield StreamEvent.source(
+                                SourceReference(
+                                    title=p.get("title") or "Untitled",
+                                    authors=authors,
+                                    year=p.get("year"),
+                                    journal=p.get("journal"),
+                                    doi=p.get("doi"),
+                                    url=p.get("url"),
+                                    source=p.get("source"),
+                                    relevance_score=float(p.get("relevance_score") or p.get("score") or 0.5),
+                                )
+                            )
+                        except Exception as exc:
+                            logger.debug(
+                                "agentic_source_emit_skipped",
+                                error=str(exc),
+                                paper_keys=list(p.keys()) if isinstance(p, dict) else None,
+                            )
 
                 elif event_type == "completion":
                     _agentic_metadata = {

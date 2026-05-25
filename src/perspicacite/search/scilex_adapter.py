@@ -345,20 +345,35 @@ class SciLExAdapter:
         # [min, max] range — so we must expand to EVERY year in the span.
         # Otherwise [2023, 2026] queries only 2023 and 2026, silently skipping
         # 2024-2025 (and collapsing to 2023 since the current year is sparse).
+        #
+        # Default span is a 25-year window ending at the current year. The
+        # previous default (last ~3 years) silently excluded foundational
+        # biomedical literature — e.g. asking for "GLP-1 RA mechanisms" never
+        # surfaced Drucker 2018, LEADER 2016, or STEP 2021 because all three
+        # fell outside the 3-year window. (Bug B-3 in the 2026-05-25 audit.)
         current_year = datetime.now().year
         if year_min and year_max:
             _lo, _hi = year_min, year_max
         elif year_max:
-            _lo, _hi = year_max, year_max
+            # Bug B-4: previously collapsed to [year_max, year_max] — a single
+            # year. Use a sensible window ending at year_max so callers don't
+            # have to specify both bounds.
+            _lo, _hi = year_max - 25, year_max
         elif year_min:
-            _lo, _hi = year_min, year_min
+            # Bug B-4: previously collapsed to [year_min, year_min] — a single
+            # year. Pair year_min with the current year so e.g. year_min=2010
+            # actually searches 2010 through today.
+            _lo, _hi = year_min, current_year
         else:
-            _lo, _hi = current_year - 3, current_year  # default: last ~3 years
+            # Bug B-3: default is now a 25-year window. Covers most published
+            # biomedical literature; callers wanting a narrower scan should
+            # pass year_min/year_max explicitly.
+            _lo, _hi = current_year - 25, current_year
         if _lo > _hi:
             _lo, _hi = _hi, _lo
         # Cap the span (keep the most recent years) so a very wide range
         # doesn't explode into one query per year × per API.
-        _MAX_YEARS = 8
+        _MAX_YEARS = 30
         if _hi - _lo + 1 > _MAX_YEARS:
             _lo = _hi - _MAX_YEARS + 1
         years = list(range(_lo, _hi + 1))

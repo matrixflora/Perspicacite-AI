@@ -1,0 +1,84 @@
+# Perspicacité config — Qwen3 14B via Ollama (local LLM) on port 8003
+#
+# Runs the full Perspicacite server with Qwen3-14B-Q4_K_M as the LLM backend.
+# Embedding model is still text-embedding-3-large (port 8002 setup).
+#
+# Prerequisites:
+#   ollama pull qwen3:14b
+#   /opt/homebrew/opt/ollama/bin/ollama serve   (or brew services start ollama)
+#
+# Launch:
+#   OPENAI_API_KEY=$OPENAI_API_KEY uv run perspicacite -c config_qwen3_14b.yml serve
+#
+# Thinking mode: Qwen3 supports /think ... /no_think tokens.
+# Set QWEN3_NO_THINK=1 to prepend /no_think to all prompts (faster, less depth).
+# Default: thinking enabled (better for deep_research / agentic modes).
+
+version: "2.0.0"
+config_name: "qwen3-14b-local-port8003"
+
+server:
+  host: "0.0.0.0"
+  port: 8003
+  reload: false
+
+llm:
+  default_provider: "ollama"
+  default_model: "qwen3:14b"
+
+  providers:
+    ollama:
+      base_url: "http://localhost:11434"
+      timeout: 300       # Qwen3 14B can be slow for long answers
+      max_retries: 2
+
+    # Keep OpenRouter as fallback for multi-KB or high-load scenarios
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      timeout: 120
+      max_retries: 3
+
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+
+knowledge_base:
+  embedding_model: "text-embedding-3-large"
+  chunk_size: 1000
+  chunk_overlap: 200
+  chunking_method: "token"
+  default_top_k: 10
+  similarity_threshold: 0.0
+  use_two_pass: true
+
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "./chroma_db"
+
+rag_modes:
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+  basic:
+    max_iterations: 1
+    use_hybrid: true
+
+  advanced:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+
+scilex:
+  enabled: false
+
+mcp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8003
+  transport: "streamable-http"
+
+auth:
+  enabled: true
+
+logging:
+  level: "INFO"
+  format: "json"
