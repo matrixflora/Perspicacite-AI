@@ -550,6 +550,11 @@ def create_embedding_provider(
             "sentence-transformers/",
             "pritamdeka/",
             "cross-encoder/",
+            # BGE family (BAAI) and other HF-hosted retrieval models
+            "BAAI/",
+            "NeuML/",
+            "ncats/",
+            "microsoft/Biomed",
         )
         if m.startswith("st:"):
             return SentenceTransformerEmbeddingProvider(model=m[3:])
