@@ -120,6 +120,18 @@ class AppState:
         )
         logger.info("Embedding provider initialized")
 
+        # Pre-warm the cross-encoder reranker if it isn't cached yet.
+        # First-query loads otherwise pay a one-off download (~90 MB for
+        # ms-marco-MiniLM) AND can trigger huggingface.co rate-limit retry
+        # loops (HEAD 429 → 31 s × 5 = 155 s freeze at "Screen for
+        # relevance"). Doing it once at boot is a single visible cost
+        # users can wait through; subsequent restarts skip the network
+        # entirely (cache hit + local_files_only path in screening.py).
+        _prewarm_reranker(
+            getattr(config.rag_modes, "reranker_model", None)
+            or "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        )
+
         # Initialize vector store
         self.vector_store = ChromaVectorStore(
             persist_dir=str(config.database.chroma_path), embedding_provider=self.embedding_provider
@@ -224,6 +236,54 @@ class AppState:
 
         self.initialized = True
         logger.info("System initialization complete!")
+
+
+def _prewarm_reranker(model_name: str) -> None:
+    """Ensure the cross-encoder reranker is cached on disk before any
+    query hits the rerank step.
+
+    The runtime load path in ``search/screening.py`` already tries
+    ``local_files_only=True`` first to avoid HuggingFace HEAD 429s on
+    every restart. That works on the second-and-later boot, but on the
+    *first* boot the cache is empty, the local-only load fails, and the
+    fallback then hits the network — which is exactly the scenario we
+    want to control. Calling this at startup downloads the model once,
+    visible in the boot log, so the first user query doesn't pay it.
+
+    No-op when the cache already contains the model. Errors are logged
+    but non-fatal — the rerank path still works without the prewarm.
+    """
+    try:
+        from sentence_transformers import CrossEncoder
+    except ImportError:
+        logger.info(
+            "prewarm_reranker_skipped: sentence_transformers not installed"
+        )
+        return
+
+    # Fast cache probe: try local-only first; if it succeeds, the model
+    # is already present and we skip the network load entirely.
+    try:
+        CrossEncoder(model_name, local_files_only=True)
+        logger.info("prewarm_reranker_cached: %s", model_name)
+        return
+    except Exception:
+        pass
+
+    import time
+    _t0 = time.monotonic()
+    logger.info("prewarm_reranker_downloading: %s (one-time, ~90 MB)", model_name)
+    try:
+        CrossEncoder(model_name)
+        logger.info(
+            "prewarm_reranker_ready: %s (%.1fs)",
+            model_name, time.monotonic() - _t0,
+        )
+    except Exception as exc:
+        logger.warning(
+            "prewarm_reranker_failed: %s — %s — rerank will retry at first use",
+            model_name, exc,
+        )
 
 
 def _warn_stale_cookies(*, cookies_path: str | None, cookie_domains: list[str]) -> None:
