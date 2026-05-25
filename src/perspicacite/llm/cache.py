@@ -12,6 +12,10 @@ import hashlib
 import json
 from typing import Any
 
+from perspicacite.logging import get_logger
+
+logger = get_logger("perspicacite.llm.cache")
+
 # Kwargs that don't affect the model's output and therefore must not
 # participate in the cache key. Adding to this list is backwards
 # compatible (only widens hits). Removing requires bumping a key
@@ -195,6 +199,21 @@ class LLMResponseCache:
         output_tokens: int,
         created_at_override: int | None,
     ) -> None:
+        # Never cache empty / whitespace-only responses. A previous bug
+        # let DeepSeek-V4-flash empties land in the cache, and subsequent
+        # identical prompts hit the cached "" forever — silently breaking
+        # callers like the search query optimizer (every retry returned
+        # the same empty string, every parse failed). Skipping the write
+        # here means a transient empty response gets retried on the next
+        # call instead of poisoning the cache.
+        if not response or not response.strip():
+            logger.debug(
+                "llm_cache_skip_empty",
+                key=key[:16],
+                provider=provider,
+                model=model,
+            )
+            return
         created_at = (
             int(created_at_override)
             if created_at_override is not None
