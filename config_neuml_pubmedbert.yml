@@ -1,0 +1,83 @@
+# Perspicacité config — NeuML/pubmedbert-base-embeddings on port 8007
+# PubMedBERT fine-tuned specifically for bi-encoder retrieval on PubMed
+# title-abstract pairs (768-dim). Contrast with S-PubMedBert-MS-MARCO
+# (port 8005) which uses MS-MARCO (general domain) fine-tuning.
+# See perspicacite-eval docs/ for results.
+#
+# Key overrides vs config.yml:
+#   server.port:                       8007
+#   knowledge_base.embedding_model:    NeuML/pubmedbert-base-embeddings (768-dim)
+#   knowledge_base.similarity_threshold: 0.0
+#
+# No API key required (fully local via sentence-transformers).
+#
+# Launch:
+#   uv run perspicacite -c config_neuml_pubmedbert.yml serve
+
+version: "2.0.0"
+config_name: "neuml-pubmedbert-port8007"
+
+server:
+  host: "0.0.0.0"
+  port: 8007
+  reload: false
+
+llm:
+  default_provider: "openrouter"
+  default_model: "deepseek/deepseek-v4-flash"
+
+  providers:
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      timeout: 120
+      max_retries: 3
+
+    anthropic:
+      base_url: "https://api.anthropic.com"
+      timeout: 120
+      max_retries: 3
+
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+
+knowledge_base:
+  embedding_model: "NeuML/pubmedbert-base-embeddings"
+  chunk_size: 1000
+  chunk_overlap: 200
+  chunking_method: "token"
+  default_top_k: 10
+  similarity_threshold: 0.0
+  use_two_pass: true
+
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "./chroma_db"
+
+rag_modes:
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+  basic:
+    max_iterations: 1
+    use_hybrid: true
+
+  advanced:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+
+scilex:
+  enabled: false
+
+mcp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8007
+  transport: "streamable-http"
+
+auth:
+  enabled: true
+
+logging:
+  level: "INFO"
+  format: "json"
