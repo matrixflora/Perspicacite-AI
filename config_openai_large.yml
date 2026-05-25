@@ -72,6 +72,50 @@ rag_modes:
 scilex:
   enabled: false
 
+# Required for the standalone PubMed-Entrez provider to register at
+# startup. Without a real address build_aggregator logs
+# 'build_aggregator_pubmed_skipped_no_email' and PubMed silently drops
+# out of the aggregator. Mirrors config.yml.
+pdf_download:
+  unpaywall_email: "tao.jiang@univ-cotedazur.fr"
+
+# Mirror config.yml's provider allowlist so users can actually select
+# google_scholar / dblp_sparql in the chat UI without the new
+# selection_unavailable safeguard rejecting their picks. Stays a subset
+# of providers Perspicacité knows how to build — adding e.g. "ads"
+# requires ads_api_key in pdf_download or a separate ads block.
+search:
+  enabled_providers:
+    - europepmc
+    - pubchem
+    - core
+    - inspire
+    - google_scholar
+    - dblp_sparql
+
+# Headless Google Scholar via Playwright + OpenRouter Exa fallback.
+# Requires `uv sync --extra browser` and `uv run playwright install
+# chromium` once. See README ("Google Scholar (optional)").
+google_scholar:
+  enabled: true
+  headless: true
+  delay_seconds: 2.0
+  max_results: 20
+  openrouter_fallback_enabled: true
+  openrouter_fallback_model: "deepseek/deepseek-v4-flash"
+  openrouter_fallback_domains:
+    - "arxiv.org"
+    - "biorxiv.org"
+    - "chemrxiv.org"
+    - "pubmed.ncbi.nlm.nih.gov"
+    - "europepmc.org"
+    - "semanticscholar.org"
+    - "crossref.org"
+    - "nature.com"
+    - "sciencedirect.com"
+    - "springer.com"
+    - "wiley.com"
+
 mcp:
   enabled: true
   host: "0.0.0.0"
