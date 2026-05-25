@@ -470,7 +470,18 @@ def format_paper_results_for_prompt(
         # "['Jiabin Tang', 'Lianghao Xia']") and the model faithfully
         # reproduced that in its citations.
         if isinstance(authors, list):
-            cleaned = [strip_bibtex_braces(str(a)) for a in authors if a]
+            # Apply the same Scholar-tail stripper the references formatter
+            # uses (format_references_academic). Without it, entries like
+            # "M Wang … - Nature …, 2021" reach the
+            # LLM verbatim — and if the first author's slot is the noisy
+            # one, the model writes "(Author unknown, YYYY)" inline even
+            # though the deterministic references list at the bottom
+            # extracts a clean surname.
+            cleaned = [
+                strip_bibtex_braces(clean_scholar_author_blob(str(a)))
+                for a in authors if a
+            ]
+            cleaned = [c for c in cleaned if c]
             if len(cleaned) == 0:
                 authors_str = ""
             elif len(cleaned) <= 3:
