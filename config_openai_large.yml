@@ -21,8 +21,17 @@ server:
   reload: false
 
 llm:
+  # Paid OpenRouter with Anthropic Claude Haiku 4.5 as the default.
+  # Switched from deepseek/deepseek-v4-flash because that model returned
+  # empty strings intermittently on small structured prompts (search
+  # optimizer, query variations, etc.), causing visible UX glitches:
+  #   - optimizer "unparseable" on cache hits
+  #   - advanced-mode "Searching with 1 query variations" (loop bailed
+  #     on first empty response)
+  # Haiku 4.5 is ~500 ms, ~$0.80/$4 per M tokens, and adheres to JSON
+  # schemas reliably.
   default_provider: "openrouter"
-  default_model: "deepseek/deepseek-v4-flash"
+  default_model: "anthropic/claude-haiku-4-5"
 
   providers:
     openrouter:
