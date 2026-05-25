@@ -265,9 +265,16 @@ class ChromaVectorStore:
                     # downstream min_score filters work for both cosine and legacy L2 collections.
                     score = 1.0 / (1.0 + max(0.0, distance))
 
+                    # Guard: some legacy collections (e.g. QADS-extracted embeddings) store
+                    # None metadata. Fall back to an empty dict so _metadata_to_chunk can
+                    # still produce a valid ChunkMetadata (paper_id will be "" but the
+                    # chunk is still returned rather than crashing the whole search).
+                    if metadata is None:
+                        metadata = {}
+
                     chunk = DocumentChunk(
                         id=doc_id,
-                        text=document,
+                        text=document or "",
                         metadata=_metadata_to_chunk(metadata),
                     )
 

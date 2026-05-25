@@ -68,7 +68,7 @@ def _preflight_llm_keys(config: Any) -> None:
 class AppState:
     """Application state with agentic orchestrator and RAG engine."""
 
-    def __init__(self):
+    def __init__(self, config_path: str | None = None):
         self.llm_client = None
         self.embedding_provider = None
         self.vector_store = None
@@ -80,6 +80,10 @@ class AppState:
         self.pdf_downloader = None
         self.pdf_parser = None
         self.initialized = False
+        # Config path — set by CLI before lifespan fires so AppState reads
+        # the same config file as the CLI (previously it re-called load_config()
+        # with no path and always loaded the default config.yml).
+        self._config_path: str | None = config_path
 
     async def initialize(self):
         """Initialize all components."""
@@ -88,7 +92,8 @@ class AppState:
 
         logger.info("Initializing Perspicacité v2 Agentic System...")
 
-        # Load config
+        # Load config — use the path set by the CLI so multi-server setups
+        # (e.g. different ports / embedding models) work correctly.
         from perspicacite.config.loader import load_config
         from perspicacite.llm import AsyncLLMClient
         from perspicacite.llm.embeddings import create_embedding_provider
@@ -96,7 +101,7 @@ class AppState:
         from perspicacite.rag.tools import ToolRegistry
         from perspicacite.retrieval import ChromaVectorStore
 
-        config = load_config()
+        config = load_config(self._config_path)
 
         # F-31: Preflight check — refuse to serve when the configured default
         # LLM provider's API key isn't in env. Silent 401s deep in the RAG
@@ -117,7 +122,7 @@ class AppState:
 
         # Initialize vector store
         self.vector_store = ChromaVectorStore(
-            persist_dir="./chroma_db", embedding_provider=self.embedding_provider
+            persist_dir=str(config.database.chroma_path), embedding_provider=self.embedding_provider
         )
         logger.info("Vector store initialized")
 

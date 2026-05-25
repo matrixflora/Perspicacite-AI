@@ -62,8 +62,9 @@ def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
     setup_logging(cfg.logging, stream=log_stream)
     logger.info("perspicacite_started", version=__version__)
 
-    # Store config in context
+    # Store config in context (also the raw path for AppState)
     ctx.obj["config"] = cfg
+    ctx.obj["config_path"] = str(config) if config else None
 
 
 @cli.command()
@@ -128,7 +129,9 @@ def serve(
     if config.mcp.enabled:
         click.echo(f"   MCP: http://{config.mcp.host}:{config.mcp.port}")
 
-    # Hand the resolved config path to the web app via env var
+    # Hand the resolved config path to AppState so it reads the same file
+    # the CLI loaded — previously AppState always re-called load_config()
+    # with no path and silently loaded the default config.yml.
     import os
 
     os.environ["PERSPICACITE_CONFIG"] = str(config)
@@ -136,6 +139,8 @@ def serve(
     import uvicorn
 
     from perspicacite.web import app
+    from perspicacite.web.state import app_state as _app_state
+    _app_state._config_path = ctx.obj.get("config_path")
 
     if config.mcp.enabled:
         # Start MCP server alongside FastAPI
