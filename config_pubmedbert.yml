@@ -1,0 +1,82 @@
+# Perspicacité config — pritamdeka/S-PubMedBert-MS-MARCO on port 8005
+# PubMedBERT fine-tuned on MS-MARCO for retrieval (768-dim, BERT backbone).
+# Domain-specific for biomedical text (PubMed pre-training).
+# See perspicacite-eval docs/ for results.
+#
+# Key overrides vs config.yml:
+#   server.port:                       8005
+#   knowledge_base.embedding_model:    pritamdeka/S-PubMedBert-MS-MARCO (768-dim)
+#   knowledge_base.similarity_threshold: 0.0
+#
+# No API key required (fully local via sentence-transformers).
+#
+# Launch:
+#   uv run perspicacite -c config_pubmedbert.yml serve
+
+version: "2.0.0"
+config_name: "pubmedbert-port8005"
+
+server:
+  host: "0.0.0.0"
+  port: 8005
+  reload: false
+
+llm:
+  default_provider: "openrouter"
+  default_model: "deepseek/deepseek-v4-flash"
+
+  providers:
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      timeout: 120
+      max_retries: 3
+
+    anthropic:
+      base_url: "https://api.anthropic.com"
+      timeout: 120
+      max_retries: 3
+
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+
+knowledge_base:
+  embedding_model: "pritamdeka/S-PubMedBert-MS-MARCO"
+  chunk_size: 1000
+  chunk_overlap: 200
+  chunking_method: "token"
+  default_top_k: 10
+  similarity_threshold: 0.0
+  use_two_pass: true
+
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "./chroma_db"
+
+rag_modes:
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+  basic:
+    max_iterations: 1
+    use_hybrid: true
+
+  advanced:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+
+scilex:
+  enabled: false
+
+mcp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8005
+  transport: "streamable-http"
+
+auth:
+  enabled: true
+
+logging:
+  level: "INFO"
+  format: "json"

@@ -177,6 +177,12 @@ class SentenceTransformerEmbeddingProvider:
                 "sentence-transformers/allenai-specter": 768,
                 # PubMed BERT / BioMedical ST models (768-dim BERT backbone)
                 "pritamdeka/S-PubMedBert-MS-MARCO": 768,
+                "NeuML/pubmedbert-base-embeddings": 768,
+                # BGE family (BAAI) — multi-functionality retrieval models
+                "BAAI/bge-m3": 1024,
+                "BAAI/bge-large-en-v1.5": 1024,
+                "BAAI/bge-base-en-v1.5": 768,
+                "BAAI/bge-small-en-v1.5": 384,
             }
             return dimensions.get(self.model_name, 768)
         return self._model.get_sentence_embedding_dimension()

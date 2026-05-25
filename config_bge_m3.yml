@@ -1,0 +1,83 @@
+# Perspicacité config — BAAI/bge-m3 on port 8004
+# Used for eval experiments (dense retrieval, 1024-dim).
+# bge-m3 is a multi-functionality model: dense + sparse + ColBERT multi-vector.
+# We use dense-only here (standard sentence-transformers API).
+# See perspicacite-eval docs/ for results.
+#
+# Key overrides vs config.yml:
+#   server.port:                       8004
+#   knowledge_base.embedding_model:    BAAI/bge-m3  (1024-dim, local)
+#   knowledge_base.similarity_threshold: 0.0
+#
+# No API key required (fully local via sentence-transformers).
+#
+# Launch:
+#   uv run perspicacite -c config_bge_m3.yml serve
+
+version: "2.0.0"
+config_name: "bge-m3-port8004"
+
+server:
+  host: "0.0.0.0"
+  port: 8004
+  reload: false
+
+llm:
+  default_provider: "openrouter"
+  default_model: "deepseek/deepseek-v4-flash"
+
+  providers:
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      timeout: 120
+      max_retries: 3
+
+    anthropic:
+      base_url: "https://api.anthropic.com"
+      timeout: 120
+      max_retries: 3
+
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+
+knowledge_base:
+  embedding_model: "BAAI/bge-m3"
+  chunk_size: 1000
+  chunk_overlap: 200
+  chunking_method: "token"
+  default_top_k: 10
+  similarity_threshold: 0.0
+  use_two_pass: true
+
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "./chroma_db"
+
+rag_modes:
+  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+  basic:
+    max_iterations: 1
+    use_hybrid: true
+
+  advanced:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+
+scilex:
+  enabled: false
+
+mcp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8004
+  transport: "streamable-http"
+
+auth:
+  enabled: true
+
+logging:
+  level: "INFO"
+  format: "json"
