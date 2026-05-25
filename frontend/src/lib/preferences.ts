@@ -10,7 +10,7 @@ export type ScreenMethod = "bm25" | "rerank" | "llm";
 export type Preferences = {
   // Retrieval — wired to /api/chat ChatRequest fields.
   defaultMode: RAGMode;
-  maxPapers: number;             // 1–10
+  maxPapers: number;             // 1–25 (inline TopNPill + settings range)
   maxPapersToDownload: number;   // 1–50 (agentic)
   defaultDatabases: DatabaseId[];
   defaultKbName: string | null;
@@ -30,7 +30,7 @@ export type Preferences = {
 
 export const DEFAULT_PREFS: Preferences = {
   defaultMode: "basic",
-  maxPapers: 5,
+  maxPapers: 10,
   maxPapersToDownload: 10,
   defaultDatabases: DEFAULT_DATABASES,
   defaultKbName: null,
