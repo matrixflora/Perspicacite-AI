@@ -137,6 +137,43 @@ async def run_web_aggregator_search(
                 aggregator._select_providers = lambda _domains: list(  # type: ignore[attr-defined]
                     kept_providers
                 )
+            elif databases:
+                # User explicitly picked one or more databases, but none
+                # of them resolve to a provider this server actually
+                # built — e.g. picked "google_scholar" on a config that
+                # omits ``search.enabled_providers: [..., google_scholar]``,
+                # or picked "pubmed" when standalone PubMed was skipped
+                # due to a missing ``pdf_download.unpaywall_email``.
+                # Honour the selection by narrowing to NO providers and
+                # surfacing why, instead of silently running unrelated
+                # databases (which produced misleading "I picked Scholar,
+                # got CORE results" behaviour).
+                aggregator._providers = []  # type: ignore[attr-defined]
+                aggregator._select_providers = lambda _domains: []  # type: ignore[attr-defined]
+                _available_names = sorted(
+                    (getattr(p, "name", "") or type(p).__name__).lower()
+                    for p in providers_attr
+                )
+                _requested = sorted(d.lower() for d in databases if d)
+                logger.warning(
+                    "web_aggregator_selection_unavailable",
+                    requested=_requested,
+                    available=_available_names,
+                )
+                await _emit_telemetry(telemetry, {
+                    "kind": "selection_unavailable",
+                    "message": (
+                        f"Selected databases unavailable on this server: "
+                        f"{_requested}. None match the providers built by "
+                        f"this config (available: {_available_names}). "
+                        f"Either pick from the available list or enable "
+                        f"the requested providers in config.yml "
+                        f"(search.enabled_providers / google_scholar.enabled / "
+                        f"pdf_download.unpaywall_email)."
+                    ),
+                    "requested": _requested,
+                    "available": _available_names,
+                })
             # ``apis`` here is the SciLEx fan-out list — only the SciLEx
             # provider reads it; standalone providers ignore it and run
             # against their own endpoints regardless.

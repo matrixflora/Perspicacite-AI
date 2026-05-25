@@ -344,8 +344,17 @@ class ChatRequest(BaseModel):
         description="Maximum papers to download for full-text analysis (Agentic mode). Higher = more comprehensive but slower",
     )
     databases: list[str] = Field(
-        default_factory=lambda: ["semantic_scholar", "openalex", "pubmed"],
-        description="List of databases to search (semantic_scholar, openalex, pubmed, arxiv, ieee, springer, dblp)",
+        default_factory=list,
+        description=(
+            "List of databases to search (semantic_scholar, openalex, pubmed, "
+            "arxiv, ieee, springer, dblp, europepmc, core, inspire, pubchem, "
+            "google_scholar, dblp_sparql). Empty list = let the backend pick "
+            "from whatever providers the server's config has actually built. "
+            "A non-empty list is treated as an explicit user choice — if none "
+            "of the picks resolve to a built provider, the search returns no "
+            "results and surfaces a 'selection_unavailable' telemetry event "
+            "rather than silently falling back to unrelated databases."
+        ),
     )
     context: str | None = Field(
         default=None,
