@@ -214,6 +214,9 @@ export function ChatPanel({
       setTurns((t) => [...t, userTurn, asstTurn]);
       setDraft("");
       setStreaming(true);
+      // Auto-collapse the database panel on submit so the answer + sources
+      // get the full window. The user can reopen it from the favicon row.
+      setShowDbPicker(false);
 
       const ctrl = new AbortController();
       abortRef.current = ctrl;
