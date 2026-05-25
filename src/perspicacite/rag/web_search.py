@@ -71,6 +71,13 @@ async def run_web_aggregator_search(
         allowed_provider_names = set(extra_providers)
         if scilex_apis:
             allowed_provider_names.add("scilex")
+        # Standalone providers can share names with SciLEx-fanout APIs —
+        # notably "pubmed", which is registered as both a standalone
+        # PubMed-Entrez provider and a SciLEx API. Picking "pubmed" must
+        # keep the standalone alongside (or instead of) SciLEx, especially
+        # when SciLEx is disabled. Selections not matching any standalone
+        # provider are harmless — the filter loop just won't see them.
+        allowed_provider_names |= _selected
 
     # --- query optimization ---
     # app_state is passed explicitly by callers (threaded from RAGRequest or
