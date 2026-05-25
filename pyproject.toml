@@ -124,15 +124,21 @@ browser = [
 ]
 
 # indicium — Knowledge Graph / SHACL validation layer for structured claim
-# representation. Local sibling package (not on PyPI). Pulls in linkml,
+# representation. Local sibling package (not yet on PyPI). Pulls in linkml,
 # pyshacl, and rdflib. Install only when KG-backed workflows are needed.
+#
+# TEMPORARILY DISABLED until indicium / indicium-adapters /
+# indicium-adapters-metabolomics are published. The `extract_claims_from_passages`
+# and `export_astra` MCP tools degrade gracefully without these extras.
+# To re-enable, uncomment the `indicia` / `adapters` blocks below and the
+# matching entries under [tool.uv.sources].
 #
 # Install with:
 #   uv sync --extra indicia
-indicia = [
-  "indicium",
-  "pyoxigraph>=0.4",
-]
+# indicia = [
+#   "indicium",
+#   "pyoxigraph>=0.4",
+# ]
 
 # indicium-adapters — optional domain adapter protocol. Core package (>=0.4.0)
 # no longer ships the metabolomics adapters; those live in the sibling package
@@ -142,10 +148,10 @@ indicia = [
 #
 # Install with:
 #   uv sync --extra adapters
-adapters = [
-    "indicium-adapters>=0.4.0",
-    "indicium-adapters-metabolomics>=0.1.0",
-]
+# adapters = [
+#     "indicium-adapters>=0.4.0",
+#     "indicium-adapters-metabolomics>=0.1.0",
+# ]
 
 [project.scripts]
 perspicacite = "perspicacite.cli:main"
@@ -169,10 +175,13 @@ packages = ["src/perspicacite"]
 # Safe while the [scilex] extra is unused by the core / KB / MCP paths.
 override-dependencies = ["httpx>=0.28.1"]
 
-[tool.uv.sources]
-indicium = { path = "../indicium", editable = true }
-indicium-adapters = { path = "../indicium-adapters", editable = true }
-indicium-adapters-metabolomics = { path = "../indicium-adapters-metabolomics", editable = true }
+# [tool.uv.sources]
+# Local-path sources for the indicium stack. Disabled until the three sibling
+# packages are public; re-enable together with the `indicia` / `adapters`
+# extras above when they ship.
+# indicium = { path = "../indicium", editable = true }
+# indicium-adapters = { path = "../indicium-adapters", editable = true }
+# indicium-adapters-metabolomics = { path = "../indicium-adapters-metabolomics", editable = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
