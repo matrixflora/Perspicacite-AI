@@ -266,11 +266,12 @@ class ChromaVectorStore:
                     score = 1.0 / (1.0 + max(0.0, distance))
 
                     # Guard: some legacy collections (e.g. QADS-extracted embeddings) store
-                    # None metadata. Fall back to an empty dict so _metadata_to_chunk can
-                    # still produce a valid ChunkMetadata (paper_id will be "" but the
-                    # chunk is still returned rather than crashing the whole search).
+                    # None metadata. Reconstruct a minimal metadata dict from the doc_id
+                    # so paper_id is available for downstream Source construction.
+                    # doc_id format: "scifact:12345678_metadata" → paper_id "scifact:12345678"
                     if metadata is None:
-                        metadata = {}
+                        paper_id_from_id = doc_id.removesuffix("_metadata") if "_metadata" in doc_id else doc_id
+                        metadata = {"paper_id": paper_id_from_id}
 
                     chunk = DocumentChunk(
                         id=doc_id,
