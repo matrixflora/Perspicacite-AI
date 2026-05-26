@@ -387,63 +387,70 @@ async def screen_papers_llm(
 async def screen_papers_embedding(
     candidates: Sequence[dict],
     *,
-    collection: str,
+    reference_papers: Sequence[Sequence[str]],
     embedding_provider: Any,
-    vector_store: Any,
-    top_k: int = 5,
+    intra_k: int = 3,
+    top_n: int = 5,
     threshold: float = 0.3,
 ) -> list[ScreenResult]:
-    """Score candidates by embedding similarity to a KB's vector collection.
-
-    Each candidate's title+abstract is embedded with ``embedding_provider``
-    (the same provider/model that built the KB, so the vectors share a
-    space) and compared to the KB's stored vectors via
-    ``vector_store.search``. The candidate's score is the mean of its top-k
-    cosine hit scores (already normalised to (0,1] by the store). A
-    candidate with no abstract scores 0.0. Errors degrade to 0.0 with a
-    reason rather than raising.
+    """Embedding similarity, two-level. Each KB paper is a list of texts
+    (``[abstract]`` or chunk texts). Per-paper similarity = mean of the
+    candidate's top-``intra_k`` cosines to that paper's texts; the candidate's
+    score = mean of the top-``top_n`` papers. Candidate w/o abstract -> 0.0.
     """
-    candidates_list = list(candidates)
-    if not candidates_list:
+    cands = list(candidates)
+    papers = [[t for t in p if (t or "").strip()] for p in reference_papers]
+    papers = [p for p in papers if p]
+    if not cands:
         return []
+    if not papers:
+        return [ScreenResult(item=c, score=0.0, kept=False, reason="no_reference_papers") for c in cands]
+
+    # Flatten reference texts, remembering each paper's [start, end) slice.
+    flat: list[str] = []
+    bounds: list[tuple[int, int]] = []
+    for p in papers:
+        start = len(flat)
+        flat.extend(p)
+        bounds.append((start, len(flat)))
+
+    # Candidates that have an abstract get embedded; others score 0.
+    to_embed: list[str] = []
+    embed_idx: dict[int, int] = {}
+    for c in cands:
+        if (c.get("abstract") or "").strip():
+            embed_idx[id(c)] = len(to_embed)
+            to_embed.append(_candidate_text(c))
+
+    try:
+        ref_vecs = await embedding_provider.embed(list(flat))
+        cand_vecs = await embedding_provider.embed(to_embed) if to_embed else []
+    except Exception as exc:
+        return [ScreenResult(item=c, score=0.0, kept=False, reason=f"embedding_error: {exc}") for c in cands]
 
     results: list[ScreenResult] = []
-    for c in candidates_list:
-        if not (c.get("abstract") or "").strip():
-            results.append(
-                ScreenResult(item=c, score=0.0, kept=False, reason="no abstract")
-            )
+    for c in cands:
+        if id(c) not in embed_idx:
+            results.append(ScreenResult(item=c, score=0.0, kept=False, reason="no abstract"))
             continue
-        try:
-            embedding = (await embedding_provider.embed([_candidate_text(c)]))[0]
-            hits = await vector_store.search(collection, embedding, top_k=top_k)
-        except Exception as exc:
-            results.append(
-                ScreenResult(item=c, score=0.0, kept=False, reason=f"embedding_error: {exc}")
-            )
-            continue
-        if not hits:
-            results.append(
-                ScreenResult(item=c, score=0.0, kept=False, reason="no_kb_hits")
-            )
-            continue
-        top = [float(h.score) for h in hits[:top_k]]
-        mean_score = sum(top) / len(top)
+        cv = cand_vecs[embed_idx[id(c)]]
+        per_paper = [
+            _topn_mean([_cosine(cv, ref_vecs[j]) for j in range(s, e)], intra_k)
+            for (s, e) in bounds
+        ]
+        score = _topn_mean(per_paper, top_n)
         results.append(
             ScreenResult(
-                item=c,
-                score=mean_score,
-                kept=mean_score >= threshold,
-                reason=f"embedding_top{len(top)}_mean={mean_score:.3f}",
+                item=c, score=score, kept=score >= threshold,
+                reason=f"emb_top{min(top_n, len(per_paper))}papers_mean={score:.3f}",
             )
         )
 
     results.sort(key=lambda r: r.score, reverse=True)
     logger.info(
         "screen_papers_embedding",
-        n=len(candidates_list),
-        kept=sum(r.kept for r in results),
-        threshold=threshold,
+        n=len(cands), papers=len(papers), top_n=top_n, intra_k=intra_k,
+        kept=sum(r.kept for r in results), threshold=threshold,
     )
     return results
 

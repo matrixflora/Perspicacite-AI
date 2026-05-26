@@ -40,26 +40,32 @@ def _r(score, i=0):
 
 
 @pytest.mark.asyncio
-async def test_embedding_scores_relevant_above_offtopic():
+async def test_embedding_topn_over_papers_with_intra_paper_topk():
+    # _StubEmbedder: text with 'relevant' -> [1,0], else -> [0,1]
     cands = [
-        {"title": "A", "abstract": "relevant content here"},
-        {"title": "B", "abstract": "completely unrelated material"},
-        {"title": "C", "abstract": ""},  # no abstract
+        {"title": "A", "abstract": "relevant content"},
+        {"title": "B", "abstract": "unrelated material"},
+        {"title": "C", "abstract": ""},                       # no abstract -> 0
+    ]
+    reference_papers = [
+        ["relevant abstract"],                                # abstract paper (1 text)
+        ["off topic chunk", "relevant chunk", "noise chunk"], # fallback paper (3 chunks)
+        ["completely off topic"],
     ]
     out = await screen_papers_embedding(
-        cands,
-        collection="kb_x",
-        embedding_provider=_StubEmbedder(),
-        vector_store=_StubStore(),
-        top_k=3,
-        threshold=0.5,
+        cands, reference_papers=reference_papers,
+        embedding_provider=_StubEmbedder(), intra_k=3, top_n=2, threshold=0.5,
     )
-    by_title = {r.item["title"]: r for r in out}
-    assert by_title["A"].score > by_title["B"].score
-    assert by_title["A"].kept is True
-    assert by_title["B"].kept is False
-    assert by_title["C"].score == 0.0
-    assert by_title["C"].reason == "no abstract"
+    by = {r.item["title"]: r for r in out}
+    # A ([1,0]) matches paper-0 (sim 1.0) and paper-1's 'relevant chunk'
+    # (intra-top-3 mean of [0,1,0] = 1/3); top-2 papers mean = (1.0 + 0.333)/2 ≈ 0.667
+    assert by["A"].score == pytest.approx((1.0 + 1.0 / 3) / 2, abs=1e-3)
+    assert by["A"].kept is True
+    # B ([0,1]) matches paper-1's off-topic chunks ([0,1]) and paper-2 ([0,1]) at sim 1.0;
+    # paper-1 intra-top-3 mean of [1,0,1] = 2/3; top-2 papers mean = (1.0 + 2/3)/2 ≈ 0.833
+    assert by["B"].score == pytest.approx((1.0 + 2.0 / 3) / 2, abs=1e-3)
+    assert by["B"].kept is True
+    assert by["C"].score == 0.0 and by["C"].reason == "no abstract"
     assert [r.score for r in out] == sorted((r.score for r in out), reverse=True)
 
 
