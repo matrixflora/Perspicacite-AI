@@ -25,16 +25,29 @@ from perspicacite.pipeline.snowball import _papers_from_hits, snowball_expand
 logger = get_logger("perspicacite.pipeline.similarity_expansion")
 
 
-async def get_kb_reference_texts(
-    vector_store: Any, collection: str, cap: int = 2000
-) -> list[str]:
-    """Reference corpus for set-BM25: the KB's per-paper abstracts when
-    available, else (older KBs) up to ``cap`` chunk texts."""
+async def build_reference_papers(
+    vector_store: Any, collection: str, max_per_paper: int = 20
+) -> tuple[list[list[str]], int, int]:
+    """One text-list per KB paper: ``[abstract]`` when present, else the paper's
+    (capped) chunk texts. Returns ``(reference_papers, n_by_abstract,
+    n_by_fallback)``. Chunks are fetched only if some paper lacks an abstract.
+    """
     rows = await vector_store.list_paper_metadata(collection)
-    abstracts = [r["abstract"] for r in rows if r.get("abstract")]
-    if abstracts:
-        return abstracts[:cap]
-    return await vector_store.list_chunk_texts(collection, limit=cap)
+    needs_chunks = any(not (r.get("abstract") or "").strip() for r in rows)
+    chunks = await vector_store.list_paper_chunks(collection, max_per_paper=max_per_paper) if needs_chunks else {}
+    papers: list[list[str]] = []
+    n_abs = n_fb = 0
+    for r in rows:
+        abstract = (r.get("abstract") or "").strip()
+        if abstract:
+            papers.append([abstract])
+            n_abs += 1
+        else:
+            paper_chunks = chunks.get(r.get("paper_id", "")) or []
+            if paper_chunks:
+                papers.append(list(paper_chunks))
+                n_fb += 1
+    return papers, n_abs, n_fb
 
 
 @dataclass
@@ -46,6 +59,8 @@ class ExpansionScoreReport:
     candidates: list[dict[str, Any]] = field(default_factory=list)
     histogram: list[dict[str, Any]] = field(default_factory=list)
     samples: list[dict[str, Any]] = field(default_factory=list)
+    n_by_abstract: int = 0
+    n_by_fallback: int = 0
 
 
 def _score_histogram(scores: list[float], bins: int = 10) -> list[dict[str, Any]]:
@@ -64,7 +79,8 @@ async def score_expansion_candidates(
     direction: str = "both",
     max_per_seed: int = 10,
     method: str = "hybrid",
-    weights: tuple[float, float] = (0.5, 0.5),
+    weights: tuple[float, float] = (0.25, 0.75),
+    top_n: int = 5,
     seed_dois: list[str] | None = None,
     flt: Any = None,
 ) -> ExpansionScoreReport:
@@ -73,9 +89,9 @@ async def score_expansion_candidates(
     from perspicacite.models.kb import chroma_collection_name_for_kb
     from perspicacite.pipeline.search_to_kb import SearchFilter, apply_filters
     from perspicacite.search.screening import (
-        screen_papers,
         screen_papers_embedding,
         screen_papers_hybrid,
+        screen_papers_setwise_bm25,
         select_calibration_samples,
     )
 
@@ -115,27 +131,25 @@ async def score_expansion_candidates(
     if not items:
         return report
 
+    refs, n_abs, n_fb = await build_reference_papers(app_state.vector_store, collection)
+    report.n_by_abstract = n_abs
+    report.n_by_fallback = n_fb
+    if not refs:
+        return report
+
     if method == "embedding":
         results = await screen_papers_embedding(
-            items,
-            collection=collection,
-            embedding_provider=app_state.embedding_provider,
-            vector_store=app_state.vector_store,
-            threshold=0.0,
+            items, reference_papers=refs,
+            embedding_provider=app_state.embedding_provider, top_n=top_n, threshold=0.0,
         )
     elif method == "bm25":
-        ref = await get_kb_reference_texts(app_state.vector_store, collection)
-        results = screen_papers(items, reference=ref, method="bm25", threshold=0.0)
+        results = screen_papers_setwise_bm25(
+            items, reference_papers=refs, top_n=top_n, threshold=0.0
+        )
     else:  # hybrid (default)
-        ref = await get_kb_reference_texts(app_state.vector_store, collection)
         results = await screen_papers_hybrid(
-            items,
-            reference_abstracts=ref,
-            collection=collection,
-            embedding_provider=app_state.embedding_provider,
-            vector_store=app_state.vector_store,
-            weights=weights,
-            threshold=0.0,
+            items, reference_papers=refs, embedding_provider=app_state.embedding_provider,
+            weights=weights, top_n=top_n, threshold=0.0,
         )
 
     report.candidates = [

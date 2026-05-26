@@ -7,44 +7,42 @@ import pytest
 import perspicacite.pipeline.similarity_expansion as se
 from perspicacite.pipeline.similarity_expansion import (
     _score_histogram,
+    build_reference_papers,
     commit_expansion,
-    get_kb_reference_texts,
     score_expansion_candidates,
 )
 
 # ---- Task 3: reference assembly ----
 
 
-class _StoreWithAbstracts:
+class _StoreMixed:
     async def list_paper_metadata(self, collection):
         return [
             {"paper_id": "p1", "abstract": "abstract one"},
-            {"paper_id": "p2", "abstract": "abstract two"},
-            {"paper_id": "p3", "abstract": None},
+            {"paper_id": "p2", "abstract": None},   # -> chunks
         ]
+    async def list_paper_chunks(self, collection, max_per_paper=20):
+        return {"p2": ["chunk a", "chunk b"]}
 
-    async def list_chunk_texts(self, collection, limit=2000):
-        raise AssertionError("must not fall back when abstracts exist")
+
+@pytest.mark.asyncio
+async def test_build_reference_papers_mixes_abstract_and_chunks():
+    papers, n_abs, n_fb = await build_reference_papers(_StoreMixed(), "kb")
+    assert papers == [["abstract one"], ["chunk a", "chunk b"]]
+    assert n_abs == 1 and n_fb == 1
 
 
-class _StoreNoAbstracts:
+class _StoreAllAbstracts:
     async def list_paper_metadata(self, collection):
-        return [{"paper_id": "p1", "abstract": None}, {"paper_id": "p2"}]
-
-    async def list_chunk_texts(self, collection, limit=2000):
-        return ["chunk text a", "chunk text b"]
-
-
-@pytest.mark.asyncio
-async def test_reference_prefers_abstracts():
-    out = await get_kb_reference_texts(_StoreWithAbstracts(), "kb")
-    assert out == ["abstract one", "abstract two"]
+        return [{"paper_id": "p1", "abstract": "a one"}, {"paper_id": "p2", "abstract": "a two"}]
+    async def list_paper_chunks(self, collection, max_per_paper=20):
+        raise AssertionError("must not fetch chunks when all papers have abstracts")
 
 
 @pytest.mark.asyncio
-async def test_reference_falls_back_to_chunk_texts():
-    out = await get_kb_reference_texts(_StoreNoAbstracts(), "kb")
-    assert out == ["chunk text a", "chunk text b"]
+async def test_build_reference_papers_skips_chunks_when_all_abstracts():
+    papers, n_abs, n_fb = await build_reference_papers(_StoreAllAbstracts(), "kb")
+    assert papers == [["a one"], ["a two"]] and n_abs == 2 and n_fb == 0
 
 
 # ---- Task 4: phase 1 ----
@@ -72,10 +70,10 @@ class _OrchStore:
         return doi == "10.1/already"
 
     async def list_paper_metadata(self, collection):
-        return [{"doi": "10.1/seed"}]
+        return [{"paper_id": "seed", "doi": "10.1/seed", "abstract": "relevant graph neural networks"}]
 
-    async def list_chunk_texts(self, collection, limit=2000):
-        return ["graph neural networks"]
+    async def list_paper_chunks(self, collection, max_per_paper=20):
+        return {}
 
 
 async def _kb_meta(name):
