@@ -514,62 +514,47 @@ async def screen_papers_embedding(
 async def screen_papers_hybrid(
     candidates: Sequence[dict],
     *,
-    reference_abstracts: Sequence[str],
-    collection: str,
+    reference_papers: Sequence[Sequence[str]],
     embedding_provider: Any,
-    vector_store: Any,
-    weights: tuple[float, float] = (0.5, 0.5),
-    top_k: int = 5,
+    weights: tuple[float, float] = (0.25, 0.75),
+    intra_k: int = 3,
+    top_n: int = 5,
     threshold: float = 0.3,
 ) -> list[ScreenResult]:
-    """Blend set-BM25 (vs ``reference_abstracts``) with set-embedding (vs the
-    KB ``collection``). Both component scores are already in [0,1], so the
-    final score is ``w_bm25 * bm25 + w_emb * emb``. Realignment is by object
-    identity — the same candidate dicts flow through both scorers.
+    """Blend set-wise BM25 with abstract-to-abstract embedding, both two-level
+    over the same ``reference_papers``. ``weights = (w_bm25, w_emb)``; default
+    favours the semantic signal 3:1. Realignment by object identity.
     """
-    candidates_list = list(candidates)
-    if not candidates_list:
+    cands = list(candidates)
+    if not cands:
         return []
-
     w_bm25, w_emb = weights
-    bm25_results = screen_papers(
-        candidates_list,
-        reference=list(reference_abstracts),
-        method="bm25",
-        threshold=0.0,
+    bm25_results = screen_papers_setwise_bm25(
+        cands, reference_papers=reference_papers, intra_k=intra_k, top_n=top_n, threshold=0.0
     )
     emb_results = await screen_papers_embedding(
-        candidates_list,
-        collection=collection,
-        embedding_provider=embedding_provider,
-        vector_store=vector_store,
-        top_k=top_k,
-        threshold=0.0,
+        cands, reference_papers=reference_papers, embedding_provider=embedding_provider,
+        intra_k=intra_k, top_n=top_n, threshold=0.0,
     )
     bm25_by_id = {id(r.item): r.score for r in bm25_results}
     emb_by_id = {id(r.item): r.score for r in emb_results}
 
     results: list[ScreenResult] = []
-    for c in candidates_list:
+    for c in cands:
         b = bm25_by_id.get(id(c), 0.0)
         e = emb_by_id.get(id(c), 0.0)
         score = w_bm25 * b + w_emb * e
         results.append(
             ScreenResult(
-                item=c,
-                score=score,
-                kept=score >= threshold,
+                item=c, score=score, kept=score >= threshold,
                 reason=f"hybrid bm25={b:.3f} emb={e:.3f}",
             )
         )
-
     results.sort(key=lambda r: r.score, reverse=True)
     logger.info(
         "screen_papers_hybrid",
-        n=len(candidates_list),
-        kept=sum(r.kept for r in results),
-        threshold=threshold,
-        weights=list(weights),
+        n=len(cands), top_n=top_n, intra_k=intra_k,
+        kept=sum(r.kept for r in results), threshold=threshold, weights=list(weights),
     )
     return results
 

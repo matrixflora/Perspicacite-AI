@@ -73,32 +73,22 @@ async def test_embedding_topn_over_papers_with_intra_paper_topk():
 
 
 @pytest.mark.asyncio
-async def test_hybrid_blends_bm25_and_embedding():
+async def test_hybrid_blends_with_default_weights():
     cands = [
-        {"title": "graph neural networks", "abstract": "graph neural networks for molecules"},
-        {"title": "B", "abstract": "relevant but lexically different wording"},
+        {"title": "gnn", "abstract": "relevant graph neural networks"},
         {"title": "C", "abstract": "tax law and accounting"},
     ]
-    reference_abstracts = ["graph neural networks applied to molecular property prediction"]
+    reference_papers = [["relevant graph neural networks for molecules"], ["relevant deep graph nets"]]
     out = await screen_papers_hybrid(
-        cands,
-        reference_abstracts=reference_abstracts,
-        collection="kb_x",
-        embedding_provider=_StubEmbedder(),
-        vector_store=_StubStore(),
-        weights=(0.5, 0.5),
-        top_k=3,
-        threshold=0.0,
+        cands, reference_papers=reference_papers,
+        embedding_provider=_StubEmbedder(), intra_k=3, top_n=2, threshold=0.0,
     )
-    by_title = {r.item["title"]: r for r in out}
-    assert by_title["graph neural networks"].score > by_title["C"].score
-    assert by_title["B"].score > by_title["C"].score
-    assert "bm25=" in by_title["B"].reason and "emb=" in by_title["B"].reason
+    by = {r.item["title"]: r for r in out}
+    assert by["gnn"].score > by["C"].score
     for r in out:
         parts = dict(p.split("=") for p in r.reason.replace("hybrid ", "").split())
-        expected = 0.5 * float(parts["bm25"]) + 0.5 * float(parts["emb"])
-        # reason rounds each component to 3 decimals, so allow that slack.
-        assert abs(r.score - expected) < 2e-3
+        expected = 0.25 * float(parts["bm25"]) + 0.75 * float(parts["emb"])
+        assert abs(r.score - expected) < 2e-3   # reason rounds components to 3dp
 
 
 # ---- Task 3: calibration sample selection ----
