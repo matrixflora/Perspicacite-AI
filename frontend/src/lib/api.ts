@@ -127,6 +127,31 @@ export const kb = {
     if (!res.ok) throw new Error(`POST local-files → HTTP ${res.status}`);
     return res.json();
   },
+  expandSimilarScore: (
+    name: string,
+    body: { direction: ExpandDirection; max_per_seed: number; method: ExpandMethod },
+  ) =>
+    post<{ job_id: string; sse_url: string }>(
+      `/api/kb/${encodeURIComponent(name)}/expand-similar/score`,
+      body,
+    ),
+  expandSimilarCutoff: (
+    name: string,
+    labels: { score: number; relevant: boolean }[],
+  ) =>
+    post<{ cutoff: number }>(
+      `/api/kb/${encodeURIComponent(name)}/expand-similar/cutoff`,
+      { labels },
+    ),
+  expandSimilarCommit: (
+    name: string,
+    scored: { doi: string | null; score: number }[],
+    cutoff: number,
+  ) =>
+    post<{ job_id: string; sse_url: string }>(
+      `/api/kb/${encodeURIComponent(name)}/expand-similar/commit`,
+      { scored, cutoff },
+    ),
   exportUrl: (name: string) => `${BASE}/api/kb/${encodeURIComponent(name)}/export`,
   claimGraphUrl: (name: string, format: "nquads" | "turtle" | "jsonld" | "rocrate" = "nquads") =>
     `${BASE}/api/kb/${encodeURIComponent(name)}/claim-graph?format=${format}`,
@@ -256,6 +281,42 @@ export const papers = {
     `${BASE}/api/capsule/${encodeURIComponent(paperId)}/figure/${encodeURIComponent(figId)}`,
 };
 
+// ──────────── Similarity expansion (grow a KB by similarity) ──────────────
+
+export type ExpandDirection = "forward" | "backward" | "both";
+export type ExpandMethod = "hybrid" | "embedding" | "bm25";
+
+export type ExpandCandidate = {
+  doi: string | null;
+  title?: string | null;
+  score: number;
+  reason?: string | null;
+};
+
+export type ExpandHistBucket = { lo: number; hi: number; count: number };
+
+export type ExpandSample = {
+  doi: string | null;
+  title?: string | null;
+  abstract?: string | null;
+  score: number;
+};
+
+export type ExpandScoreReport = {
+  candidates: ExpandCandidate[];
+  histogram: ExpandHistBucket[];
+  samples: ExpandSample[];
+  seed_count: number;
+  method: string;
+};
+
+export type ExpandCommitResult = {
+  added_papers?: number;
+  added_chunks?: number;
+  failed?: Array<{ doi?: string; reason?: string }>;
+  kept: number;
+};
+
 // ──────────── Health ──────────────────────────────────────────────────────
 
 export type Health = {
@@ -266,16 +327,40 @@ export type Health = {
 
 export const health = () => get<Health>("/api/health");
 
-// ──────────── Jobs (used by async ingest endpoints) ───────────────────────
+// ──────────── Jobs (async ingest / scoring / commit) ─────────────────────
 
+// Mirrors the `jobs` SQLite row returned by GET /api/jobs/{id}. `result` is
+// JSON-parsed server-side; `status` is running | done | error (not the
+// pending/succeeded/failed names the previous type wrongly guessed).
 export type Job = {
-  job_id: string;
-  status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
-  progress?: { current?: number; total?: number; message?: string };
+  id: string;
+  kind?: string;
+  status: "queued" | "running" | "done" | "error";
+  total?: number;
+  done_count?: number;
   result?: unknown;
-  error?: string;
+  error?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export const jobs = {
   get: (id: string) => get<Job>(`/api/jobs/${encodeURIComponent(id)}`),
+  // Poll a job to its terminal state and resolve with the parsed `result`
+  // (throws on failure). The score/commit jobs emit no incremental progress,
+  // so polling reaches the same result as tailing the SSE stream — and avoids
+  // the Next.js dev-rewrite SSE buffering that the chat route works around.
+  waitFor: async (
+    id: string,
+    opts: { intervalMs?: number; signal?: AbortSignal } = {},
+  ): Promise<unknown> => {
+    const { intervalMs = 1200, signal } = opts;
+    for (;;) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      const j = await jobs.get(id);
+      if (j.status === "done") return j.result;
+      if (j.status === "error") throw new Error(j.error || "Job failed");
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  },
 };

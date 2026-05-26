@@ -391,14 +391,30 @@ class ChromaVectorStore:
                     "authors": m.get("authors"),
                     "year": m.get("year"),
                     "doi": m.get("doi"),
+                    "abstract": m.get("abstract"),
                 }
             else:
-                for k in ("title", "authors", "doi"):
+                for k in ("title", "authors", "doi", "abstract"):
                     if m.get(k) and not cur.get(k):
                         cur[k] = m[k]
                 if m.get("year") is not None and cur.get("year") is None:
                     cur["year"] = m["year"]
         return list(by_pid.values())
+
+    async def list_chunk_texts(self, collection: str, limit: int = 2000) -> list[str]:
+        """Return up to ``limit`` chunk documents from a collection.
+
+        Fallback lexical (BM25) reference corpus for similarity screening when
+        a KB has no stored abstracts. Empty docs dropped; missing collection
+        / errors -> empty list.
+        """
+        try:
+            coll = self.client.get_collection(name=collection)
+            got = coll.get(limit=limit, include=["documents"])
+        except Exception as e:
+            logger.warning("list_chunk_texts_failed", collection=collection, error=str(e))
+            return []
+        return [d for d in (got.get("documents") or []) if d]
 
     async def list_paper_ids_in_collection(
         self, collection_name: str
@@ -583,6 +599,7 @@ def _chunk_to_metadata(metadata: ChunkMetadata) -> dict[str, Any]:
     # Scalar identity / metadata fields
     scalar_fields = (
         "section", "page_number", "title", "authors", "year", "doi", "url",
+        "abstract",
         "content_type", "language", "source_file_path",
         "source_section", "page", "parent_paper_id",
         "symbol_name", "symbol_kind", "parent_class",
@@ -652,6 +669,7 @@ def _metadata_to_chunk(metadata: dict[str, Any]) -> ChunkMetadata:
         year=metadata.get("year"),
         doi=metadata.get("doi"),
         url=metadata.get("url"),
+        abstract=metadata.get("abstract"),
         content_type=metadata.get("content_type"),
         language=metadata.get("language"),
         heading_path=_list("heading_path") or None,
