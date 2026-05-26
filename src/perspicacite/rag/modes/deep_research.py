@@ -2314,6 +2314,24 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             if sources_block_lines else "(no documents retrieved)"
         )
 
+        # Detect claim-verification queries so the VERDICT instruction gets
+        # reinforced in the user turn (the system prompt already asks for it,
+        # but an explicit user-turn reminder prevents the "write a report"
+        # framing from overriding the VERDICT format).
+        _is_claim_task = (
+            "claim verification" in query.lower()
+            or query.strip().startswith("VERDICT")
+            or "state your verdict" in query.lower()
+        )
+        _claim_reminder = (
+            "\n\nIMPORTANT: This is a claim verification task. "
+            "Your VERY FIRST LINE must be exactly one of:\n"
+            "  VERDICT: SUPPORTED\n  VERDICT: REFUTED\n  VERDICT: INSUFFICIENT EVIDENCE\n"
+            "Then explain your reasoning. "
+            "Only choose REFUTED if a retrieved source EXPLICITLY contradicts the claim."
+            if _is_claim_task else ""
+        )
+
         user_content = f"""Original question: {query}
 
 Research conducted ({self.iterations} cycles):
@@ -2326,7 +2344,7 @@ Generate a final answer. Synthesize across the source documents above —
 quote sparingly, cite by author/year inline (per the formatting rules),
 and produce a substantive multi-paragraph report. Cover background,
 key findings, mechanism / methodology, and open questions when the
-material supports it."""
+material supports it.{_claim_reminder}"""
 
         if limitations:
             user_content = f"""Original Question: {query}
