@@ -152,3 +152,25 @@ def test_topn_mean():
     assert _topn_mean([0.9, 0.8, 0.1, 0.0], n=2) == pytest.approx(0.85)
     assert _topn_mean([0.5], n=3) == pytest.approx(0.5)   # fewer than n -> all
     assert _topn_mean([], n=3) == 0.0
+
+
+from perspicacite.search.screening import screen_papers_setwise_bm25
+
+
+def test_setwise_bm25_two_level_aggregation():
+    cands = [
+        {"title": "gnn", "abstract": "graph neural networks for molecules"},
+        {"title": "tax", "abstract": "tax law accounting"},
+    ]
+    reference_papers = [
+        ["graph neural networks for molecular property prediction"],   # abstract paper
+        ["intro boilerplate", "deep graph networks chemistry", "refs"], # fallback chunks
+        ["unrelated cooking recipes"],
+    ]
+    out = screen_papers_setwise_bm25(
+        cands, reference_papers=reference_papers, intra_k=3, top_n=2, threshold=0.0
+    )
+    by = {r.item["title"]: r for r in out}
+    assert by["gnn"].score > by["tax"].score
+    assert all(0.0 <= r.score <= 1.0 for r in out)        # saturated
+    assert "bm25_top" in by["gnn"].reason

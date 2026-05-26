@@ -194,6 +194,62 @@ def screen_papers(
     return results
 
 
+def screen_papers_setwise_bm25(
+    candidates: Sequence[dict],
+    *,
+    reference_papers: Sequence[Sequence[str]],
+    intra_k: int = 3,
+    top_n: int = 5,
+    threshold: float = 0.3,
+) -> list[ScreenResult]:
+    """BM25 two-level aggregation mirroring the embedding scorer. Per-paper raw
+    score = mean of the candidate's top-``intra_k`` BM25 scores over that paper's
+    texts; candidate raw = mean of the top-``top_n`` papers; then ``s/(s+k)``
+    saturation to [0,1] (same k as ``screen_papers``).
+    """
+    cands = list(candidates)
+    if not cands:
+        return []
+    # Tokenize each paper's texts (drop empties); keep paper grouping.
+    papers_tokens: list[list[list[str]]] = []
+    for p in reference_papers:
+        toks = [t for t in (_tokenize(x) for x in p) if t]
+        if toks:
+            papers_tokens.append(toks)
+    if not papers_tokens:
+        return [ScreenResult(item=c, score=0.0, kept=False, reason="no_reference_papers") for c in cands]
+
+    candidate_tokens = [_tokenize(_candidate_text(c)) for c in cands]
+    safe_tokens = [t if t else ["__empty__"] for t in candidate_tokens]
+    bm25 = BM25Plus(safe_tokens)
+
+    # per_paper_raw[i] = list of paper-level raw BM25 scores for candidate i
+    per_paper_raw: list[list[float]] = [[] for _ in cands]
+    for paper_toks in papers_tokens:
+        # score every candidate against each text of this paper
+        per_text_scores: list[list[float]] = [[] for _ in cands]
+        for text_tokens in paper_toks:
+            scores = bm25.get_scores(text_tokens)
+            for i, s in enumerate(scores):
+                per_text_scores[i].append(float(s))
+        for i in range(len(cands)):
+            per_paper_raw[i].append(_topn_mean(per_text_scores[i], intra_k))
+
+    _K = 3.0
+    results: list[ScreenResult] = []
+    for i, c in enumerate(cands):
+        raw = _topn_mean(per_paper_raw[i], top_n)
+        norm = raw / (raw + _K)
+        results.append(
+            ScreenResult(
+                item=c, score=norm, kept=norm >= threshold,
+                reason=f"bm25_top{min(top_n, len(per_paper_raw[i]))}papers_mean={norm:.3f}",
+            )
+        )
+    results.sort(key=lambda r: r.score, reverse=True)
+    return results
+
+
 async def screen_papers_rerank(
     candidates: Sequence[dict],
     query: str,
