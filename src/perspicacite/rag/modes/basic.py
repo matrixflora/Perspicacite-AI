@@ -325,17 +325,21 @@ class BasicRAGMode(BaseRAGMode):
         cap = max(1, getattr(request, "max_papers_retrieval", None) or self.final_max_docs)
 
         if self.use_two_pass:
-            # Two-pass retrieval — identify papers, then fetch all their chunks
+            # Two-pass retrieval — identify papers, then fetch all their chunks.
+            # Pass top_k=initial_docs so pass-1 evaluates a large candidate pool
+            # (default 30 chunks → best `cap` papers), giving proper over-retrieve.
+            # Previously `top_k=cap` (5) was passed, limiting the candidate pool
+            # to only 10 chunks and causing high citation-miss rates.
             paper_results = await dkb.search_two_pass(
                 retrieval_query,
-                top_k=cap,
+                top_k=self.initial_docs,
                 paper_scope=scope,
                 max_papers_cap=cap,
             )
-            logger.info("basic_two_pass", papers=len(paper_results))
+            logger.info("basic_two_pass", papers=len(paper_results), candidate_pool=self.initial_docs)
         else:
             # Legacy chunk-level retrieval (no two-pass)
-            chunk_results = await dkb.search(retrieval_query, top_k=cap)
+            chunk_results = await dkb.search(retrieval_query, top_k=self.initial_docs)
             paper_results = []
             for r in chunk_results:
                 meta = r.get("metadata")
@@ -521,10 +525,11 @@ class BasicRAGMode(BaseRAGMode):
         if self.use_two_pass:
             paper_results = await dkb.search_two_pass(
                 retrieval_query,
-                top_k=cap,
+                top_k=self.initial_docs,   # over-retrieve then cap — was top_k=cap (bug)
                 paper_scope=scope,
                 max_papers_cap=cap,
             )
+            logger.info("basic_stream_two_pass", papers=len(paper_results), candidate_pool=self.initial_docs)
         else:
             chunk_results = await dkb.search(retrieval_query, top_k=cap)
             paper_results = []
@@ -786,7 +791,13 @@ class BasicRAGMode(BaseRAGMode):
 
         context = format_paper_results_for_prompt(paper_results, max_chars_per_paper=4000)
         hist = format_conversation_block(getattr(request, "conversation_history", None))
-        user_body = f"Documents:\n{context}\n\nQuestion: {request.query}"
+        user_body = (
+            f"Documents:\n{context}\n\nQuestion: {request.query}\n\n"
+            "EVIDENCE EPISTEMICS: Only conclude REFUTED if a retrieved document "
+            "ACTIVELY CONTRADICTS the claim with explicit counter-evidence. "
+            "If the retrieved papers do not address this specific claim, "
+            "state INSUFFICIENT EVIDENCE — do NOT conclude REFUTED."
+        )
         if scope.scope_note:
             user_body = f"{scope.scope_note}\n\n{user_body}"
         user_content = build_user_message_with_history(history_block=hist, body=user_body)
@@ -936,7 +947,8 @@ Instructions:
 - Base your answer on the papers provided
 - Number of papers: {num_papers}
 - IMPORTANT: Extract ALL specific names, tools, methods, chemicals, organisms, or other entities mentioned in the papers that are relevant to the question. Do NOT say "specific names are not listed" if the papers contain them.
-- Be specific and concrete — cite specific tools, software, methods, or findings by name rather than giving vague generalizations."""
+- Be specific and concrete — cite specific tools, software, methods, or findings by name rather than giving vague generalizations.
+- EVIDENCE EPISTEMICS: Only conclude REFUTED if a retrieved document ACTIVELY CONTRADICTS the claim with explicit counter-evidence. If the retrieved papers do not address this specific claim, state INSUFFICIENT EVIDENCE — do NOT conclude REFUTED."""
         hist = format_conversation_block(getattr(request, "conversation_history", None))
         body = template
         if preamble:

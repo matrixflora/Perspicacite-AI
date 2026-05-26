@@ -485,8 +485,24 @@ Respond ONLY with JSON (no markdown, no extra text):
 Summaries:
 {summaries}"""
 
-# Prompt to write the final three-section structured brief.
-CONTRADICTION_SYNTHESIS_PROMPT = """Write a structured research brief answering '{query}' with exactly three markdown sections:
+# Prompt to write the final four-section structured brief.
+# Net verdict is placed FIRST so verdict-extraction regex fires in the first 300 chars.
+CONTRADICTION_SYNTHESIS_PROMPT = """Write a structured research brief answering '{query}' with exactly four markdown sections IN THIS ORDER:
+
+## Net verdict
+On the very first line of this section write exactly one of:
+  VERDICT: SUPPORTED
+  VERDICT: REFUTED
+  VERDICT: CONTESTED
+  VERDICT: INSUFFICIENT EVIDENCE
+Then explain your choice in 1–2 sentences.
+
+RULES for choosing the verdict:
+- SUPPORTED — the overall balance of evidence supports the claim (even if some papers note caveats)
+- REFUTED — one or more papers provide DIRECT, explicit counter-evidence that outweighs the consensus
+- CONTESTED — credible papers are genuinely split; neither side clearly dominates
+- INSUFFICIENT EVIDENCE — the retrieved papers do not directly address this specific claim
+- DO NOT choose REFUTED merely because some papers discuss tangential topics, note limitations, or because evidence is mixed on a related but distinct question
 
 ## Points of consensus
 (list what the papers agree on)
