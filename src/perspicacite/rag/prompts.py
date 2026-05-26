@@ -516,6 +516,9 @@ RULES for choosing the verdict:
 - CONTESTED — credible papers are genuinely split; neither side clearly dominates
 - INSUFFICIENT EVIDENCE — the retrieved papers do not directly address this specific claim
 - DO NOT choose REFUTED merely because some papers discuss tangential topics, note limitations, or because evidence is mixed on a related but distinct question
+- CRITICAL: Do NOT choose REFUTED because "most papers do not support the claim" or "evidence is absent." Absence of support is NOT the same as refutation. Papers that are silent on a claim, off-topic, or provide only related background are INSUFFICIENT EVIDENCE, not counter-evidence.
+- A claim is REFUTED only if at least one retrieved paper explicitly states the opposite is true (e.g., paper says "X does NOT occur" when claim says "X occurs").
+- Read each sentence carefully: if a paper mentions a class of substances in a positive context (e.g., "drug A and drug B show effect"), check that the SPECIFIC substance in the claim (e.g., "drug B") is the one with the effect — do not infer from the class to the individual.
 
 ## Points of consensus
 (list what the papers agree on)
