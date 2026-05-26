@@ -862,8 +862,10 @@ class DeepResearchRAGMode(BaseRAGMode):
                 _c_plan_s.add_trace("plan", detail={"cycle": self.iterations, "steps": len(plan)})
 
             _cycle_telemetry = getattr(request, "telemetry_sink", None) or []
-            cycle_steps, cycle_documents, plan_limit_reason, early_exit = (
-                await self._execute_cycle_steps(
+            # Run _execute_cycle_steps (non-generator) while yielding SSE heartbeats
+            # every 30 s so streaming clients don't time out during long LLM calls.
+            _cycle_task = asyncio.create_task(
+                self._execute_cycle_steps(
                     request=request,
                     plan=plan,
                     llm=llm,
@@ -875,6 +877,17 @@ class DeepResearchRAGMode(BaseRAGMode):
                     telemetry=_cycle_telemetry,
                 )
             )
+            _heartbeat_n = 0
+            while not _cycle_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(_cycle_task), timeout=30.0)
+                except asyncio.TimeoutError:
+                    _heartbeat_n += 1
+                    yield StreamEvent.status(
+                        f"Deep Research: Cycle {self.iterations} — working… "
+                        f"({_heartbeat_n * 30}s elapsed)"
+                    )
+            cycle_steps, cycle_documents, plan_limit_reason, early_exit = _cycle_task.result()
             # Drain web-search telemetry into the SSE stream so the user
             # sees per-DB activity for this cycle. Without this, profound
             # was a "black box" for 5+ min per cycle.

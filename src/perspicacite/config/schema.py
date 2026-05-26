@@ -723,6 +723,9 @@ class RAGModeSettings(BaseModel):
     use_relevancy_optimization: bool = True
     # Cap on per-paper LLM extraction calls during final map-reduce answer synthesis
     map_reduce_max_papers: int = Field(default=8, ge=1, le=64)
+    # deep_research: allow live web / academic-API searches in research cycles.
+    # Set to false for KB-only evaluation environments to prevent rate-limit errors.
+    use_websearch: bool = True
 
 
 class RAGModesConfig(BaseModel):
