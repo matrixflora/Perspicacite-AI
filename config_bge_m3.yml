@@ -1,15 +1,23 @@
-# Perspicacité config — BAAI/bge-m3 on port 8004
-# Used for eval experiments (dense retrieval, 1024-dim).
-# bge-m3 is a multi-functionality model: dense + sparse + ColBERT multi-vector.
-# We use dense-only here (standard sentence-transformers API).
-# See perspicacite-eval docs/ for results.
+# Perspicacité config — BAAI/bge-m3 — RECOMMENDED PRODUCTION (biomedical)
 #
-# Key overrides vs config.yml:
-#   server.port:                       8004
-#   knowledge_base.embedding_model:    BAAI/bge-m3  (1024-dim, local)
-#   knowledge_base.similarity_threshold: 0.0
+# BAAI/bge-m3 is the recommended embedding model for biomedical literature retrieval.
+# Benchmark (SciFact, 5 183 PubMed abstracts, 188 dev claims):
+#   NDCG@10 = 0.879  R@5 = 0.936  MRR = 0.870  (vector + bge-reranker-v2-m3)
 #
-# No API key required (fully local via sentence-transformers).
+# Why bge-m3 over other models?
+#   • Beats OpenAI text-embedding-3-large (0.879 vs 0.872 NDCG) at zero API cost
+#   • Fully local — no external API calls for embedding
+#   • 1024-dim captures biomedical semantics better than 384-dim MiniLM (+2.2 pp)
+#   • Cross-domain (NFCorpus nutrition): 0.249 — use OpenAI if broad generalisation needed
+#
+# Reranker pairing: bge-reranker-v2-m3 (domain-aware pair).
+#   bge-reranker HELPS bge-m3 (+gain). Do NOT swap to ms-marco here —
+#   ms-marco is conservative and underperforms on weaker embedding pools.
+#
+# RAG k: default_top_k=10 → internal retrieval pool=30 → top-5 to LLM synthesis.
+#   Over-retrieve factor (3×) is optimal per SciFact eval (4× gives negligible gain).
+#
+# Full benchmark: perspicacite-eval/docs/retrieval_benchmark_2026_05_26.md
 #
 # Launch:
 #   uv run perspicacite -c config_bge_m3.yml serve
@@ -46,7 +54,10 @@ knowledge_base:
   chunk_size: 1000
   chunk_overlap: 200
   chunking_method: "token"
+  # default_top_k=10 → internal pool = 30 docs → rerank → top-5 to LLM.
   default_top_k: 10
+  # similarity_threshold MUST be 0.0 for bge-m3: cosine scores are lower than
+  # MiniLM (different embedding space); the default 0.7 threshold filters everything.
   similarity_threshold: 0.0
   use_two_pass: true
 
@@ -55,7 +66,11 @@ database:
   chroma_path: "./chroma_db"
 
 rag_modes:
-  reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  # bge-reranker-v2-m3: domain-aware pair for bge-m3 embeddings.
+  # Key finding: bge-reranker HELPS weaker/domain embeddings (bge-m3, MiniLM, PubMedBERT)
+  # but HURTS strong embeddings (OpenAI 3-large: −2.1 pp vs ms-marco).
+  # Do not swap to ms-marco in this config — use config_openai_large.yml for OpenAI.
+  reranker_model: "BAAI/bge-reranker-v2-m3"
 
   basic:
     max_iterations: 1
