@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -89,6 +90,24 @@ def _candidate_text(candidate: dict) -> str:
     title = candidate.get("title", "") or ""
     abstract = candidate.get("abstract", "") or ""
     return f"{title} {abstract}"
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Cosine similarity clamped to [0, 1] (negatives -> 0). Zero vectors -> 0."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return max(0.0, dot / (na * nb))
+
+
+def _topn_mean(scores: list[float], n: int) -> float:
+    """Mean of the top-``n`` scores (all of them if fewer). Empty -> 0."""
+    if not scores:
+        return 0.0
+    top = sorted(scores, reverse=True)[: max(1, n)]
+    return sum(top) / len(top)
 
 
 @dataclass

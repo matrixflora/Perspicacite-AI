@@ -130,3 +130,19 @@ def test_cutoff_non_monotonic_returns_best_fit():
 
 def test_cutoff_empty_keeps_everything():
     assert cutoff_from_labels([]) == 0.0
+
+
+from perspicacite.search.screening import _cosine, _topn_mean
+
+
+def test_cosine_clamped():
+    assert _cosine([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert _cosine([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+    assert _cosine([1.0, 0.0], [-1.0, 0.0]) == 0.0   # negatives clamped
+    assert _cosine([0.0, 0.0], [1.0, 0.0]) == 0.0    # zero vector safe
+
+
+def test_topn_mean():
+    assert _topn_mean([0.9, 0.8, 0.1, 0.0], n=2) == pytest.approx(0.85)
+    assert _topn_mean([0.5], n=3) == pytest.approx(0.5)   # fewer than n -> all
+    assert _topn_mean([], n=3) == 0.0
