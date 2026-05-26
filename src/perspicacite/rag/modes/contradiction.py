@@ -232,7 +232,12 @@ class ContradictionRAGMode(BaseRAGMode):
             config=self.config,
         )
         try:
-            async for chunk in llm.stream(messages=messages, max_tokens=2000, temperature=0.3, stage="contradiction.synthesis"):
+            async for chunk in llm.stream(
+                messages=messages,
+                model=getattr(request, "model", None) or "",
+                provider=getattr(request, "provider", None),
+                max_tokens=2000, temperature=0.3, stage="contradiction.synthesis",
+            ):
                 yield StreamEvent.content(chunk)
         except AttributeError:
             # LLM has no stream() method; fall back to one-shot complete()
@@ -286,7 +291,12 @@ class ContradictionRAGMode(BaseRAGMode):
             config=self.config,
         )
         try:
-            async for chunk in llm.stream(messages=messages, max_tokens=1500, temperature=0.3, stage="contradiction.fallback"):
+            async for chunk in llm.stream(
+                messages=messages,
+                model=getattr(request, "model", None) or "",
+                provider=getattr(request, "provider", None),
+                max_tokens=1500, temperature=0.3, stage="contradiction.fallback",
+            ):
                 yield StreamEvent.content(chunk)
         except AttributeError:
             try:
