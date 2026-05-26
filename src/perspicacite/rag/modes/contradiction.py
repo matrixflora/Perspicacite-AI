@@ -236,7 +236,10 @@ class ContradictionRAGMode(BaseRAGMode):
                 messages=messages,
                 model=getattr(request, "model", None) or "",
                 provider=getattr(request, "provider", None),
-                max_tokens=2000, temperature=0.3, stage="contradiction.synthesis",
+                # 0.7 matches the complete() default that the system was accidentally using
+                # before the missing-model bug was fixed. 0.3 was too conservative and
+                # produced INSUFFICIENT EVIDENCE for almost every claim.
+                max_tokens=2000, temperature=0.7, stage="contradiction.synthesis",
             ):
                 yield StreamEvent.content(chunk)
         except AttributeError:
