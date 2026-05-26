@@ -100,7 +100,7 @@ async def score_expansion_candidates(
     hits = await snowball_expand(
         seed_dois=seed_dois, direction=direction, max_per_seed=max_per_seed, mailto=mailto
     )
-    papers = _papers_from_hits(hits)
+    papers, _dropped_fy = _papers_from_hits(hits)
 
     novel = []
     for p in papers:
