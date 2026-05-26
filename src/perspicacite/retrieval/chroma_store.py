@@ -433,7 +433,7 @@ class ChromaVectorStore:
         docs = result.get("documents") or []
         metas = result.get("metadatas") or []
         by_paper: dict[str, list[str]] = {}
-        for doc, meta in zip(docs, metas):
+        for doc, meta in zip(docs, metas, strict=False):
             if not doc:
                 continue
             pid = (meta or {}).get("paper_id") or ""

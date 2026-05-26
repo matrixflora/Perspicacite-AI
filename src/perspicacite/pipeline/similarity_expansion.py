@@ -34,7 +34,11 @@ async def build_reference_papers(
     """
     rows = await vector_store.list_paper_metadata(collection)
     needs_chunks = any(not (r.get("abstract") or "").strip() for r in rows)
-    chunks = await vector_store.list_paper_chunks(collection, max_per_paper=max_per_paper) if needs_chunks else {}
+    chunks = (
+        await vector_store.list_paper_chunks(collection, max_per_paper=max_per_paper)
+        if needs_chunks
+        else {}
+    )
     papers: list[list[str]] = []
     n_abs = n_fb = 0
     for r in rows:

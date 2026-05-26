@@ -94,7 +94,7 @@ def _candidate_text(candidate: dict) -> str:
 
 def _cosine(a: list[float], b: list[float]) -> float:
     """Cosine similarity clamped to [0, 1] (negatives -> 0). Zero vectors -> 0."""
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0.0 or nb == 0.0:
@@ -217,7 +217,10 @@ def screen_papers_setwise_bm25(
         if toks:
             papers_tokens.append(toks)
     if not papers_tokens:
-        return [ScreenResult(item=c, score=0.0, kept=False, reason="no_reference_papers") for c in cands]
+        return [
+            ScreenResult(item=c, score=0.0, kept=False, reason="no_reference_papers")
+            for c in cands
+        ]
 
     candidate_tokens = [_tokenize(_candidate_text(c)) for c in cands]
     safe_tokens = [t if t else ["__empty__"] for t in candidate_tokens]
@@ -235,11 +238,11 @@ def screen_papers_setwise_bm25(
         for i in range(len(cands)):
             per_paper_raw[i].append(_topn_mean(per_text_scores[i], intra_k))
 
-    _K = 3.0
+    sat_k = 3.0
     results: list[ScreenResult] = []
     for i, c in enumerate(cands):
         raw = _topn_mean(per_paper_raw[i], top_n)
-        norm = raw / (raw + _K)
+        norm = raw / (raw + sat_k)
         results.append(
             ScreenResult(
                 item=c, score=norm, kept=norm >= threshold,
@@ -460,7 +463,10 @@ async def screen_papers_embedding(
     if not cands:
         return []
     if not papers:
-        return [ScreenResult(item=c, score=0.0, kept=False, reason="no_reference_papers") for c in cands]
+        return [
+            ScreenResult(item=c, score=0.0, kept=False, reason="no_reference_papers")
+            for c in cands
+        ]
 
     # Flatten reference texts, remembering each paper's [start, end) slice.
     flat: list[str] = []
@@ -482,7 +488,10 @@ async def screen_papers_embedding(
         ref_vecs = await embedding_provider.embed(list(flat))
         cand_vecs = await embedding_provider.embed(to_embed) if to_embed else []
     except Exception as exc:
-        return [ScreenResult(item=c, score=0.0, kept=False, reason=f"embedding_error: {exc}") for c in cands]
+        return [
+            ScreenResult(item=c, score=0.0, kept=False, reason=f"embedding_error: {exc}")
+            for c in cands
+        ]
 
     results: list[ScreenResult] = []
     for c in cands:
