@@ -43,3 +43,24 @@ async def test_list_chunk_texts_missing_collection_returns_empty():
     store = ChromaVectorStore.__new__(ChromaVectorStore)
     store.client = _Boom()
     assert await store.list_chunk_texts("missing") == []
+
+
+@pytest.mark.asyncio
+async def test_list_paper_chunks_groups_and_caps(tmp_path):
+    import chromadb
+
+    store = ChromaVectorStore.__new__(ChromaVectorStore)
+    store.client = chromadb.PersistentClient(path=str(tmp_path / "cdb"))
+    coll = "kb_lpc"
+    store.client.get_or_create_collection(name=coll)
+    c = store.client.get_collection(name=coll)
+    c.add(
+        ids=["p1_0", "p1_1", "p1_2", "p2_0"],
+        embeddings=[[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]],
+        documents=["a one", "a two", "a three", "b one"],
+        metadatas=[{"paper_id": "p1"}, {"paper_id": "p1"}, {"paper_id": "p1"}, {"paper_id": "p2"}],
+    )
+    out = await store.list_paper_chunks(coll, max_per_paper=2)
+    assert set(out) == {"p1", "p2"}
+    assert out["p1"] == ["a one", "a two"]   # capped at 2 chunks
+    assert out["p2"] == ["b one"]

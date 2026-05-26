@@ -416,6 +416,34 @@ class ChromaVectorStore:
             return []
         return [d for d in (got.get("documents") or []) if d]
 
+    async def list_paper_chunks(
+        self, collection: str, max_per_paper: int = 20
+    ) -> dict[str, list[str]]:
+        """Per-``paper_id`` list of chunk texts (at most ``max_per_paper`` each).
+
+        Used to represent papers that have no stored abstract: their chunk texts
+        become the per-paper reference list for similarity scoring.
+        """
+        try:
+            coll = self.client.get_collection(name=collection)
+            result = coll.get(include=["documents", "metadatas"])
+        except Exception as e:
+            logger.error("list_paper_chunks_failed", collection=collection, error=str(e))
+            return {}
+        docs = result.get("documents") or []
+        metas = result.get("metadatas") or []
+        by_paper: dict[str, list[str]] = {}
+        for doc, meta in zip(docs, metas):
+            if not doc:
+                continue
+            pid = (meta or {}).get("paper_id") or ""
+            if not pid:
+                continue
+            bucket = by_paper.setdefault(pid, [])
+            if len(bucket) < max_per_paper:
+                bucket.append(doc)
+        return by_paper
+
     async def list_paper_ids_in_collection(
         self, collection_name: str
     ) -> list[tuple[str, str, int]]:
