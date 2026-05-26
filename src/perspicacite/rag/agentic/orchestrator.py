@@ -2382,10 +2382,11 @@ Answer Generation Guidelines:
    - The NUMBERED PAPER LIST uses [1], [2], [3], etc. - these are your ONLY valid citation numbers
    - If a paper is not in the NUMBERED PAPER LIST, do NOT cite it with a number
 5. Be clear and direct in your language
-6. If the research results are insufficient to answer the question, clearly state this rather than speculating
+6. If the research results are insufficient to answer the question, clearly state INSUFFICIENT EVIDENCE rather than speculating or inferring a negative conclusion
 7. Structure your answer logically with clear sections if appropriate
 8. Cite using [N] from the numbered list only for sources you actually use; you do not need to mention every listed paper if some are redundant.
 9. **DO NOT include a Citations or References section at the end of your answer** - a properly formatted references section will be automatically appended separately.
+10. EVIDENCE EPISTEMICS: Only conclude a claim is REFUTED when a retrieved paper EXPLICITLY and DIRECTLY contradicts it. Papers that do not mention a topic, only discuss related concepts, or report null/absence results are NOT evidence of refutation — treat them as INSUFFICIENT EVIDENCE for that specific claim.
 {facet_guideline}{workflow_guideline}
 Important: Do not provide an answer if the question contains hate speech, offensive language, discriminatory remarks, or harmful content.
 

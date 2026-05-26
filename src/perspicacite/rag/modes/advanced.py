@@ -217,6 +217,8 @@ Additional information:
 - Unique sources: {n_sources}
 Sources:
 {citation_list}
+
+EVIDENCE EPISTEMICS: Only conclude a claim is REFUTED when a retrieved paper EXPLICITLY and DIRECTLY contradicts it. If no retrieved paper addresses a specific claim, state INSUFFICIENT EVIDENCE — do NOT conclude REFUTED merely because supporting evidence was not found.
 """
         if self.use_relevancy_optimization:
             qc = assess_query_complexity(getattr(request, "refined_query", None) or request.query)

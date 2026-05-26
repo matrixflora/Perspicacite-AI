@@ -317,10 +317,15 @@ Format response as JSON:
 }"""
 
 # Original final answer prompt (without relevancy optimization)
-PROFOUND_FINAL_ANSWER_ORIGINAL_PROMPT = """Review all research iterations and generate a comprehensive final answer for the question asked. This provided final answer should be clear, concise and address all the key finding. 
-Feel free to explain more deeply or shortly depending on the question. 
+PROFOUND_FINAL_ANSWER_ORIGINAL_PROMPT = """Review all research iterations and generate a comprehensive final answer for the question asked. This provided final answer should be clear, concise and address all the key finding.
+Feel free to explain more deeply or shortly depending on the question.
 
-If the research history does not provide enough information for answering the question, please specify that in the final text.
+If the question is a claim verification task (i.e., it asks you to state a VERDICT), begin your answer on the very first line with exactly one of:
+  VERDICT: SUPPORTED
+  VERDICT: REFUTED
+  VERDICT: INSUFFICIENT EVIDENCE
+
+EVIDENCE EPISTEMICS: Only conclude that a claim is REFUTED if you found a source that EXPLICITLY and DIRECTLY contradicts it. If the retrieved papers do not address a claim, state INSUFFICIENT EVIDENCE — do NOT conclude it is refuted merely because no supporting evidence was found.
 
 Do not provide an answer if the question any topics related to hate speech, offensive language, discriminatory remarks, harassment, bullying, or any content that could potentially harm, offend, or diminish any individual or group.
 
@@ -336,9 +341,16 @@ PROFOUND_FINAL_ANSWER_IMPROVED_PROMPT = """Review all research iterations and ge
 5. When citing research, do so in a clear way that connects the finding to the question
 6. Include missing information only when it is directly relevant to the question
 
+If the question is a claim verification task (i.e., it asks you to state a VERDICT), begin your answer on the very first line with exactly one of:
+  VERDICT: SUPPORTED
+  VERDICT: REFUTED
+  VERDICT: INSUFFICIENT EVIDENCE
+
 For technical or scientific questions:
 - Emphasize established findings rather than speculative information
 - Use precise technical language appropriate to the field
+
+EVIDENCE EPISTEMICS: Only conclude that a claim is REFUTED if you found a source that EXPLICITLY and DIRECTLY contradicts it. If the retrieved papers do not address a claim, state INSUFFICIENT EVIDENCE — do NOT conclude it is refuted merely because no supporting evidence was found.
 
 If the research history does not provide enough information for answering the question, clearly acknowledge limitations rather than speculating.
 
@@ -348,6 +360,7 @@ Do not format as JSON - just provide the answer as regular text."""
 
 # Prompt for formatting final answer (Profound mode)
 PROFOUND_FORMAT_ANSWER_PROMPT = """You are a scientific writing assistant helping to format a research summary or report. Follow these instructions carefully:
+- VERDICT PRESERVATION: If the original text contains a line beginning with "VERDICT:" (e.g., "VERDICT: SUPPORTED" or "VERDICT: REFUTED" or "VERDICT: INSUFFICIENT EVIDENCE"), copy that exact line verbatim as the FIRST line of your output, before the heading. Do not omit or rephrase it.
 - Begin with a level 3 heading titled: ### ✨ Perspicacite Profonde findings
 - You MUST cite every source with an inline link. The visible link text is `(<Surname> et al., <Year>)` — where `<Surname>` is the FIRST AUTHOR's actual LAST NAME from the paper metadata, and `<Year>` is the paper's actual publication year. NEVER write the literal words "FirstAuthor", "Surname", "Author", or "Year" — always substitute the real values. When there is only one author, omit "et al." and use `(<Surname>, <Year>)`. If no author name is available in the paper metadata, write `(Author unknown, <Year>)` instead of `(<Surname> et al., <Year>)`. NEVER fabricate or invent an author surname. The visible link text MUST be wrapped in parentheses and MUST NOT contain the title. The link `title` attribute MUST contain the full citation: `Author1, Author2, …. Year. Title. Journal.`. Example (note the real surname `Tautenhahn`, not a placeholder): `[(Tautenhahn et al., 2008)](https://doi.org/10.1186/1471-2105-9-504 "Ralf Tautenhahn, Christoph Böttcher, Steffen Neumann. 2008. Highly sensitive feature detection for high resolution LC/MS. BMC Bioinformatics.")`.
 - DO NOT place references at the end of the document.
