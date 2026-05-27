@@ -12,7 +12,19 @@ class EmbeddingProvider(Protocol):
     """Protocol for embedding providers."""
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Embed a list of texts."""
+        """Embed a list of texts (document mode)."""
+        ...
+
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts.
+
+        Instruct-tuned embedding models (stella, gte-Qwen2) require a
+        task-specific instruction prefix when encoding *queries* but NOT
+        when encoding *documents*.  Callers that embed a query should call
+        ``embed_query`` instead of ``embed`` so that the correct prompt is
+        applied.  For models that do not use query prompts (MiniLM, OpenAI,
+        SPECTER2, …) this method falls back to ``embed``.
+        """
         ...
 
     @property
@@ -121,6 +133,11 @@ class LiteLLMEmbeddingProvider:
             )
             raise
 
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts. API embedding models (OpenAI, Cohere, …) do not
+        use separate query prompts — delegates to ``embed``."""
+        return await self.embed(texts)
+
 
 def _best_device() -> str:
     """Return the best available torch device: mps > cuda > cpu."""
@@ -133,6 +150,32 @@ def _best_device() -> str:
     except Exception:
         pass
     return "cpu"
+
+
+# Named prompts baked into the sentence-transformers model config.
+# These are applied via ``model.encode(texts, prompt_name=<name>)``.
+# Used for query-side encoding only — document embeddings use no prompt.
+_ST_QUERY_PROMPT_NAMES: dict[str, str] = {
+    # stella_en_1.5B_v5 — prompt_name="s2p_query" adds the retrieval instruction.
+    # Expected NFCorpus NDCG@10 without prompt: ~0.10; with prompt: ~0.42.
+    "dunzhang/stella_en_1.5B_v5": "s2p_query",
+    "dunzhang/stella_en_400M_v5": "s2p_query",
+}
+
+# String prefixes for instruct models that use text-level instructions.
+# Applied as a literal prefix: ``"<prefix>" + query``.
+# Used when the model lacks a named built-in prompt.
+_ST_QUERY_PROMPT_PREFIXES: dict[str, str] = {
+    # GTE-Qwen2: Qwen2 backbone; standard retrieval instruction prefix.
+    "Alibaba-NLP/gte-Qwen2-7B-instruct": (
+        "Instruct: Given a web search query, retrieve relevant passages "
+        "that answer the query\nQuery: "
+    ),
+    "Alibaba-NLP/gte-Qwen2-1.5B-instruct": (
+        "Instruct: Given a web search query, retrieve relevant passages "
+        "that answer the query\nQuery: "
+    ),
+}
 
 
 class SentenceTransformerEmbeddingProvider:
@@ -268,6 +311,82 @@ class SentenceTransformerEmbeddingProvider:
             )
             raise
 
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts using a model-specific query prompt when available.
+
+        For instruct-tuned embedding models (stella, gte-Qwen2-7B) the query
+        must be encoded with a task-specific instruction to align with the
+        document embedding space.  Without the instruction the query falls
+        into a generic embedding region that does not match document vectors,
+        causing near-random retrieval (NDCG@10 drops from ~0.42 to ~0.10 for
+        stella on NFCorpus).
+
+        Models without a registered prompt delegate straight to ``embed()``.
+        """
+        if not texts:
+            return []
+
+        # Check for named prompt (stella-style)
+        prompt_name = _ST_QUERY_PROMPT_NAMES.get(self.model_name)
+        # Check for string prefix (gte-Qwen2-style)
+        prompt_prefix = _ST_QUERY_PROMPT_PREFIXES.get(self.model_name)
+
+        if prompt_name is None and prompt_prefix is None:
+            # No query-specific prompt for this model — plain embed.
+            return await self.embed(texts)
+
+        valid_texts = [t for t in texts if t and t.strip()]
+        if not valid_texts:
+            return [[0.0] * self.dimension for _ in texts]
+
+        logger.debug(
+            "local_query_embedding_start",
+            text_count=len(valid_texts),
+            model=self.model_name,
+            prompt_name=prompt_name,
+            has_prefix=prompt_prefix is not None,
+        )
+
+        try:
+            import asyncio
+
+            model = self._get_model()
+
+            if prompt_name is not None:
+                # Use the model's named built-in prompt (e.g. stella "s2p_query")
+                embeddings = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    lambda: model.encode(
+                        valid_texts,
+                        prompt_name=prompt_name,
+                        batch_size=self.batch_size,
+                        show_progress_bar=False,
+                        convert_to_numpy=True,
+                    ),
+                )
+            else:
+                # Apply a string prefix to each query text
+                prefixed = [prompt_prefix + t for t in valid_texts]
+                embeddings = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    lambda: model.encode(
+                        prefixed,
+                        batch_size=self.batch_size,
+                        show_progress_bar=False,
+                        convert_to_numpy=True,
+                    ),
+                )
+
+            return embeddings.tolist()
+
+        except Exception as e:
+            logger.error(
+                "local_query_embedding_error",
+                model=self.model_name,
+                error=str(e),
+            )
+            raise
+
 
 class FallbackEmbeddingProvider:
     """
@@ -347,6 +466,25 @@ class FallbackEmbeddingProvider:
                 fallback_triggered_count=self._fallback_triggered_count,
             )
             out = await self.fallback.embed(texts)
+            self._last_used_model = self.fallback.model_name
+            return out
+
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts with fallback — delegates to primary.embed_query()."""
+        try:
+            out = await self.primary.embed_query(texts)
+            self._last_used_model = self.primary.model_name
+            return out
+        except Exception as e:
+            self._fallback_triggered_count += 1
+            logger.warning(
+                "primary_query_embedding_failed",
+                primary=self.primary.model_name,
+                fallback=self.fallback.model_name,
+                error=str(e),
+                fallback_triggered_count=self._fallback_triggered_count,
+            )
+            out = await self.fallback.embed_query(texts)
             self._last_used_model = self.fallback.model_name
             return out
 
@@ -435,6 +573,10 @@ class TypedEmbeddingProvider:
             raise RuntimeError("internal: TypedEmbeddingProvider left a None slot")
         return out  # type: ignore[return-value]
 
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts — delegates to the default provider's embed_query()."""
+        return await self._default.embed_query(texts)
+
 
 class CachedEmbeddingProvider:
     """Wraps an :class:`EmbeddingProvider`, consulting an on-disk cache
@@ -515,6 +657,59 @@ class CachedEmbeddingProvider:
                 await self.cache.put_many(put_items)
 
         # Final result — every slot is filled.
+        return [v if v is not None else zero for v in out]
+
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        """Embed query texts with a query-specific cache key.
+
+        Instruct models produce different embeddings for the same text depending
+        on whether it is encoded as a query or a document.  We distinguish the
+        two by using a ``"q:" + model_name`` namespace in the cache key so that
+        query and document embeddings for the same text are stored separately.
+        """
+        if not texts:
+            return []
+
+        from perspicacite.llm.embedding_cache import build_embedding_cache_key
+
+        # "q:" prefix distinguishes query-mode embeddings from document-mode
+        # embeddings in the cache (critical for instruct models like stella).
+        query_model_ns = f"q:{self.inner.model_name}"
+        zero = [0.0] * self.inner.dimension
+        keys: list[str | None] = []
+        for t in texts:
+            if not t or not t.strip():
+                keys.append(None)
+            else:
+                keys.append(build_embedding_cache_key(model=query_model_ns, text=t))
+
+        # Batch read.
+        non_null_keys = [k for k in keys if k is not None]
+        hits = await self.cache.get_many(non_null_keys) if non_null_keys else {}
+
+        out: list[list[float] | None] = [None] * len(texts)
+        miss_indices: list[int] = []
+        miss_texts: list[str] = []
+        for i, (t, k) in enumerate(zip(texts, keys)):
+            if k is None:
+                out[i] = zero
+            elif k in hits:
+                out[i] = hits[k]
+            else:
+                miss_indices.append(i)
+                miss_texts.append(t)
+
+        if miss_texts:
+            new_vecs = await self.inner.embed_query(miss_texts)
+            put_items: list[tuple[str, str, list[float]]] = []
+            for idx, vec in zip(miss_indices, new_vecs):
+                out[idx] = vec
+                k = keys[idx]
+                if k is not None:
+                    put_items.append((k, query_model_ns, vec))
+            if put_items:
+                await self.cache.put_many(put_items)
+
         return [v if v is not None else zero for v in out]
 
 

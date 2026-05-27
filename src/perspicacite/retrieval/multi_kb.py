@@ -89,7 +89,7 @@ class MultiKBRetriever:
     ) -> list[dict[str, Any]]:
         top_k = top_k or self.default_top_k
         min_score = self.default_min_score if min_score is None else min_score
-        query_embeddings = await self.embedding_service.embed([query])
+        query_embeddings = await self.embedding_service.embed_query([query])
         query_embedding = query_embeddings[0]
         merged: dict[str, dict[str, Any]] = {}  # paper_id -> best dict
         orderless: list[dict[str, Any]] = []
@@ -244,7 +244,7 @@ async def query_chunks_across_collections(
     tag each hit with kb_name (= collection_name), sort, return top_k."""
     if not collection_names:
         return []
-    query_embedding = (await embedding_service.embed([query]))[0]
+    query_embedding = (await embedding_service.embed_query([query]))[0]
 
     async def _one(coll: str) -> list[Any]:
         try:

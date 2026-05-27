@@ -1395,7 +1395,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         documents_info: dict[Any, Any] = {}
 
         for q_idx, query in enumerate(queries):
-            query_embedding = await embedding_provider.embed([query])
+            query_embedding = await embedding_provider.embed_query([query])
             if len(effective_collections) == 1:
                 results = await vector_store.search(
                     collection=effective_collections[0],
@@ -1471,7 +1471,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         """
         effective_collections = list(collection_names) if collection_names else [kb_name]
 
-        query_embedding = await embedding_provider.embed([query])
+        query_embedding = await embedding_provider.embed_query([query])
         if len(effective_collections) == 1:
             results = await vector_store.search(
                 collection=effective_collections[0],

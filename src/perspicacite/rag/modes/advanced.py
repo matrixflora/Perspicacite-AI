@@ -1030,7 +1030,9 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             logger.debug("advanced_wrrf_processing_query", idx=q_idx, query=query[:100])
 
             # Get query embedding and search across one or more collections.
-            query_embedding = await embedding_provider.embed([query])
+            # Use embed_query() so instruct models (stella, gte-Qwen2) apply
+            # the task-specific query prompt for correct retrieval alignment.
+            query_embedding = await embedding_provider.embed_query([query])
             if len(effective_collections) == 1:
                 results = await vector_store.search(
                     collection=effective_collections[0],

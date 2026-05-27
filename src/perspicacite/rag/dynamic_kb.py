@@ -367,8 +367,10 @@ DOI: {paper.doi or 'Unknown'}"""
         top_k = top_k or self.config.top_k
         min_score = min_score or self.config.min_relevance_score
 
-        # Embed query (embed() expects a list, returns a list)
-        query_embeddings = await self.embedding_service.embed([query])
+        # Embed query with query-specific prompt when available (instruct models such as
+        # stella_en_1.5B_v5 require a task prefix for query encoding; embed_query() handles
+        # this transparently while plain embed() is still used for document ingest).
+        query_embeddings = await self.embedding_service.embed_query([query])
         query_embedding = query_embeddings[0]
 
         # Search
