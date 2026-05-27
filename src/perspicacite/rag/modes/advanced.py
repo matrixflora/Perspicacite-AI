@@ -278,6 +278,7 @@ EVIDENCE EPISTEMICS: Only conclude a claim is REFUTED when a retrieved paper EXP
             collection_names=collection_names,
             llm=llm,
             request=request,
+            max_docs=cap,  # respect caller's max_papers_retrieval
         )
 
         logger.info(
@@ -427,7 +428,7 @@ EVIDENCE EPISTEMICS: Only conclude a claim is REFUTED when a retrieved paper EXP
                     )
                 )
         else:
-            sources = self._prepare_sources(selected_documents)
+            sources = prepare_sources(selected_documents, max_docs=cap)  # was self._prepare_sources (always 5)
 
         # Step 6: Append references section to answer
         if sources:
@@ -601,6 +602,7 @@ Sources:
             collection_names=collection_names,
             llm=llm,
             request=request,
+            max_docs=cap,  # respect caller's max_papers_retrieval
         )
 
         emit_phase(_phase_sink, phase="retrieve_kb", state="done")
@@ -831,7 +833,7 @@ Sources:
                     )
                 )
         else:
-            sources = self._prepare_sources(selected_documents)
+            sources = prepare_sources(selected_documents, max_docs=cap)  # was self._prepare_sources (always 5)
         for source in sources:
             yield StreamEvent.source(source)
 
@@ -1000,6 +1002,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
         llm: Any = None,
         request: Any = None,
         collection_names: list[str] | None = None,
+        max_docs: int | None = None,
     ) -> list[Any]:
         """
         Retrieve documents using WRRF (Weighted Reciprocal Rank Fusion).
@@ -1128,10 +1131,11 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             logger.warning("advanced_wrrf_no_documents")
             return []
 
+        _effective_max_docs = max_docs if max_docs is not None else self.final_max_docs
         selected_documents = select_wrrf_merged_documents(
             sorted_docs,
             documents_info,
-            self.final_max_docs,
+            _effective_max_docs,
             self.max_docs_per_source,
         )
 
