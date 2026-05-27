@@ -1054,10 +1054,20 @@ async def search_knowledge_base(
         # means old 1536-dim KBs automatically use OpenAI for the query vector.
         # Split on "|" in case the stored name is a legacy composite like
         # "text-embedding-3-small|all-MiniLM-L6-v2"; use the first entry.
+        #
+        # IMPORTANT: reuse the server's pre-loaded embedding_provider when the
+        # KB model matches — avoids reloading large sentence-transformer models
+        # (e.g. stella 1.5B, BGE-M3) from disk on every search_knowledge_base
+        # call, which caused OOM crashes with concurrent eval requests.
         from perspicacite.llm.embeddings import create_embedding_provider
 
         _kb_model_name = kb_meta.embedding_model.split("|")[0].strip()
-        _kb_embedding = create_embedding_provider(_kb_model_name, use_local_fallback=False)
+        # Normalise: strip the "st:" routing prefix before comparing names.
+        _norm = lambda s: s.removeprefix("st:").strip()
+        if _norm(_kb_model_name) == _norm(state.embedding_provider.model_name):
+            _kb_embedding = state.embedding_provider
+        else:
+            _kb_embedding = create_embedding_provider(_kb_model_name, use_local_fallback=False)
         dkb = DynamicKnowledgeBase(
             state.vector_store,
             _kb_embedding,
