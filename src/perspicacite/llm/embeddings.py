@@ -152,35 +152,41 @@ def _best_device() -> str:
     return "cpu"
 
 
+# Models that require trust_remote_code=True to load their custom forward pass.
+# Without trust_remote_code, sentence-transformers loads the canonical HuggingFace
+# implementation instead, which may use different attention/pooling logic.
+#
+# stella_en_1.5B_v5: requires trust_remote_code for custom modeling_qwen.py which
+# implements the correct attention pattern.  The cached modeling_qwen.py was patched
+# to fix transformers 5.x API incompatibilities (rope_theta, DynamicCache, get_usable_length).
+_ST_TRUST_REMOTE_CODE: dict[str, bool] = {
+    "dunzhang/stella_en_1.5B_v5": True,
+    "dunzhang/stella_en_400M_v5": True,
+}
+
 # Named prompts baked into the sentence-transformers model config.
 # These are applied via ``model.encode(texts, prompt_name=<name>)``.
 # Used for query-side encoding only — document embeddings use no prompt.
 #
-# IMPORTANT: only register models here when trust_remote_code=True works correctly
-# AND the model uses last-token pooling.  Models that require trust_remote_code but
-# fail to load it (e.g., stella_en_1.5B_v5 with transformers versions that don't
-# have rope_theta on Qwen2Config) fall back to mean pooling.  With mean pooling,
-# adding a query prompt DEGRADES retrieval because instruction tokens enter the
-# mean and are absent from document embeddings, creating a space mismatch.
+# IMPORTANT: only register models here when trust_remote_code=True works correctly.
+# With mean pooling (the fallback when trust_remote_code fails), adding a query
+# prompt DEGRADES retrieval because instruction tokens enter the mean and are absent
+# from document embeddings, creating an embedding-space mismatch.
 #
-# Tested / confirmed working:
-#   (none yet — stella requires trust_remote_code which fails on current transformers)
-#
-# TODO: add stella back when transformers ≥ X fixes the Qwen2Config.rope_theta issue:
-#   "dunzhang/stella_en_1.5B_v5": "s2p_query",
-#   "dunzhang/stella_en_400M_v5": "s2p_query",
-_ST_QUERY_PROMPT_NAMES: dict[str, str] = {}
+# Confirmed working (2026-05-27): stella_en_1.5B_v5 with patched modeling_qwen.py.
+_ST_QUERY_PROMPT_NAMES: dict[str, str] = {
+    "dunzhang/stella_en_1.5B_v5": "s2p_query",
+    "dunzhang/stella_en_400M_v5": "s2p_query",
+}
 
 # String prefixes for instruct models that use text-level instructions.
 # Applied as a literal prefix: ``"<prefix>" + query``.
 # Used when the model lacks a named built-in prompt.
 #
-# Same caution as _ST_QUERY_PROMPT_NAMES: only register when the model's
-# pooling is confirmed correct (last-token for decoder models).
-# gte-Qwen2-7B-instruct uses a similar Qwen2 backbone to stella — verify
-# trust_remote_code compatibility before enabling these entries.
+# Same caution as _ST_QUERY_PROMPT_NAMES: only register when trust_remote_code
+# is confirmed working.
 #
-# TODO: test gte-Qwen2 pooling compatibility before enabling:
+# TODO: test gte-Qwen2-7B pooling + trust_remote_code compatibility before enabling:
 #   "Alibaba-NLP/gte-Qwen2-7B-instruct": (
 #       "Instruct: Given a web search query, retrieve relevant passages "
 #       "that answer the query\nQuery: "
@@ -212,12 +218,18 @@ class SentenceTransformerEmbeddingProvider:
             try:
                 from sentence_transformers import SentenceTransformer
 
+                trust_remote_code = _ST_TRUST_REMOTE_CODE.get(self.model_name, False)
                 logger.info(
                     "loading_sentence_transformer",
                     model=self.model_name,
                     device=self.device,
+                    trust_remote_code=trust_remote_code,
                 )
-                self._model = SentenceTransformer(self.model_name, device=self.device)
+                self._model = SentenceTransformer(
+                    self.model_name,
+                    device=self.device,
+                    trust_remote_code=trust_remote_code,
+                )
             except ImportError:
                 raise ImportError(
                     "sentence-transformers not installed. "
