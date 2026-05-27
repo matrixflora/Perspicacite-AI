@@ -2128,6 +2128,29 @@ async def screen_papers(
 # =============================================================================
 
 
+def _add_dois_warnings(added: int, failed: list, skipped: list) -> list[str]:
+    """Caller-facing warnings for ``add_dois_to_kb`` so a 0-paper outcome is not
+    mistaken for success: surfaces the all-failed / all-duplicate / partial-failure
+    cases (the KB may be empty or unchanged despite ``success: true``)."""
+    warnings: list[str] = []
+    n_failed, n_skipped = len(failed), len(skipped)
+    if added == 0:
+        if n_failed:
+            warnings.append(
+                f"No papers could be fetched: {n_failed} DOI(s) failed, so the KB gained no "
+                "papers. Check OA availability or try a preprint DOI (see 'failed')."
+            )
+        if n_skipped:
+            warnings.append(
+                f"{n_skipped} DOI(s) were already in the KB (skipped); nothing new added."
+            )
+    elif n_failed:
+        warnings.append(
+            f"{n_failed} of the requested DOI(s) failed to fetch (see 'failed')."
+        )
+    return warnings
+
+
 @mcp.tool()
 async def add_dois_to_kb(
     kb_name: str,
@@ -2273,6 +2296,7 @@ async def add_dois_to_kb(
                     "failed": failed,
                     "metadata_only": metadata_only,
                     "pdf_download": dl,
+                    "warnings": _add_dois_warnings(len(papers_to_add), failed, skipped),
                 }
             )
 
@@ -2307,6 +2331,7 @@ async def add_dois_to_kb(
                 "failed": failed,
                 "metadata_only": metadata_only,
                 "pdf_download": dl,
+                "warnings": _add_dois_warnings(len(papers_to_add), failed, skipped),
             }
         )
 
