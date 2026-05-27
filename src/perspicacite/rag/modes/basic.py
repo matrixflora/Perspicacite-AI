@@ -37,6 +37,37 @@ from perspicacite.rag.utils import (
 )
 logger = get_logger("perspicacite.rag.modes.basic")
 
+# ---------------------------------------------------------------------------
+# HyDE model resolution
+# ---------------------------------------------------------------------------
+# HyDE uses a cheap/fast model for the single hypothetical-abstract call.
+# Operators can pin it via ``config.llm.models.hyde`` / providers_per_stage.
+# When the stage isn't pinned we fall back to Haiku / deepseek-chat rather
+# than the synthesis model (which may be much more expensive).
+
+_HYDE_FALLBACK_PROVIDER = "deepseek"
+_HYDE_FALLBACK_MODEL = "deepseek-chat"
+
+
+def _resolve_hyde_model(config: Any) -> tuple[str, str]:
+    """Return ``(provider, model)`` for the HyDE generation call.
+
+    Prefers the ``"hyde"`` stage pin in ``config.llm.models`` /
+    ``config.llm.providers_per_stage``; falls back to
+    ``(_HYDE_FALLBACK_PROVIDER, _HYDE_FALLBACK_MODEL)`` so operators
+    who don't configure the stage still get a cheap model.
+    """
+    if config is None:
+        return _HYDE_FALLBACK_PROVIDER, _HYDE_FALLBACK_MODEL
+    llm_cfg = getattr(config, "llm", None)
+    if llm_cfg is None:
+        return _HYDE_FALLBACK_PROVIDER, _HYDE_FALLBACK_MODEL
+    models = getattr(llm_cfg, "models", {}) or {}
+    providers = getattr(llm_cfg, "providers_per_stage", {}) or {}
+    provider = providers.get("hyde", _HYDE_FALLBACK_PROVIDER)
+    model = models.get("hyde", _HYDE_FALLBACK_MODEL)
+    return provider, model
+
 
 async def _apply_hybrid_if_requested(
     request: Any,
@@ -316,6 +347,19 @@ class BasicRAGMode(BaseRAGMode):
         retrieval_query, refined = await compute_retrieval_query(request, llm)
         if refined:
             request.refined_query = refined  # type: ignore[misc]
+
+        # HyDE: replace the retrieval query with a synthetic abstract.
+        if getattr(request, "use_hyde", False):
+            from perspicacite.rag.modes.hyde_query import generate_hyde_query
+            hyde_provider, hyde_model = _resolve_hyde_model(getattr(self, "config", None))
+            retrieval_query = await generate_hyde_query(
+                claim=retrieval_query,
+                llm_client=llm,
+                model=hyde_model,
+                provider=hyde_provider,
+            )
+            logger.info("basic_hyde_applied", query_preview=retrieval_query[:120])
+
         scope = await resolve_paper_scope_for_query(
             retrieval_query,
             collection,
@@ -515,6 +559,28 @@ class BasicRAGMode(BaseRAGMode):
                 rewritten=refined,
                 by="conversation_history",
             )
+
+        # HyDE: replace the retrieval query with a synthetic abstract.
+        if getattr(request, "use_hyde", False):
+            from perspicacite.rag.modes.hyde_query import generate_hyde_query
+            yield StreamEvent.status("HyDE: Generating hypothetical abstract...")
+            hyde_provider, hyde_model = _resolve_hyde_model(getattr(self, "config", None))
+            hyde_query = await generate_hyde_query(
+                claim=retrieval_query,
+                llm_client=llm,
+                model=hyde_model,
+                provider=hyde_provider,
+            )
+            if hyde_query != retrieval_query:
+                yield StreamEvent.status_kind(
+                    f"HyDE expanded query for retrieval",
+                    kind="hyde_expanded",
+                    original=retrieval_query,
+                    expanded=hyde_query,
+                )
+            retrieval_query = hyde_query
+            logger.info("basic_stream_hyde_applied", query_preview=retrieval_query[:120])
+
         scope = await resolve_paper_scope_for_query(
             retrieval_query,
             collection,

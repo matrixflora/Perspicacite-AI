@@ -232,6 +232,16 @@ class RAGRequest(BaseModel):
     )
     # max_iterations already exists; existing validator stays.
 
+    use_hyde: bool = Field(
+        default=False,
+        description=(
+            "When True, generate a hypothetical paper abstract (HyDE) from the "
+            "claim before vector search. Bridges colloquial claim language to "
+            "domain-specific paper vocabulary. Off by default. Only active in "
+            "basic mode; other modes ignore this flag."
+        ),
+    )
+
     def __repr__(self) -> str:
         return (
             f"RAGRequest(query='{self.query[:50]}...', "

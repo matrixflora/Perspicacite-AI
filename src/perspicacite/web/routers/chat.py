@@ -417,6 +417,15 @@ class ChatRequest(BaseModel):
             "None = LLM-determined."
         ),
     )
+    use_hyde: bool = Field(
+        default=False,
+        description=(
+            "When true, generate a HyDE (Hypothetical Document Embeddings) "
+            "synthetic abstract from the claim before vector search. Improves "
+            "recall for hard-paraphrase queries where claim language differs "
+            "from paper vocabulary. Only active in basic mode."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):
@@ -1091,6 +1100,7 @@ async def _stream_rag_mode(request: ChatRequest, conversation_id: str | None = N
         ),
         bm25_weight=request.bm25_weight,
         vector_weight=request.vector_weight,
+        use_hyde=getattr(request, "use_hyde", False),
     )
     # Thread app_state and grounding context onto the RAGRequest so that
     # BasicRAGMode.execute() can pass them to the optimizer.
