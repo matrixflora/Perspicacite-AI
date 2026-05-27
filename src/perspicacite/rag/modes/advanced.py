@@ -254,7 +254,7 @@ EVIDENCE EPISTEMICS: Only conclude a claim is REFUTED when a retrieved paper EXP
             vector_store,
             max_papers_override=getattr(request, "max_papers_retrieval", None),
         )
-        cap = min(5, getattr(request, "max_papers_retrieval", None) or 5)
+        cap = min(50, getattr(request, "max_papers_retrieval", None) or 5)  # was min(5,...)
 
         # Step 1: Generate similar/rephrased queries
         # This is the key difference from Basic mode
@@ -562,7 +562,7 @@ Sources:
             vector_store,
             max_papers_override=getattr(request, "max_papers_retrieval", None),
         )
-        cap = min(5, getattr(request, "max_papers_retrieval", None) or 5)
+        cap = min(50, getattr(request, "max_papers_retrieval", None) or 5)  # was min(5,...)
 
         # Step 1: Generate similar/rephrased queries
         all_queries = await self._generate_similar_queries(
