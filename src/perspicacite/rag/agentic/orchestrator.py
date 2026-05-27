@@ -3027,7 +3027,7 @@ Generate your answer:"""
                     query=query,
                     context=None,
                     app_state=_app_state,
-                    optimize_enabled=None,
+                    optimize_enabled=True,  # always rewrite for web search (item 2)
                 )
                 effective_query = opt.searched_query
                 if opt.applied:

@@ -800,6 +800,10 @@ async def _stream_agentic(request: ChatRequest, conversation_id: str | None = No
     # arrives or the stream ends, then merge.
     accumulated_papers: list[dict[str, Any]] = []
     pending_answer_event: dict[str, Any] | None = None
+    # Track whether papers_found was ever received.  The end-of-stream flush
+    # must NOT re-emit source events when papers_found already ran the loop —
+    # otherwise papers appear twice when papers_found arrives before answer.
+    papers_found_received: bool = False
 
     def _emit_answer(content: str, sess_id: str | None) -> str:
         sources = [
@@ -840,6 +844,8 @@ async def _stream_agentic(request: ChatRequest, conversation_id: str | None = No
         databases=request.databases,
     ):
         if event.get("type") == "papers_found":
+            papers_found_received = True
+            new_papers: list[dict] = []
             for p in event.get("papers") or []:
                 key = (p.get("doi") or p.get("id") or p.get("title") or "").strip()
                 if not key:
@@ -850,6 +856,35 @@ async def _stream_agentic(request: ChatRequest, conversation_id: str | None = No
                 ):
                     continue
                 accumulated_papers.append(p)
+                new_papers.append(p)
+            # Item 10 (NEXT_STEPS_2026_05_25): emit individual `source` events so
+            # SSE clients have the same single-contract interface regardless of mode.
+            # We emit them BEFORE flushing the buffered answer so ordering matches
+            # _stream_rag_mode (source events → answer event).
+            for p in new_papers:
+                src_event = {
+                    "type": "source",
+                    "source": {
+                        "title": p.get("title"),
+                        "authors": (
+                            ", ".join(p["authors"]) if isinstance(p.get("authors"), list)
+                            else p.get("authors")
+                        ),
+                        "year": p.get("year"),
+                        "doi": (
+                            p["doi"].replace("https://doi.org/", "")
+                            if isinstance(p.get("doi"), str)
+                            else p.get("doi")
+                        ),
+                        "url": p.get("url"),
+                        "relevance_score": p.get("relevance_score"),
+                        "kb_name": p.get("kb_name"),
+                        # B-10: include paper_id so eval/client can match KB papers
+                        # via "scifact:N" prefix even when the paper has no DOI.
+                        "paper_id": p.get("paper_id"),
+                    },
+                }
+                yield f"data: {json.dumps(src_event, separators=(',', ':'))}\n\n"
             # Flush any pending answer event now that we have papers.
             if pending_answer_event is not None:
                 pending = pending_answer_event
@@ -872,6 +907,33 @@ async def _stream_agentic(request: ChatRequest, conversation_id: str | None = No
     # If no papers_found came after the answer, flush the buffered answer
     # event so the client still gets a response (with empty sources).
     if pending_answer_event is not None:
+        # Emit any accumulated papers as individual source events first —
+        # but only when papers_found was never received.  If papers_found DID
+        # arrive (even before `answer`), the source events were already emitted
+        # inside the loop above, and re-emitting here would produce duplicates.
+        for p in (accumulated_papers if not papers_found_received else []):
+            src_event = {
+                "type": "source",
+                "source": {
+                    "title": p.get("title"),
+                    "authors": (
+                        ", ".join(p["authors"]) if isinstance(p.get("authors"), list)
+                        else p.get("authors")
+                    ),
+                    "year": p.get("year"),
+                    "doi": (
+                        p["doi"].replace("https://doi.org/", "")
+                        if isinstance(p.get("doi"), str)
+                        else p.get("doi")
+                    ),
+                    "url": p.get("url"),
+                    "relevance_score": p.get("relevance_score"),
+                    "kb_name": p.get("kb_name"),
+                    # B-10: include paper_id so KB papers without DOI can be matched.
+                    "paper_id": p.get("paper_id"),
+                },
+            }
+            yield f"data: {json.dumps(src_event, separators=(',', ':'))}\n\n"
         yield _emit_answer(
             pending_answer_event["content"], pending_answer_event["session_id"]
         )

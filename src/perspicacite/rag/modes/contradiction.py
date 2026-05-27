@@ -340,6 +340,7 @@ class ContradictionRAGMode(BaseRAGMode):
                     doi=meta.get("doi"),
                     relevance_score=min(1.0, max(0.0, self._chunk_score(chunks[0]))),
                     kb_name=kb_name,
+                    paper_id=meta.get("paper_id"),
                     metadata=decode_paper_metadata_json(meta),
                 )
             )
@@ -563,6 +564,13 @@ class ContradictionRAGMode(BaseRAGMode):
                 )
                 return
 
+            # B-6: emit sources immediately after retrieval so the client can
+            # display them before the slow per-paper summarisation + cluster
+            # LLM calls complete (which can take 10-30 s per paper).
+            sources = self._build_sources(by_paper, real_papers)
+            for source in sources:
+                yield StreamEvent.source(source)
+
             emit_phase(_phase_sink, phase="group_by_stance", state="running")
             yield StreamEvent.status(
                 f"Contradiction analysis: comparing claims across {n} papers..."
@@ -592,10 +600,6 @@ class ContradictionRAGMode(BaseRAGMode):
                 llm=llm,
             ):
                 yield ev
-
-            sources = self._build_sources(by_paper, real_papers)
-            for source in sources:
-                yield StreamEvent.source(source)
 
             emit_phase(_phase_sink, phase="synthesize", state="done")
             yield StreamEvent.done(

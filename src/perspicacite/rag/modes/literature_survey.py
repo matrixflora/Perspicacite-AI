@@ -716,7 +716,7 @@ class LiteratureSurveyRAGMode(BaseRAGMode):
                     query=query,
                     context=None,
                     app_state=_app_state,
-                    optimize_enabled=None,
+                    optimize_enabled=True,  # always rewrite for web search (item 2)
                 )
                 effective_query = opt.searched_query
                 if opt.applied:
@@ -1236,6 +1236,7 @@ JSON ONLY (no other text):
     def _fix_json(self, json_str: str) -> str:
         """Fix common JSON formatting issues from LLM responses."""
         import re
+
         from perspicacite.rag.utils.json_salvage import clean_control_chars
         # Strip raw control chars some providers emit inside string values.
         json_str = clean_control_chars(json_str)
@@ -1622,6 +1623,11 @@ Respond with theme names separated by commas, or "None" if no match."""
                 year=p.year,
                 doi=p.doi,
                 relevance_score=_normalize(p.relevance_score),
+                # Include the KB paper_id (e.g. "scifact:N") so downstream
+                # clients (eval harness, UI) can match KB papers that have no
+                # DOI.  Web-sourced papers carry a UUID or external ID here;
+                # the eval harness's id_mapper handles both gracefully.
+                paper_id=p.id if p.id else None,
             )
             for p in papers
         ]

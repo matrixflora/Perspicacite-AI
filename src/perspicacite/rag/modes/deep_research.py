@@ -28,15 +28,8 @@ from perspicacite.provenance.context import get_collector
 from perspicacite.rag.code_excerpts import collect_code_excerpts
 from perspicacite.rag.figure_refs import collect_figure_refs
 from perspicacite.rag.modes.base import BaseRAGMode
-from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.multimodal import wrap_messages_for_chunks
-from perspicacite.search.screening import (
-    screen_papers,
-    screen_papers_llm,
-    screen_papers_rerank,
-)
 from perspicacite.rag.paper_metadata_codec import decode_paper_metadata_json
-from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
 from perspicacite.rag.prompts import (
     ASSESS_DOCUMENT_QUALITY_PROMPT,
     GENERATE_CONTEXTUAL_QUERIES_PROMPT,
@@ -54,6 +47,7 @@ from perspicacite.rag.prompts import (
     SUMMARIZE_INFORMATION_PROMPT,
 )
 from perspicacite.rag.relevancy import assess_query_complexity, reorder_documents_by_relevance
+from perspicacite.rag.telemetry import emit_phase
 from perspicacite.rag.utils import (
     flatten_paper_results_to_chunks,
     format_references,
@@ -62,6 +56,11 @@ from perspicacite.rag.utils import (
 from perspicacite.rag.wrrf_v1 import doc_page_content, select_wrrf_merged_documents
 from perspicacite.retrieval.multi_kb import get_chunks_by_paper_ids_across
 from perspicacite.retrieval.recency import apply_recency_weighting_to_papers
+from perspicacite.search.screening import (
+    screen_papers,
+    screen_papers_llm,
+    screen_papers_rerank,
+)
 
 logger = get_logger("perspicacite.rag.modes.deep_research")
 
@@ -246,8 +245,18 @@ class DeepResearchRAGMode(BaseRAGMode):
                 provider=request.provider,
                 temperature=0.2,
                 max_tokens=1200,
+                response_format={"type": "json_object"},
             )
-            evaluation = json.loads(self._strip_llm_json_block(eval_response))
+            try:
+                evaluation = json.loads(self._strip_llm_json_block(eval_response))
+            except json.JSONDecodeError:
+                logger.warning("profound_plan_eval_json_error", reason="truncated_or_invalid_json")
+                return {
+                    "reasoning": "Plan evaluation JSON was malformed; continuing with original plan",
+                    "plan": remaining_plan,
+                    "queries": remaining_queries,
+                    "strategy_change": "JSON parse error in evaluation; continuing with original plan",
+                }
             logger.info("profound_plan_evaluation", recommendation=evaluation.get("recommendation"))
 
             recommendation = evaluation.get("recommendation", "modify_plan")
@@ -326,6 +335,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                 provider=request.provider,
                 temperature=0.2,
                 max_tokens=1200,
+                response_format={"type": "json_object"},
             )
             result = json.loads(self._strip_llm_json_block(adjust_response))
             result["initial_evaluation"] = evaluation
@@ -1223,6 +1233,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                 # in JSON and was getting truncated mid-string ("Unterminated
                 # string starting at: line 2 column 18"). Bumped to 1500.
                 max_tokens=1500,
+                response_format={"type": "json_object"},
             )
             if not response:
                 logger.warning(
@@ -1244,7 +1255,10 @@ class DeepResearchRAGMode(BaseRAGMode):
             if response.startswith("{") and "}" in response:
                 response = response[: response.rindex("}") + 1]
 
-            from perspicacite.rag.utils.json_salvage import clean_control_chars, salvage_truncated_array
+            from perspicacite.rag.utils.json_salvage import (
+                clean_control_chars,
+                salvage_truncated_array,
+            )
             response = clean_control_chars(response)
             try:
                 result = json.loads(response)
@@ -1299,6 +1313,7 @@ class DeepResearchRAGMode(BaseRAGMode):
                 ],
                 temperature=0.3,
                 max_tokens=800,
+                response_format={"type": "json_object"},
             )
             response = response.strip()
             if response.startswith("```json"):
@@ -1886,6 +1901,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             logger.debug("profound_stage_3_web_search")
             try:
                 import hashlib as _hashlib
+
                 from perspicacite.rag.resolve_papers import resolve_papers_pipeline
                 _app_state = getattr(self, "app_state", None)
                 web_papers = await resolve_papers_pipeline(
@@ -2001,6 +2017,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                 ],
                 temperature=0.3,
                 max_tokens=1000,
+                response_format={"type": "json_object"},
             )
             if not response:
                 logger.warning(
@@ -2056,6 +2073,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                 ],
                 temperature=0.0,
                 max_tokens=600,
+                response_format={"type": "json_object"},
             )
             response = response.strip()
             if response.startswith("```json"):
@@ -2116,12 +2134,14 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                     messages=messages,
                     max_tokens=1200,
                     temperature=(0.3 if qc < 0.7 else 0.5),
+                    response_format={"type": "json_object"},
                 )
             else:
                 response = await llm.complete(
                     messages=messages,
                     max_tokens=1200,
                     temperature=0.3,
+                    response_format={"type": "json_object"},
                 )
             response = response.strip()
             if response.startswith("```json"):
@@ -2133,7 +2153,10 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             response = response.strip()
             if response.startswith("{") and "}" in response:
                 response = response[: response.rindex("}") + 1]
-            from perspicacite.rag.utils.json_salvage import clean_control_chars, salvage_truncated_array
+            from perspicacite.rag.utils.json_salvage import (
+                clean_control_chars,
+                salvage_truncated_array,
+            )
             cleaned = clean_control_chars(response)
             try:
                 return json.loads(cleaned)
@@ -2187,6 +2210,7 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
                 ],
                 temperature=0.0,
                 max_tokens=400,
+                response_format={"type": "json_object"},
             )
             response = response.strip()
             if response.startswith("```json"):
@@ -2764,6 +2788,7 @@ Follow the system instructions for this situation."""
                         doi=doc.get("doi"),
                         relevance_score=doc.get("paper_score", 0.5),
                         kb_name=doc.get("kb_name"),
+                        paper_id=doc.get("paper_id"),
                         metadata=doc.get("paper_metadata"),
                     )
                 )
@@ -2842,6 +2867,7 @@ Follow the system instructions for this situation."""
                     doi=doi,
                     relevance_score=getattr(doc, "score", 0.0),
                     kb_name=getattr(doc, "kb_name", None),
+                    paper_id=getattr(meta, "paper_id", None),
                     metadata=_pm_dict,
                 )
             )

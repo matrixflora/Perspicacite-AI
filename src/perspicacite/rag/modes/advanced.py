@@ -422,6 +422,7 @@ EVIDENCE EPISTEMICS: Only conclude a claim is REFUTED when a retrieved paper EXP
                         doi=p.get("doi"),
                         relevance_score=p.get("paper_score", 0.0),
                         kb_name=p.get("kb_name") or request.kb_name,
+                        paper_id=p.get("paper_id"),
                         metadata=p.get("paper_metadata"),
                     )
                 )
@@ -825,6 +826,7 @@ Sources:
                         enrichment_sources=p.get("enrichment_sources"),
                         relevance_score=p.get("paper_score", 0.0),
                         kb_name=p.get("kb_name") or request.kb_name,
+                        paper_id=p.get("paper_id"),
                         metadata=p.get("paper_metadata"),
                     )
                 )
@@ -1495,8 +1497,14 @@ Evaluate the response according to the criteria and return a valid JSON."""
 
             json_match = re.search(r"\{.*\}", result, re.DOTALL)
             if json_match:
-                return json.loads(json_match.group())
-            return json.loads(result)
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    return {"overall_score": 5}
+            try:
+                return json.loads(result)
+            except json.JSONDecodeError:
+                return {"overall_score": 5}
 
         except Exception as e:
             logger.error("advanced_evaluation_error", error=str(e))

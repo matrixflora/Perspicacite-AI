@@ -130,7 +130,12 @@ async def test_contradiction_three_buckets(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_contradiction_few_papers_degrades(monkeypatch):
-    """Fewer than 3 papers → note + fallback answer, no error events."""
+    """Fewer than 3 papers → note + fallback answer, no error events.
+
+    The contradiction mode tries a live web fallback when the KB returns
+    fewer than MIN_PAPERS_FOR_ANALYSIS papers.  We stub that out to return
+    an empty list so the test stays pure-unit and doesn't hit real APIs.
+    """
     ContradictionRAGMode = __import__(
         "perspicacite.rag.modes.contradiction", fromlist=["ContradictionRAGMode"]
     ).ContradictionRAGMode
@@ -139,7 +144,13 @@ async def test_contradiction_few_papers_degrades(monkeypatch):
     async def _fake_retrieve(self, request, vs, ep):
         return []  # zero papers
 
+    async def _noop_web_fallback(**kwargs):
+        return []  # no web results either → forces the "answer normally" path
+
     monkeypatch.setattr(type(mode), "_retrieve", _fake_retrieve)
+    monkeypatch.setattr(
+        "perspicacite.rag.modes.basic._web_fallback_papers", _noop_web_fallback
+    )
 
     events = [
         ev
@@ -169,7 +180,11 @@ async def test_contradiction_few_papers_degrades(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_contradiction_two_papers_degrades(monkeypatch):
-    """2 papers (< MIN_PAPERS=3) → note + fallback, no error."""
+    """2 papers (< MIN_PAPERS=3) → note + fallback, no error.
+
+    Stubs _web_fallback_papers to return an empty list so the test is
+    pure-unit (no live network calls).
+    """
     ContradictionRAGMode = __import__(
         "perspicacite.rag.modes.contradiction", fromlist=["ContradictionRAGMode"]
     ).ContradictionRAGMode
@@ -182,7 +197,13 @@ async def test_contradiction_two_papers_degrades(monkeypatch):
     async def _fake_retrieve(self, request, vs, ep):
         return chunks
 
+    async def _noop_web_fallback(**kwargs):
+        return []  # no web results → forces the "answer normally" path
+
     monkeypatch.setattr(type(mode), "_retrieve", _fake_retrieve)
+    monkeypatch.setattr(
+        "perspicacite.rag.modes.basic._web_fallback_papers", _noop_web_fallback
+    )
 
     events = [
         ev

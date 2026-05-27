@@ -9,6 +9,13 @@ import pytest
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "asb" / "skill_collection_v1"
 
 
+def _copy_fixture(tmp_path: Path) -> Path:
+    """Copy FIXTURE to tmp_path to avoid writing side-files into the repo."""
+    dest = tmp_path / "collection"
+    shutil.copytree(FIXTURE, dest)
+    return dest
+
+
 @pytest.fixture
 def mock_app_state():
     state = MagicMock()
@@ -19,8 +26,10 @@ def mock_app_state():
 
 
 @pytest.mark.asyncio
-async def test_ingest_collection_returns_summary(mock_app_state):
+async def test_ingest_collection_returns_summary(tmp_path, mock_app_state):
     from perspicacite.pipeline.asb.collection_ingest import ingest_asb_skill_collection
+
+    target = _copy_fixture(tmp_path)
 
     with (
         patch(
@@ -37,7 +46,7 @@ async def test_ingest_collection_returns_summary(mock_app_state):
         mk_kb.return_value = fake_kb
 
         result = await ingest_asb_skill_collection(
-            collection_dir=FIXTURE,
+            collection_dir=target,
             kb_name="test-collection-kb",
             app_state=mock_app_state,
             ingest_linked_papers=False,
@@ -120,8 +129,10 @@ async def test_ingest_collection_writes_skill_index(tmp_path, mock_app_state):
 
 
 @pytest.mark.asyncio
-async def test_ingest_collection_calls_doi_ingest_when_enabled(mock_app_state):
+async def test_ingest_collection_calls_doi_ingest_when_enabled(tmp_path, mock_app_state):
     from perspicacite.pipeline.asb.collection_ingest import ingest_asb_skill_collection
+
+    target = _copy_fixture(tmp_path)
 
     with (
         patch(
@@ -138,7 +149,7 @@ async def test_ingest_collection_calls_doi_ingest_when_enabled(mock_app_state):
         mk_kb.return_value = fake_kb
 
         await ingest_asb_skill_collection(
-            collection_dir=FIXTURE,
+            collection_dir=target,
             kb_name="test-kb",
             app_state=mock_app_state,
             ingest_linked_papers=True,

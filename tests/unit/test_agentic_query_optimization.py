@@ -108,3 +108,66 @@ async def test_scilex_search_optimizer_failure_falls_back_to_original():
 
     # SciLEx adapter must receive the original (unmodified) query on optimizer failure.
     assert fake_scilex.search.call_args.kwargs["query"] == "original query"
+
+
+@pytest.mark.asyncio
+async def test_scilex_search_forces_optimization_even_when_config_disabled():
+    """_scilex_search must pass optimize_enabled=True, not None.
+
+    B-9 fix: agentic mode internal web searches should always run the keyword
+    rewrite, even if the user has disabled query optimization globally in their
+    config (``search.query_optimization.enabled = False``).
+    """
+    captured_kwargs: dict = {}
+
+    fake_scilex = MagicMock()
+    fake_scilex.search = AsyncMock(return_value=[])
+
+    async def capture_optimize(**kwargs):
+        captured_kwargs.update(kwargs)
+        return OptimizationResult(
+            searched_query="optimised internal query",
+            enabled=True,
+            applied=True,
+            context_used=False,
+            fallback_reason=None,
+        )
+
+    with patch(
+        "perspicacite.search.query_optimizer.optimize_query",
+        side_effect=capture_optimize,
+    ), patch(
+        "perspicacite.search.domain_aggregator.build_aggregator",
+        side_effect=RuntimeError("no aggregator in unit test"),
+    ):
+        from perspicacite.rag.agentic.orchestrator import AgenticOrchestrator
+
+        stub_state = MagicMock()
+        # Config has optimization DISABLED globally — but _scilex_search should
+        # override this by passing optimize_enabled=True explicitly.
+        stub_state.config.search.query_optimization.enabled = False
+        stub_state.config.search.query_optimization.timeout_s = 5.0
+        stub_state.config.search.query_optimization.max_context_chars = 300
+        stub_state.config.llm.default_provider = "anthropic"
+        stub_state.config.llm.default_model = "claude-haiku-4-5"
+        stub_state.config.llm.models = {}
+        stub_state.config.llm.providers_per_stage = {}
+        stub_state.llm_client = MagicMock()
+
+        orch = AgenticOrchestrator.__new__(AgenticOrchestrator)
+        orch.scilex_adapter = fake_scilex
+        orch._found_papers_lock = asyncio.Lock()
+        orch._found_papers = []
+        orch._accumulate_lit_evidence = MagicMock()
+        orch._format_paper_list = MagicMock(return_value="[]")
+        orch.app_state = stub_state
+
+        await orch._scilex_search("some raw claim text")
+
+    # The optimizer must have been called with optimize_enabled=True, not None.
+    assert captured_kwargs.get("optimize_enabled") is True, (
+        "_scilex_search must pass optimize_enabled=True to force optimisation "
+        "even when config.search.query_optimization.enabled=False"
+    )
+    # And the rewritten query must reach SciLEx.
+    assert fake_scilex.search.call_args.kwargs["query"] == "optimised internal query"

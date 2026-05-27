@@ -92,3 +92,32 @@ def test_convert_to_sources_does_not_raise_validation_error():
     assert len(sources) == 4
     for s in sources:
         assert 0.0 <= s.relevance_score <= 1.0
+
+
+def test_convert_to_sources_forwards_paper_id():
+    """KB papers must propagate their paper_id (e.g. 'scifact:4983') into the
+    SourceReference so eval clients can match them without a DOI.
+
+    Regression: before this fix, _convert_to_sources() did not set paper_id on
+    the SourceReference, making KB papers with no DOI invisible to the eval harness.
+    """
+    from perspicacite.rag.modes.literature_survey import PaperCandidate
+
+    mode = _make_mode()
+    kb_paper = PaperCandidate(
+        id="scifact:4983",
+        title="KB Paper",
+        authors=["Author, A."],
+        year=2021,
+        doi=None,         # no DOI — eval must use paper_id to match
+        abstract="Abstract.",
+        relevance_score=0.9,
+    )
+    sources = mode._convert_to_sources([kb_paper])
+    assert len(sources) == 1
+    src = sources[0]
+    assert src.paper_id == "scifact:4983", (
+        f"paper_id must be forwarded from PaperCandidate.id to SourceReference.paper_id; "
+        f"got paper_id={src.paper_id!r}"
+    )
+    assert src.doi is None  # no DOI on this KB paper

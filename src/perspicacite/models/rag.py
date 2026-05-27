@@ -71,6 +71,11 @@ class SourceReference(BaseModel):
     # rather than a full abstract.
     abstract: str | None = None
     kb_name: str | None = None
+    # The internal paper_id as stored in the KB (e.g. "scifact:4983") or the
+    # paper's canonical external identifier.  Allows SSE clients (eval harness,
+    # UI) to identify KB papers that have no DOI.  None for external-only
+    # results that were never ingested into a KB.
+    paper_id: str | None = None
     # All upstream providers that returned THIS specific paper (deduped).
     # Renamed from legacy ``sources_all`` → ``discovery_sources`` (matches
     # Paper.discovery_sources). The old name lives on as a Pydantic alias
