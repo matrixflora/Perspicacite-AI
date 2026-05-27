@@ -59,7 +59,8 @@ def _preflight_llm_keys(config: Any) -> None:
     raise RuntimeError(
         f"LLM preflight failed: default_provider='{default_provider}' but "
         f"{required_env} is not set in the environment. Export the key (in "
-        f"~/.zshrc or the launching shell) or set "
+        f"~/.zshrc or the launching shell); if it's already set there, run "
+        f"`source ~/.zshrc` (or `source ~/.profile`) in this shell. Or set "
         f"PERSPICACITE_ALLOW_MISSING_LLM_KEYS=1 to bypass for offline / "
         f"mocked-LLM development."
     )

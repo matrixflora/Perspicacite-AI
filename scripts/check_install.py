@@ -93,7 +93,8 @@ def _check_provider_key() -> tuple[str, str]:
         return "OK", f"{sample} (+others) via {', '.join(srcs)}"
     return "FAIL", (
         "no LLM provider key in shell or .env — "
-        "add ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY"
+        "add ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY "
+        "(tip: if set in your shell config, run `source ~/.zshrc` or `source ~/.profile`)"
     )
 
 
