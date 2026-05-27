@@ -159,10 +159,16 @@ def _best_device() -> str:
 # stella_en_1.5B_v5: requires trust_remote_code for custom modeling_qwen.py which
 # implements the correct attention pattern.  The cached modeling_qwen.py was patched
 # to fix transformers 5.x API incompatibilities (rope_theta, DynamicCache, get_usable_length).
-_ST_TRUST_REMOTE_CODE: dict[str, bool] = {
-    "dunzhang/stella_en_1.5B_v5": True,
-    "dunzhang/stella_en_400M_v5": True,
-}
+# Models that require trust_remote_code=True to load their custom forward pass.
+#
+# stella_en_1.5B_v5 CANNOT use trust_remote_code=True with transformers 5.x.
+# The custom modeling_qwen.py was written for transformers ~4.42 and the attention
+# mask computation changed too much in 5.x (AttentionMaskConverter deprecated;
+# different causal mask generation).  Patching rope_theta / DynamicCache / get_usable_length
+# is not enough — the forward pass produces random-looking embeddings.
+#
+# Leave this dict empty until a compatible version of transformers is available.
+_ST_TRUST_REMOTE_CODE: dict[str, bool] = {}
 
 # Named prompts baked into the sentence-transformers model config.
 # These are applied via ``model.encode(texts, prompt_name=<name>)``.
@@ -173,11 +179,13 @@ _ST_TRUST_REMOTE_CODE: dict[str, bool] = {
 # prompt DEGRADES retrieval because instruction tokens enter the mean and are absent
 # from document embeddings, creating an embedding-space mismatch.
 #
-# Confirmed working (2026-05-27): stella_en_1.5B_v5 with patched modeling_qwen.py.
-_ST_QUERY_PROMPT_NAMES: dict[str, str] = {
-    "dunzhang/stella_en_1.5B_v5": "s2p_query",
-    "dunzhang/stella_en_400M_v5": "s2p_query",
-}
+# stella_en_1.5B_v5 diagnosis (2026-05-27):
+#   - trust_remote_code=False (std forward, no prompt): SciFact 0.737, NFCorpus 0.098
+#   - trust_remote_code=True (patched, no prompt): random embeddings (broken)
+#   - trust_remote_code=True (patched, s2p_query): random embeddings (broken)
+# Root cause: transformers 5.x AttentionMaskConverter changes break the custom forward.
+# Resolution: keep trust_remote_code=False; accept asymmetric retrieval penalty.
+_ST_QUERY_PROMPT_NAMES: dict[str, str] = {}
 
 # String prefixes for instruct models that use text-level instructions.
 # Applied as a literal prefix: ``"<prefix>" + query``.
