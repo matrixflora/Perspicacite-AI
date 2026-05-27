@@ -155,27 +155,37 @@ def _best_device() -> str:
 # Named prompts baked into the sentence-transformers model config.
 # These are applied via ``model.encode(texts, prompt_name=<name>)``.
 # Used for query-side encoding only — document embeddings use no prompt.
-_ST_QUERY_PROMPT_NAMES: dict[str, str] = {
-    # stella_en_1.5B_v5 — prompt_name="s2p_query" adds the retrieval instruction.
-    # Expected NFCorpus NDCG@10 without prompt: ~0.10; with prompt: ~0.42.
-    "dunzhang/stella_en_1.5B_v5": "s2p_query",
-    "dunzhang/stella_en_400M_v5": "s2p_query",
-}
+#
+# IMPORTANT: only register models here when trust_remote_code=True works correctly
+# AND the model uses last-token pooling.  Models that require trust_remote_code but
+# fail to load it (e.g., stella_en_1.5B_v5 with transformers versions that don't
+# have rope_theta on Qwen2Config) fall back to mean pooling.  With mean pooling,
+# adding a query prompt DEGRADES retrieval because instruction tokens enter the
+# mean and are absent from document embeddings, creating a space mismatch.
+#
+# Tested / confirmed working:
+#   (none yet — stella requires trust_remote_code which fails on current transformers)
+#
+# TODO: add stella back when transformers ≥ X fixes the Qwen2Config.rope_theta issue:
+#   "dunzhang/stella_en_1.5B_v5": "s2p_query",
+#   "dunzhang/stella_en_400M_v5": "s2p_query",
+_ST_QUERY_PROMPT_NAMES: dict[str, str] = {}
 
 # String prefixes for instruct models that use text-level instructions.
 # Applied as a literal prefix: ``"<prefix>" + query``.
 # Used when the model lacks a named built-in prompt.
-_ST_QUERY_PROMPT_PREFIXES: dict[str, str] = {
-    # GTE-Qwen2: Qwen2 backbone; standard retrieval instruction prefix.
-    "Alibaba-NLP/gte-Qwen2-7B-instruct": (
-        "Instruct: Given a web search query, retrieve relevant passages "
-        "that answer the query\nQuery: "
-    ),
-    "Alibaba-NLP/gte-Qwen2-1.5B-instruct": (
-        "Instruct: Given a web search query, retrieve relevant passages "
-        "that answer the query\nQuery: "
-    ),
-}
+#
+# Same caution as _ST_QUERY_PROMPT_NAMES: only register when the model's
+# pooling is confirmed correct (last-token for decoder models).
+# gte-Qwen2-7B-instruct uses a similar Qwen2 backbone to stella — verify
+# trust_remote_code compatibility before enabling these entries.
+#
+# TODO: test gte-Qwen2 pooling compatibility before enabling:
+#   "Alibaba-NLP/gte-Qwen2-7B-instruct": (
+#       "Instruct: Given a web search query, retrieve relevant passages "
+#       "that answer the query\nQuery: "
+#   ),
+_ST_QUERY_PROMPT_PREFIXES: dict[str, str] = {}
 
 
 class SentenceTransformerEmbeddingProvider:
