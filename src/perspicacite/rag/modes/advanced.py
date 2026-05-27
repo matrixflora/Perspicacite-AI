@@ -1139,6 +1139,57 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
             self.max_docs_per_source,
         )
 
+        # Original-query protection: ensure the best result from the original
+        # (unexpanded) query that WRRF fusion excluded is still included.
+        #
+        # WRRF multi-query fusion penalizes papers that rank highly for only one
+        # specific query variant (the original) but not for expanded variants.
+        # Such papers can fall below the max_docs cutoff despite being the most
+        # relevant paper for the actual claim vocabulary.
+        #
+        # Fix: find the highest-ranked chunk in the original query (q_idx=0)
+        # whose paper (by citation) is absent from the WRRF selection, and
+        # append it as a bonus slot (max_docs + 1 total).
+        #
+        # The rank cutoff (3 × _effective_max_docs) matches the raw-chunk pool
+        # that basic mode uses via search_two_pass (initial_pool = 3 × hard_cap).
+        # Any paper reachable by basic mode at the same k is guaranteed to be
+        # reachable by this protection as well.
+        if len(queries) > 1 and documents_info:
+            # Collect all docs seen in the original query, sorted by their rank
+            original_q_docs = sorted(
+                [(doc_id, qranks[0]) for doc_id, qranks in rankings.items() if 0 in qranks],
+                key=lambda x: x[1],
+            )
+            if original_q_docs:
+                selected_citations = {get_doc_citation(d) for d in selected_documents}
+                # Protection rank cap: 3× output cap, matching basic mode's raw chunk pool
+                rank_cap = 3 * _effective_max_docs
+
+                for original_top_id, orig_rank in original_q_docs:
+                    if orig_rank > rank_cap:
+                        break  # Beyond protection range; sorted ascending so can stop
+
+                    original_doc = documents_info[original_top_id]
+                    original_citation = get_doc_citation(original_doc)
+
+                    if original_citation not in selected_citations:
+                        # This paper is in the original query's top-k but was
+                        # excluded by WRRF fusion. Add as bonus slot.
+                        wrrf_rank = next(
+                            (i for i, (d, _) in enumerate(sorted_docs) if d == original_top_id),
+                            -1,
+                        )
+                        logger.info(
+                            "advanced_wrrf_original_query_protection",
+                            citation=original_citation[:80] if original_citation else "",
+                            original_rank=orig_rank,
+                            wrrf_rank=wrrf_rank,
+                        )
+                        selected_documents.append(original_doc)
+                        # Only add the single best-ranked missing paper
+                        break
+
         logger.info(
             "advanced_wrrf_selected",
             total_docs=len(sorted_docs),
