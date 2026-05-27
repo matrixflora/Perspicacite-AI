@@ -68,6 +68,7 @@ def _metadata_from_discovery(
         "year": disc.year,
         "is_oa": disc.is_oa,
         "work_type": disc.work_type,
+        "license": disc.license,
     }
     if disc.arxiv_id:
         md["arxiv_id"] = disc.arxiv_id

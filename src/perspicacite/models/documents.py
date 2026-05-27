@@ -23,6 +23,7 @@ class ChunkMetadata(BaseModel):
     doi: str | None = None
     url: str | None = None
     abstract: str | None = None
+    license_id: str | None = None  # OA license id, surfaced on passage results
     # Local-doc / smart-chunking extensions (all optional):
     content_type: str | None = None  # "pdf" | "markdown" | "code" | "text"
     language: str | None = None  # python | typescript | ...

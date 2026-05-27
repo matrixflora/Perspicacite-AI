@@ -599,7 +599,7 @@ def _chunk_to_metadata(metadata: ChunkMetadata) -> dict[str, Any]:
     # Scalar identity / metadata fields
     scalar_fields = (
         "section", "page_number", "title", "authors", "year", "doi", "url",
-        "abstract",
+        "abstract", "license_id",
         "content_type", "language", "source_file_path",
         "source_section", "page", "parent_paper_id",
         "symbol_name", "symbol_kind", "parent_class",
@@ -670,6 +670,7 @@ def _metadata_to_chunk(metadata: dict[str, Any]) -> ChunkMetadata:
         doi=metadata.get("doi"),
         url=metadata.get("url"),
         abstract=metadata.get("abstract"),
+        license_id=metadata.get("license_id"),
         content_type=metadata.get("content_type"),
         language=metadata.get("language"),
         heading_path=_list("heading_path") or None,

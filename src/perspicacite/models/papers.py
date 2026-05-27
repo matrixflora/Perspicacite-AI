@@ -101,6 +101,7 @@ class Paper(BaseModel):
     # one of "structured" | "full_text" | "abstract" | "none". None when
     # the paper was loaded outside the unified download pipeline.
     content_type: str | None = None
+    license: str | None = None  # OA license id from discovery (e.g. "cc-by")
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("year")

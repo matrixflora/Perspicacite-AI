@@ -612,6 +612,7 @@ async def ingest_dois_into_kb(
                 abstract=result.abstract or md.get("abstract"),
                 journal=md.get("journal"),
                 content_type=getattr(result, "content_type", None),
+                license=md.get("license"),
                 source=PaperSource.OPENALEX,
             )
             if result.full_text:

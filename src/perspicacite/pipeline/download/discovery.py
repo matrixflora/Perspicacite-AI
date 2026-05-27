@@ -331,6 +331,7 @@ async def discover_paper_sources(
             # OA URL
             oa_info = work.get("open_access") or {}
             disc.oa_url = oa_info.get("oa_url")
+            disc.license = oa_info.get("license")
 
             # Reconstruct abstract from inverted index
             raw_abstract = work.get("abstract_inverted_index")
@@ -391,6 +392,8 @@ async def discover_paper_sources(
                 if pdf_url and not disc.oa_url:
                     disc.oa_url = pdf_url
                 disc.unpaywall_pdf_url = pdf_url
+                if not disc.license:
+                    disc.license = best.get("license")
         except Exception as e:
             logger.info("discovery_unpaywall_failed", doi=clean, error=str(e))
 

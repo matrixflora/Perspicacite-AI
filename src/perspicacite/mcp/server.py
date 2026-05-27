@@ -2267,6 +2267,7 @@ async def add_dois_to_kb(
                     journal=md.get("journal"),
                     source=PaperSource.OPENALEX,
                     content_type=getattr(result, "content_type", None),
+                    license=md.get("license"),
                 )
                 if result.full_text:
                     paper.full_text = result.full_text

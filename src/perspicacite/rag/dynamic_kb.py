@@ -174,6 +174,7 @@ Abstract:
         authors_str = ", ".join(str(a) for a in paper.authors) if paper.authors else None
 
         paper_content_type = getattr(paper, "content_type", None)
+        paper_license = getattr(paper, "license", None)
         chunks.append(DocumentChunk(
             id=f"{paper.id}_metadata",
             text=metadata_text,
@@ -188,6 +189,7 @@ Abstract:
                 url=paper.url,
                 abstract=paper.abstract,
                 content_type=paper_content_type,
+                license_id=paper_license,
                 section="metadata",
                 paper_metadata_json=paper_md_json,
             ),
@@ -221,6 +223,7 @@ Abstract:
                         doi=paper.doi,
                         url=paper.url,
                         content_type=paper_content_type,
+                        license_id=paper_license,
                         paper_metadata_json=paper_md_json,
                     ),
                 ))

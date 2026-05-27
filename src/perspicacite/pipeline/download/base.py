@@ -49,6 +49,7 @@ class PaperDiscovery:
     work_type: str | None = None  # "article", "preprint", etc.
     unpaywall_pdf_url: str | None = None
     journal: str | None = None
+    license: str | None = None  # OA license id, e.g. "cc-by"
 
 
 @dataclass
