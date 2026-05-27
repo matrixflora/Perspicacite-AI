@@ -160,15 +160,13 @@ class DynamicKnowledgeBase:
 
         chunks: list[DocumentChunk] = []
 
-        # Create metadata chunk
-        abstract_display = paper.abstract or "No abstract available"
+        # Create metadata chunk (header only — the abstract is embedded as its
+        # own chunk below, so passage similarity matches clean prose, not the
+        # metadata envelope).
         metadata_text = f"""Title: {paper.title}
 Authors: {', '.join(str(a) for a in paper.authors)}
 Year: {paper.year or 'Unknown'}
-DOI: {paper.doi or 'Unknown'}
-
-Abstract:
-{abstract_display}"""
+DOI: {paper.doi or 'Unknown'}"""
 
         # Format authors as comma-separated string for metadata
         authors_str = ", ".join(str(a) for a in paper.authors) if paper.authors else None
@@ -194,6 +192,30 @@ Abstract:
                 paper_metadata_json=paper_md_json,
             ),
         ))
+
+        # Abstract as its own chunk: clean prose (no metadata envelope) so
+        # passage-similarity queries match the abstract cleanly. Carries the
+        # same paper metadata so retrieval surfaces license_id / doi / etc.
+        if paper.abstract and paper.abstract.strip():
+            chunks.append(DocumentChunk(
+                id=f"{paper.id}_abstract",
+                text=paper.abstract,
+                metadata=ChunkMetadata(
+                    paper_id=paper.id,
+                    chunk_index=1,
+                    source=paper.source,
+                    title=paper.title,
+                    authors=authors_str,
+                    year=paper.year,
+                    doi=paper.doi,
+                    url=paper.url,
+                    abstract=paper.abstract,
+                    content_type=paper_content_type,
+                    license_id=paper_license,
+                    section="abstract",
+                    paper_metadata_json=paper_md_json,
+                ),
+            ))
 
         # Add full text if available and requested
         if include_full_text and paper.full_text:
