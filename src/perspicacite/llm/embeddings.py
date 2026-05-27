@@ -576,6 +576,10 @@ def create_embedding_provider(
             "NeuML/",
             "ncats/",
             "microsoft/Biomed",
+            # LLM-based embedding models — require sentence-transformers, not LiteLLM
+            # (stored in KB metadata without st: prefix; must be auto-routed)
+            "dunzhang/",       # stella_en_1.5B_v5 and related
+            "Alibaba-NLP/",    # gte-Qwen2-7B-instruct and related
         )
         if m.startswith("st:"):
             return SentenceTransformerEmbeddingProvider(model=m[3:])
