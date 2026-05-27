@@ -5592,6 +5592,18 @@ absent, omit that key. Skip parameters not relevant to {context}.
 """
 
 
+def _passages_type_message(passages: object) -> str | None:
+    """Actionable message when ``passages`` is the wrong type — typically a
+    JSON-encoded string instead of the list of passage dicts returned by
+    get_relevant_passages / search_by_passage. Returns ``None`` when acceptable."""
+    if isinstance(passages, str):
+        return (
+            "passages must be a list of passage dicts from get_relevant_passages "
+            "(or search_by_passage), not a string — did you JSON-encode it?"
+        )
+    return None
+
+
 @mcp.tool()
 async def extract_parameters_from_passages(
     passages: list[dict],
@@ -5633,6 +5645,9 @@ async def extract_parameters_from_passages(
     state = _require_state()
     if isinstance(state, str):
         return state
+
+    if (msg := _passages_type_message(passages)) is not None:
+        return _json_error(msg)
 
     try:
         from perspicacite.pipeline.extraction import (
@@ -5759,6 +5774,9 @@ async def extract_failure_modes_from_passages(
     if isinstance(state, str):
         return state
 
+    if (msg := _passages_type_message(passages)) is not None:
+        return _json_error(msg)
+
     try:
         from perspicacite.pipeline.extraction import (
             Passage,
@@ -5853,6 +5871,9 @@ async def extract_claims_from_passages(
     state = _require_state()
     if isinstance(state, str):
         return state
+    if (msg := _passages_type_message(passages)) is not None:
+        return _json_error(msg)
+
     try:
         from perspicacite.pipeline.claims import extract_claims, validate_claims
     except ImportError:
