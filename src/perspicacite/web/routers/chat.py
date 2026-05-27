@@ -252,9 +252,13 @@ async def _translate_query_to_english(text: str) -> tuple[str | None, str | None
 # use the same state. The chat router only needs sync read access
 # (is_chat_cancelled) — the registry's is_cancelled is sync.
 from perspicacite.rag.cancellation import (
-    is_cancelled as _registry_is_cancelled,
-    mark_cancelled as _registry_mark_cancelled,
     clear as _registry_clear,
+)
+from perspicacite.rag.cancellation import (
+    is_cancelled as _registry_is_cancelled,
+)
+from perspicacite.rag.cancellation import (
+    mark_cancelled as _registry_mark_cancelled,
 )
 
 
