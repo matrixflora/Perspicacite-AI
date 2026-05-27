@@ -76,48 +76,56 @@ Also set `pdf_download.unpaywall_email` in `config.yml` for open-access PDF disc
 
 ### Run
 
-The app is one Python backend process plus an optional Next.js frontend.
-For local development the launcher starts both, and a single **Ctrl+C**
-stops both:
-
 ```bash
 ./dev.sh
 ```
 
-Then open **http://localhost:3000** for the recommended (Next.js + CNRS
-charte) web UI.
+`dev.sh` starts both processes with a single command and stops both on Ctrl+C:
 
-#### Two web UIs ship in this repo
+- **`:8000`** — Python/FastAPI backend (REST API + MCP server)
+- **`:3000`** — Next.js frontend ← **open this in your browser**
 
-| URL | UI | Served by | When to use |
-| --- | --- | --- | --- |
-| **http://localhost:3000** | **Next.js / CNRS-charte (recommended)** | `frontend/` (Next.js 16 + React 19 + Tailwind) | Everyday research. Newer UI, streaming chat, CNRS visual identity, configurable database picker, settings page. Proxies `/api/*` to the backend at `:8000` (overridable via `PERSPICACITE_BACKEND_URL`). |
-| **http://localhost:8000** | **Legacy server-rendered (Jinja)** | FastAPI directly via `templates/index.html` | Same backend, no Node required. Older UX, still maintained. Useful when you want to skip the Next.js install or are running on a server without Node. The historical pre-fork snapshot lives on the `backup/gui-vanilla-jinja` branch. |
+Frontend dependencies (`node_modules`) are installed automatically on the first
+run; subsequent starts skip that step.
 
-Both UIs talk to the same FastAPI backend at `:8000`, which also exposes
-the REST API at `/api/...` and the MCP server at `/mcp`.
+> **Heads-up — the backend is slow to start.** It loads ML models (PyTorch,
+> sentence-transformers) on boot, so expect roughly a minute before it is ready
+> (longer on the very first run). On Windows-mounted / WSL filesystems it is
+> slower still — keeping the repo on a **native Linux filesystem** speeds
+> startup up substantially. The UI shows connection errors until the backend
+> finishes booting; just wait for it.
 
-#### Running the frontend on its own
+#### Web UI — Next.js on `:3000` (primary)
+
+**http://localhost:3000** is the main UI: streaming chat, CNRS visual identity,
+configurable database picker, KB management, and the similarity-expansion
+workflow. It proxies `/api/*` to the backend at `:8000` (overridable via
+`PERSPICACITE_BACKEND_URL`). **Use this for all everyday research.**
+
+#### Running the two processes separately
+
+If you need to start them in separate terminals (e.g. to attach a debugger):
 
 ```bash
-# Backend — REST API on :8000, MCP at /mcp (loads ML models — ~1 min cold start)
+# Terminal 1 — backend: REST API on :8000, MCP at /mcp
 uv run perspicacite -c config.yml serve
 
-# Optional Next.js frontend — :3000 (separate terminal)
+# Terminal 2 — frontend: http://localhost:3000
 cd frontend
-npm install                          # first time only
-npm run dev                          # http://localhost:3000
+npm install          # first time only; dev.sh handles this automatically
+npm run dev
 
-# Or point the frontend at a different backend (e.g. the OpenAI port):
+# To point the frontend at a different backend (e.g. the OpenAI-embedding port):
 PERSPICACITE_BACKEND_URL=http://localhost:8002 npm run dev
 ```
 
-> **Heads-up — the backend is slow to start.** It loads ML models (PyTorch,
-> sentence-transformers) on boot, so expect roughly a minute before it's ready
-> (longer on the first run). On Windows-mounted / WSL filesystems it's slower
-> still — keeping the repo on a **native Linux filesystem** speeds startup up
-> substantially. The UI shows connection errors until the backend finishes
-> booting; just wait for it.
+#### Legacy server-rendered UI on `:8000` (deprecated)
+
+`http://localhost:8000` still serves a Jinja-rendered fallback UI that requires
+no Node.js. It is **deprecated** — new features are only added to the Next.js
+frontend — and will be removed in a future release. Use it only as a last resort
+when Node.js is unavailable. The historical pre-fork snapshot is preserved on the
+`backup/gui-vanilla-jinja` branch.
 
 #### Optional: Google Scholar via Playwright
 

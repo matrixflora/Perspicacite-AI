@@ -88,22 +88,33 @@ All other config values have sensible defaults. See
 ## 3. Start the server
 
 ```bash
-uv run perspicacite -c config.yml serve
+./dev.sh
 ```
 
-Expected output:
+This starts both processes together and stops them both on Ctrl+C:
 
+- **`:8000`** — Python/FastAPI backend (REST API + MCP server)  
+- **`:3000`** — Next.js frontend ← **open this in your browser**
+
+Frontend dependencies are installed automatically on the first run.
+
+> **The backend takes ~1 minute to boot** — it loads ML models (PyTorch,
+> sentence-transformers) on startup. The UI will show connection errors until
+> it is ready; just wait.
+
+The MCP server is available at **http://localhost:8000/mcp** (same port as the
+backend, `/mcp` path). Use `--no-mcp` to disable it, `--no-ui` for headless
+API-only mode.
+
+**Need separate terminals?** You can start the two processes independently:
+
+```bash
+# Terminal 1
+uv run perspicacite -c config.yml serve   # backend on :8000
+
+# Terminal 2
+cd frontend && npm install && npm run dev  # frontend on :3000 (npm install: first time only)
 ```
-Starting Perspicacité v2.0.0
-   Server: http://0.0.0.0:8000
-   MCP: http://0.0.0.0:8000
-```
-
-Open **http://localhost:8000** in your browser. The MCP server is available at
-**http://localhost:8000/mcp** (same port, `/mcp` path — the default config merges
-MCP into the main server port via the streamable-HTTP transport).
-
-Use `--no-mcp` to disable the MCP server, `--no-ui` for headless API-only mode.
 
 ---
 
@@ -121,7 +132,7 @@ PDF availability.
 
 ### Option B: from the web UI
 
-1. Open **http://localhost:8000**
+1. Open **http://localhost:3000**
 2. Click **"+ Create new KB"** in the left sidebar
 3. Enter a name and optional description
 4. Drag and drop a `.bib` file, then click **"Create from BibTeX"**
