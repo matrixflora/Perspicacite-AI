@@ -110,6 +110,7 @@ packages_to_use/
 !docs/agent-cli-caveats.md
 !docs/roadmap-*.md
 !docs/test-status-*.md
+!tests/fixtures/**/*.md
 !docs/provider-matrix-status-*.md
 !docs/mcp-smoke-status-*.md
 !docs/config-audit-status-*.md

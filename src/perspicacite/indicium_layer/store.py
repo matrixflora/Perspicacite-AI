@@ -22,8 +22,12 @@ import pathlib
 from typing import Any
 from typing import Literal as LiteralType
 
-from rdflib import ConjunctiveGraph, URIRef
+from rdflib import Dataset, URIRef
 from rdflib import Literal as RdflibLiteral
+
+# rdflib ≥ 6.0 deprecates ConjunctiveGraph in favour of Dataset.
+# Dataset is a drop-in for our usage (add/query named graphs).
+ConjunctiveGraph = Dataset  # alias for backward compat in type hints below
 
 _RDF_SUBJECT = URIRef("http://www.w3.org/1999/02/22-rdf-syntax-ns#subject")
 _RDF_PREDICATE = URIRef("http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate")
@@ -126,7 +130,8 @@ class ClaimGraphStore:
         assert self._g is not None
         triple = (URIRef(s), URIRef(p), _rdflib_obj(o))
         if graph is None:
-            self._g.get_context(self._g.default_context.identifier).add(triple)
+            # Add to the default graph (Dataset.add delegates to the default graph)
+            self._g.add(triple)
         else:
             self._g.get_context(URIRef(graph)).add(triple)
 
