@@ -206,3 +206,42 @@ async def test_ingest_dois_abstract_counted_as_success(tmp_path):
     assert "10.1/abstract-only" not in failed_dois
     assert result["pdf_download"]["success"] == 1
     assert result["pdf_download"]["failed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ingest_dois_persists_content_type(tmp_path):
+    """The download result's content_type ('abstract'/'full_text'/'structured')
+    must be carried onto the ingested Paper so downstream can distinguish
+    abstract-only from full-text papers without counting chunks."""
+    from perspicacite.pipeline.search_to_kb import ingest_dois_into_kb
+
+    async def fake_retrieve(doi, **kw):
+        return SimpleNamespace(
+            success=True,
+            full_text=None,
+            abstract="This is the abstract.",
+            metadata={"title": "Abstract-only paper", "authors": [], "year": 2022},
+            content_type="abstract",
+        )
+
+    state = _app_state(tmp_path, ingest_mode="abstract_only")
+
+    with patch(
+        "perspicacite.pipeline.download.retrieve_paper_content",
+        new=fake_retrieve,
+    ), patch(
+        "perspicacite.pipeline.download.cookies.build_authenticated_client",
+    ) as ctx, patch(
+        "perspicacite.rag.dynamic_kb.DynamicKnowledgeBase",
+    ) as mock_dkb:
+        ctx.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
+        ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_dkb.return_value.add_papers = AsyncMock(return_value=1)
+
+        await ingest_dois_into_kb(state, "kb1", ["10.1/abstract-only"])
+
+    add_papers = mock_dkb.return_value.add_papers
+    assert add_papers.called, "add_papers was never called"
+    papers_arg = add_papers.call_args.args[0]
+    assert len(papers_arg) == 1
+    assert papers_arg[0].content_type == "abstract"
