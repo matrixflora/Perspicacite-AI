@@ -438,7 +438,7 @@ DOI: {paper.doi or 'Unknown'}"""
 
         top_k = top_k or self.config.top_k
         min_score = min_score or self.config.min_relevance_score
-        hard_cap = min(max_papers_cap or top_k, 5)
+        hard_cap = min(max_papers_cap or top_k, 50)  # was 5; cap controlled by max_papers_retrieval
 
         # ── Pass 1: identify relevant papers ───────────────────────────
         hit_chunks = await self.search(query, top_k=top_k, min_score=min_score)
