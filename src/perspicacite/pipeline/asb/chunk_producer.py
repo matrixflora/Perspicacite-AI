@@ -11,16 +11,97 @@ re-ingest is idempotent against ``DynamicKnowledgeBase._paper_ids``.
 Metadata fields cover both 2026-05-15 and 2026-05-16 ASB schemas;
 2026-05-16-only fields are passed through as-is (None or default
 when the source didn't have them).
+
+Access-tier redaction (audit item N7, 2026-05-27):
+``skill_to_paper`` and ``card_to_paper`` accept an optional
+``non_oa_dois`` set. When the record's source DOI is in that set, OR
+when the DOI is absent from the build's corpus.yaml entirely (fail-safe:
+unknown access is treated as non-OA), the Evidence section is stripped
+from ``Paper.full_text`` and replaced with a redaction marker. All
+structured metadata (DOI, title, authors, tool/parameter records) is
+preserved — only the verbatim Evidence quote section is excised.
 """
 from __future__ import annotations
+
+import re
 
 from perspicacite.models.papers import Paper, PaperSource
 from perspicacite.pipeline.asb.dag import WorkflowDag
 from perspicacite.pipeline.asb.models import ParsedCard, ParsedSkill
 
+# Match a markdown "## Evidence" heading and everything up to the next
+# top-level "## " heading or end-of-document. Used to excise verbatim
+# Evidence quotes from skill.md / card.md bodies derived from non-OA
+# (or unknown-access) source papers.
+_EVIDENCE_SECTION_RE = re.compile(
+    r"## Evidence.*?(?=\n## |\Z)",
+    flags=re.DOTALL,
+)
+_EVIDENCE_REDACTED_REPLACEMENT = (
+    "## Evidence\n[REDACTED — non-OA source]\n\n"
+)
 
-def skill_to_paper(skill: ParsedSkill) -> Paper:
-    """Return a Paper carrying the skill body + structured metadata."""
+
+def _redact_evidence_section(body_markdown: str) -> str:
+    """Replace the ``## Evidence`` section with a redaction marker.
+
+    Preserves all other markdown sections (Overview, Procedure, etc.).
+    No-op when the body has no Evidence section.
+    """
+    if not body_markdown:
+        return body_markdown
+    return _EVIDENCE_SECTION_RE.sub(
+        _EVIDENCE_REDACTED_REPLACEMENT,
+        body_markdown,
+    )
+
+
+def _should_redact(source_dois: list[str], non_oa_dois: set[str] | None) -> bool:
+    """Decide whether to redact the Evidence section.
+
+    Fail-safe semantics: when ``non_oa_dois`` is provided (i.e., a
+    corpus.yaml was found at ingest time) and the record's source DOIs
+    are EITHER explicitly in the non-OA set OR absent from the corpus
+    entirely (unknown), redact. When ``non_oa_dois`` is None, the
+    caller has opted out of the gate (allow_non_oa_ingest=True OR no
+    corpus.yaml present and operator chose to proceed) — no redaction.
+    """
+    if non_oa_dois is None:
+        return False
+    # No source DOI on the record → can't prove OA → fail safe and redact.
+    sds = [d for d in source_dois if d]
+    if not sds:
+        return True
+    sds_lower = {d.lower().strip() for d in sds}
+    # If any source DOI is non-OA OR unknown (not in the corpus.yaml at
+    # all), redact. We can't compare against the full corpus DOI set
+    # here without threading it in, so the caller passes a non_oa_dois
+    # set that already includes "unknown" entries (caller responsibility).
+    return bool(sds_lower & non_oa_dois)
+
+
+def skill_to_paper(
+    skill: ParsedSkill,
+    *,
+    non_oa_dois: set[str] | None = None,
+) -> Paper:
+    """Return a Paper carrying the skill body + structured metadata.
+
+    Args:
+        skill: Parsed skill record.
+        non_oa_dois: Optional set of lower-cased DOIs that are non-OA
+            OR unknown-access in the run-dir's corpus.yaml. When the
+            skill's source DOIs intersect this set (or the skill has no
+            source DOI at all and the gate is active), the Evidence
+            section in ``Paper.full_text`` is replaced with a redaction
+            marker. Pass ``None`` to bypass the gate entirely (operator
+            opt-in via ``allow_non_oa_ingest=True`` upstream).
+    """
+    source_dois = [p.doi for p in skill.papers if p.doi]
+    full_text = skill.body_markdown
+    if _should_redact(source_dois, non_oa_dois):
+        full_text = _redact_evidence_section(full_text)
+
     md = {
         "content_kind": "skill_body",
         "skill_id": skill.slug,
@@ -39,20 +120,31 @@ def skill_to_paper(skill: ParsedSkill) -> Paper:
         id=f"asb_skill:{skill.slug}",
         title=skill.name,
         abstract=skill.description,
-        full_text=skill.body_markdown,
+        full_text=full_text,
         source=PaperSource.SKILL_BUNDLE,
         metadata=md,
     )
 
 
-def card_to_paper(card: ParsedCard, *, dag: WorkflowDag | None) -> Paper:
+def card_to_paper(
+    card: ParsedCard,
+    *,
+    dag: WorkflowDag | None,
+    non_oa_dois: set[str] | None = None,
+) -> Paper:
     """Return a Paper carrying the card body + structured metadata.
 
     The 2026-05-16 schema fields (task_objective, executable, task_inputs/
     outputs, execution_profile, ...) ride along in the metadata dict and
     surface on chunks via the existing Paper.metadata → ChunkMetadata
     propagation.
+
+    See ``skill_to_paper`` for ``non_oa_dois`` semantics.
     """
+    source_dois = [card.crossref_doi] if card.crossref_doi else []
+    full_text = card.body_markdown
+    if _should_redact(source_dois, non_oa_dois):
+        full_text = _redact_evidence_section(full_text)
     md = {
         "content_kind": "workflow_card",
         "task_id": card.task_id,
@@ -97,7 +189,7 @@ def card_to_paper(card: ParsedCard, *, dag: WorkflowDag | None) -> Paper:
         id=f"asb_card:{card.task_id}",
         title=card.title,
         abstract=card.task_objective or "",
-        full_text=card.body_markdown,
+        full_text=full_text,
         source=PaperSource.SKILL_BUNDLE,
         doi=card.crossref_doi,
         metadata=md,
