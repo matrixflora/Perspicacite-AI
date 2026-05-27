@@ -670,11 +670,14 @@ async def expand_kb_via_citations(
         rows = await app_state.vector_store.list_paper_metadata(collection)
         seed_dois = [r["doi"] for r in rows if r.get("doi")]
 
+    if not seed_dois:
+        # Fail loudly: an LLM caller can't distinguish "found nothing new" from
+        # "nothing to expand" if we return a 0-result report on an empty KB.
+        raise ValueError(f"KB '{kb_name}' has no papers to expand from")
+
     report = SnowballReport(
         seed_dois=list(seed_dois), direction=direction,
     )
-    if not seed_dois:
-        return report
 
     hits = await snowball_expand(
         seed_dois=seed_dois, direction=direction,
