@@ -5,6 +5,7 @@ so external agent systems (e.g., Mimosa-AI) can discover and use them.
 
 Tools exposed:
 - search_literature: Search academic databases
+- general_web_search: General-web search (DuckDuckGo + Playwright); docs sites, GitHub, vendor blogs
 - get_paper_content: Fetch full text + structured sections
 - get_paper_references: Extract cited references from a paper
 - list_knowledge_bases: List all KBs
@@ -726,6 +727,149 @@ async def search_literature(
     except Exception as e:
         logger.error("mcp_search_literature_error", error=str(e))
         return _json_error(f"Search failed: {e}")
+
+
+# =============================================================================
+# Tool 1b: general_web_search
+# =============================================================================
+
+
+@mcp.tool()
+async def general_web_search(
+    query: str,
+    max_results: int = 10,
+    site_filter: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
+    relevance_method: str = "bm25",
+    min_relevance: float = 0.0,
+) -> str:
+    """General-web search via DuckDuckGo HTML interface + headless Chromium.
+
+    Distinct from ``search_literature`` / ``web_search`` which both target
+    academic databases (semantic_scholar, openalex, pubmed, arxiv,
+    google_scholar). Use this when you need software docs, GitHub repos,
+    vendor blogs, README pages, or any other non-academic web content
+    — e.g., to find a tool's documentation site after the paper mentions
+    the tool name but not the URL.
+
+    Returns a list of ``{title, url, snippet, relevance_score, relevance_reason}``
+    dicts. Optional LLM-judged relevance filtering via ``relevance_method``
+    + ``min_relevance`` mirrors ``search_literature``.
+
+    **Requires** the ``[browser]`` extra (``uv pip install -e '.[browser]'``
+    + ``playwright install chromium``). When the extra is missing, returns
+    an empty result list with a clear warning in the logs.
+
+    Args:
+        query: Free-text web search query.
+        max_results: Cap on returned results (1-50).
+        site_filter: Optional list of domains to restrict to, e.g.
+            ``["github.com", "*.github.io", "readthedocs.io"]``.
+            DuckDuckGo's wildcard ``*.subdomain`` syntax is supported
+            natively. Translates to OR'd ``site:`` operators.
+        exclude_domains: Optional list of domains to exclude. Translates
+            to ``-site:`` operators (e.g.
+            ``["wikipedia.org", "w3.org"]``).
+        relevance_method: How to score relevance when ``min_relevance > 0``.
+            - ``"bm25"`` (default, free) — BM25 token overlap on
+              title+snippet vs query.
+            - ``"rerank"`` (~5ms/result, CPU) — cross-encoder model.
+            - ``"llm"`` (slow, $) — LLM judge per result with reasons.
+            Each returned result gets a ``relevance_score`` field; ``llm``
+            also adds ``relevance_reason``.
+        min_relevance: When > 0, drop results scoring below this
+            threshold. 0.0 = keep every hit (default). Try 0.3 for
+            mild filtering, 0.5+ for high precision.
+
+    Returns:
+        JSON with ``results`` list and ``count`` total. Each result
+        has ``title``, ``url``, ``snippet`` and (when filtering)
+        ``relevance_score`` + ``relevance_reason``.
+
+    See also: ``ingest_urls_to_kb`` to feed the top-K result URLs into
+    a knowledge base — natural pipeline for proactive enrichment.
+    """
+    state = _require_state()
+    if isinstance(state, str):
+        return state
+
+    from perspicacite.search.duckduckgo_playwright import (
+        DuckDuckGoPlaywrightProvider,
+    )
+
+    try:
+        provider = DuckDuckGoPlaywrightProvider()
+        raw_results = await provider.search(
+            query=query,
+            max_results=max(max_results * 3, 30) if min_relevance > 0.0 else max_results,
+            site_filter=site_filter,
+            exclude_domains=exclude_domains,
+        )
+    except Exception as e:
+        logger.error("mcp_general_web_search_error", error=str(e), query=query[:80])
+        return _json_error(f"General web search failed: {e}")
+
+    if not raw_results:
+        return _json_ok({"results": [], "count": 0, "method": "none"})
+
+    # Map raw results to the screen_papers dict shape (title + abstract)
+    # so we can reuse the same relevance-scoring tiers as search_literature.
+    if min_relevance > 0.0:
+        from perspicacite.search.screening import (
+            screen_papers,
+            screen_papers_llm,
+            screen_papers_rerank,
+        )
+
+        method = (relevance_method or "bm25").lower()
+        # screen_papers reads 'title' and 'abstract'; map snippet -> abstract.
+        candidates = [
+            {"title": r["title"], "abstract": r.get("snippet", ""), "_url": r["url"]}
+            for r in raw_results
+        ]
+        if method == "bm25":
+            scored = screen_papers(candidates, reference=query, threshold=min_relevance)
+        elif method == "rerank":
+            scored = await screen_papers_rerank(
+                candidates, query=query, threshold=min_relevance
+            )
+        elif method == "llm":
+            scored = await screen_papers_llm(
+                candidates, query=query, llm=state.llm_client, threshold=min_relevance,
+            )
+        else:
+            return _json_error(
+                f"unknown relevance_method '{relevance_method}'; "
+                "use 'bm25', 'rerank', or 'llm'"
+            )
+
+        filtered: list[dict[str, Any]] = []
+        for r in scored:
+            if not r.kept:
+                continue
+            item = {
+                "title": r.item["title"],
+                "url": r.item["_url"],
+                "snippet": r.item.get("abstract", ""),
+                "relevance_score": round(r.score, 4),
+            }
+            if r.reason:
+                item["relevance_reason"] = r.reason
+            filtered.append(item)
+            if len(filtered) >= max_results:
+                break
+        return _json_ok({
+            "results": filtered,
+            "count": len(filtered),
+            "method": method,
+            "n_pre_filter": len(raw_results),
+        })
+
+    return _json_ok({
+        "results": raw_results,
+        "count": len(raw_results),
+        "method": "none",
+    })
 
 
 # =============================================================================
