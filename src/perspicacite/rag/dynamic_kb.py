@@ -186,6 +186,7 @@ Abstract:
                 year=paper.year,
                 doi=paper.doi,
                 url=paper.url,
+                abstract=paper.abstract,
                 content_type=paper_content_type,
                 section="metadata",
                 paper_metadata_json=paper_md_json,

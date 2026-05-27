@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
@@ -118,6 +119,12 @@ export default function KBDetailPage({
         subtitle={summary?.description ?? undefined}
         actions={
           <>
+            <Link
+              href={`/kb/${encodeURIComponent(name)}/expand`}
+              className="rounded-[var(--radius-md)] border border-[var(--border)] px-4 py-2 text-sm font-medium text-[var(--cnrs-blue)] transition hover:border-[var(--cnrs-blue)] hover:bg-[var(--cnrs-grey-light)]"
+            >
+              Expand by similarity
+            </Link>
             <BuildCapsulesButton name={name} />
             <a
               href={kb.exportUrl(name)}
