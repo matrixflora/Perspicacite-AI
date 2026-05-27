@@ -1,0 +1,92 @@
+# Perspicacité config — BAAI/bge-en-icl — cross-domain retrieval
+#
+# BAAI/bge-en-icl: LLM-based embedding (Mistral-7B backbone, 4096-dim).
+# Uses in-context learning examples to adapt to retrieval tasks.
+# Strong zero-shot generalist — best on cross-domain corpora (NFCorpus, SciDocs).
+#
+# Expected benchmarks (BEIR, zero-shot without ICL examples):
+#   SciFact  NDCG@10 ≈ 0.78–0.80   (vs BGE-M3 0.879 — BGE-M3 wins in-domain)
+#   NFCorpus NDCG@10 ≈ 0.40–0.42   (vs MiniLM 0.316 — +10 pp gain here)
+#   SciDocs  nDCG@10 ≈ 0.22–0.25   (vs MiniLM 0.1055 — large gain)
+#
+# NOTE: Full ICL-example prompting would give +2 pp on top of zero-shot.
+# The server uses zero-shot (no instruction prefix) by default.
+# Instruction prefix can be added via embedding_model_prompt in future config.
+#
+# Hardware: 7B model — requires ~14 GB VRAM (FP16) or ~7 GB (INT8/GGUF).
+# On Apple M2 Max (64 GB unified memory): runs on MPS, fast enough for ingest.
+#
+# GPU: auto-detected (MPS on Apple Silicon, CUDA on NVIDIA, CPU fallback).
+#
+# Reranker: bge-reranker-v2-m3 pairs well with all BGE embeddings.
+#
+# Launch:
+#   uv run perspicacite -c config_bge_en_icl.yml serve
+
+version: "2.0.0"
+config_name: "bge-en-icl-port8005"
+
+server:
+  host: "0.0.0.0"
+  port: 8005
+  reload: false
+
+llm:
+  default_provider: "openrouter"
+  default_model: "deepseek/deepseek-v4-flash"
+
+  providers:
+    openrouter:
+      base_url: "https://openrouter.ai/api/v1"
+      timeout: 120
+      max_retries: 3
+
+    anthropic:
+      base_url: "https://api.anthropic.com"
+      timeout: 120
+      max_retries: 3
+
+  context:
+    max_tokens: 8000
+    chat_history_turns: 10
+
+knowledge_base:
+  embedding_model: "BAAI/bge-en-icl"   # BAAI/ namespace → auto-routed to sentence-transformers
+  chunk_size: 1000
+  chunk_overlap: 200
+  chunking_method: "token"
+  default_top_k: 10
+  similarity_threshold: 0.0            # LLM-based embeddings have lower cosine scores
+  use_two_pass: true
+
+database:
+  path: "~/.local/share/perspicacite/memory.db"
+  chroma_path: "./chroma_db"
+
+rag_modes:
+  reranker_model: "BAAI/bge-reranker-v2-m3"
+
+  basic:
+    max_iterations: 1
+    use_hybrid: true
+
+  advanced:
+    max_iterations: 2
+    use_hybrid: true
+    use_wrrf: true
+
+scilex:
+  enabled: false
+
+mcp:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8005
+  transport: "streamable-http"
+
+auth:
+  enabled: true
+
+logging:
+  level: "INFO"
+  format: "json"

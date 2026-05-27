@@ -122,6 +122,19 @@ class LiteLLMEmbeddingProvider:
             raise
 
 
+def _best_device() -> str:
+    """Return the best available torch device: mps > cuda > cpu."""
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            return "mps"
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
 class SentenceTransformerEmbeddingProvider:
     """
     Local embedding provider using sentence-transformers.
@@ -137,7 +150,7 @@ class SentenceTransformerEmbeddingProvider:
     ):
         self.model_name = model
         self.batch_size = batch_size
-        self.device = device or "cpu"
+        self.device = device or _best_device()
         self._model = None
 
     def _get_model(self) -> Any:
@@ -183,6 +196,14 @@ class SentenceTransformerEmbeddingProvider:
                 "BAAI/bge-large-en-v1.5": 1024,
                 "BAAI/bge-base-en-v1.5": 768,
                 "BAAI/bge-small-en-v1.5": 384,
+                # LLM-based general embedding models (large dimension)
+                # bge-en-icl: Mistral-7B backbone, 4096-dim output
+                "BAAI/bge-en-icl": 4096,
+                # stella_en_1.5B_v5: 1.5B model, 1024-dim matryoshka output
+                "dunzhang/stella_en_1.5B_v5": 1024,
+                # GTE-Qwen2 family (Alibaba-NLP) — Qwen2 LLM backbone
+                "Alibaba-NLP/gte-Qwen2-7B-instruct": 3584,
+                "Alibaba-NLP/gte-Qwen2-1.5B-instruct": 1536,
             }
             return dimensions.get(self.model_name, 768)
         return self._model.get_sentence_embedding_dimension()
