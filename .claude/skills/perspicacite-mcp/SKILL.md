@@ -103,19 +103,72 @@ When you hold several KBs and are unsure which is most relevant, call
 you can target `search_by_passage` at the winner rather than fan-out across
 all KBs.
 
+**Full compatible-routing workflow (do this for multi-KB setups):**
+
+1. `list_knowledge_bases` → each KB carries `embedding_model` and a
+   `retrieval_hint` (`embedding_strength`, `recommended_reranker`,
+   `recommended_hybrid`).
+2. `route_kbs(query)` → rank KBs by relevance to the query.
+3. **Group the chosen KBs by identical `embedding_model`** before passing them
+   as `kb_names`. Mixed-embedding groups are rejected by the server (you'll get
+   an embedding-compat error). If the top hits span two embeddings, query each
+   compatible group separately and merge yourself.
+4. Set `use_hybrid` / `use_reranker` for the call from the winning KB's
+   `retrieval_hint` (see §6.1).
+
 # 6. Mode and screening (`generate_report`)
 
-- `basic` — quick single-pass retrieval + synthesis, no rerank.
-- `advanced` — screening + rerank with query expansion (default).
-- `profound` — deep multi-cycle research with planning + reflection.
-- `contradiction` — surfaces agreement / disagreement / open questions.
-- `agentic` — multi-step, intent-driven orchestration with tool use.
+- `basic` — quick single-pass retrieval + synthesis, no rerank. Lowest latency
+  (~12s). Good for a fast factual answer from a well-targeted KB.
+- `advanced` — query expansion + WRRF fusion + screening (default). **Best
+  single-claim retrieval mode** in eval (78% stress-bench hit-rate, 93% on hard
+  paraphrases, ~34s p50, zero errors). Use this unless you have a specific
+  reason not to.
+- `deep_research` — deep multi-cycle research with planning + reflection
+  (`profound` is a deprecated alias). Highest quality for multi-paper synthesis
+  but ~90–120s and benefits from a warm LLM cache. Reserve for genuine surveys.
+- `contradiction` — surfaces agreement / disagreement / open questions across
+  papers. Use for "does the literature support/refute X?" questions.
+- `agentic` — multi-step, intent-driven orchestration with tool use. For
+  ambiguous, multi-step tasks where the path isn't known up front.
 - `literature_survey` — broad survey with theme clustering + recommendations.
+  Broad-scope, **not retrieval-tuned** — don't use it to find a specific paper.
+
+**Mode quick-pick:** specific factual answer → `basic` or `advanced`; best
+recall/quality single claim → `advanced`; agree/refute survey → `contradiction`;
+deep multi-paper synthesis (latency OK) → `deep_research`; open-ended/tooling →
+`agentic`.
 
 When precision matters, set `screen_method` (`bm25` | `rerank` | `llm`) and a
 `screen_threshold` in [0, 1]. Use `max_papers_to_download` to cap full-text
 fetches, `recency_weight` (>0) to bias toward recent work, and `kb_names` to
 fan across several knowledge bases (they must share an embedding model).
+
+# 6.1 Embedding-aware retrieval tuning (advanced)
+
+The optimal retrieval recipe depends on the **strength of the KB's embedding
+model** — read it from `list_knowledge_bases` → `embedding_model` /
+`retrieval_hint`. Per-request knobs let you adapt without reconfiguring the
+server:
+
+| KB embedding | `use_hybrid` | `use_reranker` | Why |
+|--------------|--------------|----------------|-----|
+| Weak/local (`all-MiniLM-L6-v2`, base BGE, SPECTER2, PubMedBERT) | leave default (on) | leave default (on) | BM25 hybrid (+~3pp) and cross-encoder rerank (+~10pp on SciFact) add signal the bi-encoder lacks. |
+| Strong instruction-tuned (`Qwen3-Embedding`, `codestral-embed`, `text-embedding-3-large`, `gemini-embedding`) | **`False`** | **`False`** | The embedder already produces a near-perfect top-k; BM25 blending and a general cross-encoder *demote* correct hits (measured: −1 to −5pp). |
+
+Rule of thumb: **`retrieval_hint.recommended_hybrid` → `use_hybrid`** and
+**`retrieval_hint.recommended_reranker` → `use_reranker`**. Both default to
+`None` (= the server's configured behaviour), so omit them unless you're
+overriding.
+
+Finer control: `bm25_weight` / `vector_weight` set the hybrid blend explicitly
+(e.g. `vector_weight=1.0, bm25_weight=0.0` = pure vector). For a strong embedder,
+a *light* BM25 touch (≤0.25) is at best neutral; the balanced 0.5 default hurts.
+
+**KB-compatibility constraint:** the embedding model is fixed at ingest time —
+you cannot embed a query with a different model than the KB was built with
+(dimension mismatch → silent zero results). So choose the *embedding per KB*,
+and per query choose only the *KB*, the *mode*, and these *retrieval knobs*.
 
 # 7. Reading results
 
@@ -160,7 +213,25 @@ It adds an EDAM IRI pre-filter that cuts the candidate set ~10× before embeddin
 ranking — the precision multiplier that makes large skill libraries scale. Pass
 `edam_topics` from the collection's known topics for best results.
 
-# 9. Live reference
+# 9. Troubleshooting / failure diagnosis
+
+| Symptom | Most likely cause | What to check / do |
+|---------|-------------------|--------------------|
+| Zero results, no error | Empty KB (ingestion failed) **or** embedding mismatch | Re-check `add_dois_to_kb` `added>=1`; confirm you queried the KB with its own embedding (single-KB path or same-embedding `kb_names`). |
+| Zero results on multi-KB | Mixed embeddings in `kb_names` | `list_knowledge_bases` → group by `embedding_model`; query compatible groups separately. |
+| Author search returns topic papers | `optimize_query` dropped the surname | Set `optimize_query=False` or filter by ORCID/OpenAlex id (§2). |
+| Strong-embedder KB recall feels off after a rerank | Cross-encoder demoting good hits | Set `use_reranker=False` (and `use_hybrid=False`) for that call (§6.1). |
+| `extract_*_from_passages` errors instantly | `passages` was stringified/restructured | Pass `result["passages"]` verbatim (§4). |
+| `agentic` / `deep_research` return ERR for every claim | `llm_cache.db` is a 0-byte file | Recreate the `llm_cache` table (see Perspicacité CLAUDE.md Gotcha 5). |
+| Very high latency | `deep_research` cold cache, or large `max_papers_to_download` | Prefer `advanced`; cap `max_papers_to_download`; set `max_total_seconds`. |
+| Low recall from some papers | They're abstract-only (one chunk) | Expected; full-text papers dominate ranked results (§5). |
+
+To localise a retrieval miss: try the same query in `basic` (pure vector) vs
+`advanced` (hybrid+expansion). If `basic` finds it but `advanced` doesn't, a
+high BM25 weight is likely demoting it — set `use_hybrid=False` or lower
+`bm25_weight`.
+
+# 10. Live reference
 
 Treat this file as a snapshot. For the authoritative current capabilities,
 decision rules, full tool index, and knob defaults, call `get_usage_guide` —
