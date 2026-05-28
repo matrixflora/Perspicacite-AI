@@ -166,10 +166,23 @@ class LiteLLMEmbeddingProvider:
 
 
 def _best_device() -> str:
-    """Return the best available torch device: mps > cuda > cpu."""
+    """Return the best available torch device.
+
+    Selection order:
+      * macOS (Darwin) with a working Metal backend → ``"mps"``
+      * any platform with an NVIDIA GPU → ``"cuda"``
+      * otherwise → ``"cpu"``
+
+    MPS is Apple-Metal-only, so it is gated on ``platform.system() == "Darwin"``
+    to be explicit (and to avoid a stray ``mps`` from an unusual torch build on
+    a non-Mac host). Any import/availability error degrades safely to CPU.
+    """
+    import platform
+
     try:
         import torch
-        if torch.backends.mps.is_available():
+
+        if platform.system() == "Darwin" and torch.backends.mps.is_available():
             return "mps"
         if torch.cuda.is_available():
             return "cuda"

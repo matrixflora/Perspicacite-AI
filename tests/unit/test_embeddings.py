@@ -44,9 +44,24 @@ class TestSentenceTransformerEmbeddingProvider:
     """Tests for sentence-transformer provider."""
 
     def test_init(self):
-        """Test initialization."""
+        """Test initialization.
+
+        Device is hardware-dependent (mps on Apple Silicon, cuda on NVIDIA,
+        cpu otherwise) so we assert it matches the auto-detected best device
+        rather than hardcoding 'cpu'.
+        """
+        from perspicacite.llm.embeddings import _best_device
+
         provider = SentenceTransformerEmbeddingProvider(model="all-MiniLM-L6-v2")
         assert provider.model_name == "all-MiniLM-L6-v2"
+        assert provider.device == _best_device()
+        assert provider.device in {"cpu", "mps", "cuda"}
+
+    def test_init_explicit_device(self):
+        """An explicit device overrides auto-detection."""
+        provider = SentenceTransformerEmbeddingProvider(
+            model="all-MiniLM-L6-v2", device="cpu"
+        )
         assert provider.device == "cpu"
 
     def test_dimension(self):
