@@ -27,6 +27,9 @@ def test_make_or_get_kb_uses_embedding_provider() -> None:
     class _FakeDKB:
         def __init__(self, *, vector_store, embedding_service, config):
             captured["embedding_service"] = embedding_service
+            # Mimic DKB.__init__: default to a session-suffixed collection,
+            # which _make_or_get_kb MUST override to the canonical name.
+            self.collection_name = "session_suffixed_WRONG"
             self.name = None
             self.description = None
 
@@ -40,7 +43,7 @@ def test_make_or_get_kb_uses_embedding_provider() -> None:
         "perspicacite.rag.dynamic_kb.DynamicKnowledgeBase", _FakeDKB
     ), mock.patch(
         "perspicacite.models.kb.chroma_collection_name_for_kb",
-        lambda name: f"col_{name}",
+        lambda name: f"kb_{name}",
     ):
         kb = asyncio.run(
             ri._make_or_get_kb("asb-skills", description="d", app_state=_FakeState())
@@ -49,6 +52,9 @@ def test_make_or_get_kb_uses_embedding_provider() -> None:
     # The provider (not a non-existent embedding_service) flows into the KB.
     assert captured["embedding_service"] == "PROVIDER_SENTINEL"
     assert kb.name == "asb-skills"
+    # Writes must target the CANONICAL collection search/stats read, not the
+    # session-suffixed default — else ingested data is invisible.
+    assert kb.collection_name == "kb_asb-skills"
 
 
 def test_make_or_get_kb_would_fail_on_missing_attr() -> None:

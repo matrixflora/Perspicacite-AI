@@ -439,6 +439,13 @@ async def _make_or_get_kb(name: str, *, description: str = "", app_state: Any = 
         embedding_service=app_state.embedding_provider,
         config=config,
     )
+    # Pin the collection to the KB's CANONICAL name, exactly as the read path
+    # does (search_knowledge_base sets `dkb.collection_name =
+    # chroma_collection_name_for_kb(name)`). Without this, DKB.__init__ leaves
+    # collection_name = "<prefix><session_id>", so ingest wrote to a
+    # session-suffixed collection while search/stats read the canonical one —
+    # ingested skills were invisible (chunk_count=0 despite a "success" ingest).
+    kb.collection_name = chroma_collection_name_for_kb(name)
     kb.name = name
     kb.description = description
     return kb
