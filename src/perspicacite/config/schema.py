@@ -735,6 +735,21 @@ class RAGModesConfig(BaseModel):
         default="cross-encoder/ms-marco-MiniLM-L-6-v2",
         description="HuggingFace cross-encoder model used for reranking",
     )
+    reranker_enabled: bool = Field(
+        default=True,
+        description=(
+            "Master switch for cross-encoder reranking of web-search results "
+            "and agentic relevance scoring. Set False (or leave reranker_model "
+            "empty) to disable. RECOMMENDED OFF when retrieval is driven by a "
+            "strong instruction-tuned embedder (Qwen3-Embedding, OpenAI "
+            "text-embedding-3-large, codestral-embed): empirically a general "
+            "cross-encoder DEMOTES already-correct top hits from such embedders "
+            "(SciFact dev: ms-marco CE −1.4pp / bge-reranker-v2-m3 −1.0pp on "
+            "Qwen3-8B full; up to −4.7pp on QADS-masked vectors). Keep ON for "
+            "weak local embedders like all-MiniLM-L6-v2, where CE adds ~+10pp. "
+            "See docs/embedding_reranker_policy.md."
+        ),
+    )
 
     # KB auto-routing — triggered by `kb_name="auto"` in /api/chat or
     # MCP route_kbs(). The router scores each KB's description +

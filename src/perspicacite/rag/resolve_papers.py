@@ -52,14 +52,19 @@ async def resolve_papers_pipeline(
         except Exception as e:
             logger.warning("resolve_papers_enrich_failed", error=str(e))
 
-    if rerank and papers and len(papers) > 1:
+    _rag_modes_cfg = getattr(getattr(app_state, "config", None), "rag_modes", None)
+    _reranker_enabled = getattr(_rag_modes_cfg, "reranker_enabled", True)
+    _reranker_model = getattr(
+        _rag_modes_cfg, "reranker_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    )
+    # Config can disable reranking entirely (reranker_enabled=False or empty
+    # reranker_model). Recommended OFF for strong instruction-tuned embedders —
+    # see config schema RAGModesConfig.reranker_enabled.
+    _rerank_active = rerank and _reranker_enabled and bool(_reranker_model)
+
+    if _rerank_active and papers and len(papers) > 1:
         try:
             from perspicacite.search.screening import screen_papers_rerank
-            _reranker_model = getattr(
-                getattr(getattr(app_state, "config", None), "rag_modes", None),
-                "reranker_model",
-                "cross-encoder/ms-marco-MiniLM-L-6-v2",
-            )
             items = [
                 {
                     "_paper": p,

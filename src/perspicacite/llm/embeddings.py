@@ -64,13 +64,39 @@ class LiteLLMEmbeddingProvider:
         return self._litellm
 
     def _get_dimension(self) -> int:
-        """Get embedding dimension for the model."""
+        """Get embedding dimension for the model.
+
+        Handles bare OpenAI names and provider-prefixed routes (e.g.
+        ``openrouter/qwen/qwen3-embedding-8b``) by matching on the final
+        model segment, case-insensitively.
+        """
         dimensions = {
+            # OpenAI
             "text-embedding-3-small": 1536,
             "text-embedding-3-large": 3072,
             "text-embedding-ada-002": 1536,
+            # OpenRouter-hosted (verified 2026-05-28 via litellm openrouter/ route)
+            "codestral-embed-2505": 1536,   # Mistral code embedding — good for code KBs
+            "codestral-embed": 1536,
+            "mistral-embed-2312": 1024,
+            "mistral-embed": 1024,
+            "qwen3-embedding-8b": 4096,
+            "qwen3-embedding-4b": 2560,
+            "qwen3-embedding-0.6b": 1024,
+            "bge-m3": 1024,
+            "bge-large-en-v1.5": 1024,
+            "bge-base-en-v1.5": 768,
+            "gemini-embedding-001": 3072,
+            "gemini-embedding-2": 3072,
+            "multilingual-e5-large": 1024,
+            "e5-large-v2": 1024,
+            "e5-base-v2": 768,
         }
-        return dimensions.get(self.model, 1536)
+        # Exact match first, then final-segment match for prefixed routes.
+        if self.model in dimensions:
+            return dimensions[self.model]
+        tail = self.model.rsplit("/", 1)[-1].lower()
+        return dimensions.get(tail, 1536)
 
     @property
     def dimension(self) -> int:

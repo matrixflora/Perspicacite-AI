@@ -128,10 +128,19 @@ class AppState:
         # relevance"). Doing it once at boot is a single visible cost
         # users can wait through; subsequent restarts skip the network
         # entirely (cache hit + local_files_only path in screening.py).
-        _prewarm_reranker(
-            getattr(config.rag_modes, "reranker_model", None)
-            or "cross-encoder/ms-marco-MiniLM-L-6-v2"
-        )
+        # Skip entirely when reranking is disabled (reranker_enabled=False or
+        # empty reranker_model) — e.g. strong-embedder configs that don't rerank.
+        _reranker_model = getattr(config.rag_modes, "reranker_model", None)
+        _reranker_enabled = getattr(config.rag_modes, "reranker_enabled", True)
+        if _reranker_enabled and _reranker_model:
+            _prewarm_reranker(_reranker_model)
+        else:
+            logger.info(
+                "prewarm_reranker_skipped: reranking disabled "
+                "(reranker_enabled=%s, reranker_model=%r)",
+                _reranker_enabled,
+                _reranker_model,
+            )
 
         # Initialize vector store
         self.vector_store = ChromaVectorStore(

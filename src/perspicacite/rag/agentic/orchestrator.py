@@ -2950,12 +2950,17 @@ Generate your answer:"""
         """
         if len(papers) <= top_k:
             return papers
+        # Honour the master reranker switch — when disabled (e.g. strong
+        # instruction-tuned embedder configs), keep the original order.
+        _rag_modes_cfg = getattr(getattr(self, "config", None), "rag_modes", None)
+        _reranker_enabled = getattr(_rag_modes_cfg, "reranker_enabled", True)
+        _reranker_model = getattr(_rag_modes_cfg, "reranker_model", None) \
+            or "cross-encoder/ms-marco-MiniLM-L-6-v2"
+        if not (_reranker_enabled and _reranker_model):
+            return papers[:top_k]
         try:
             from perspicacite.retrieval.reranker import CrossEncoderReranker
             if getattr(self, "_relevance_reranker", None) is None:
-                _reranker_model = getattr(
-                    getattr(self.config, "rag_modes", None), "reranker_model", None
-                ) or "cross-encoder/ms-marco-MiniLM-L-6-v2"
                 self._relevance_reranker = CrossEncoderReranker(model_name=_reranker_model)
             texts = [
                 f"{p.title or ''}. {(p.abstract or '')[:1000]}" for p in papers
