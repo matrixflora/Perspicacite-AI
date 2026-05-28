@@ -13,6 +13,7 @@ def _kb_with_mocks():
     vstore.search = AsyncMock(return_value=[])  # empty result is fine
     embed = MagicMock()
     embed.embed = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+    embed.embed_query = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
     kb = DynamicKnowledgeBase(vstore, embed, config=KnowledgeBaseConfig())
     kb.collection_name = "test_coll"
     kb._initialized = True

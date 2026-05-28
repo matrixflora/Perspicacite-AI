@@ -35,6 +35,9 @@ class _FakeEmb:
     async def embed(self, texts):
         return [[0.1] * 3 for _ in texts]
 
+    async def embed_query(self, texts):
+        return await self.embed(texts)
+
 
 def _chunk(paper_id: str, text: str, score: float, collection: str):
     md = ChunkMetadata(paper_id=paper_id, chunk_index=0, source=PaperSource.BIBTEX)

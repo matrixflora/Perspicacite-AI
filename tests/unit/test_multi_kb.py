@@ -63,6 +63,9 @@ class _FakeEmbProvider:
     async def embed(self, texts):
         return [[0.0, 0.0, 0.0] for _ in texts]
 
+    async def embed_query(self, texts):
+        return await self.embed(texts)
+
 
 @pytest.mark.asyncio
 async def test_multi_kb_search_merges_and_dedups():

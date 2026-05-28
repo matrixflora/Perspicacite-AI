@@ -27,6 +27,9 @@ class _FakeEmb:
     async def embed(self, texts):
         return [[0.1] * 3 for _ in texts]
 
+    async def embed_query(self, texts):
+        return await self.embed(texts)
+
 
 def _make_orch() -> AgenticOrchestrator:
     return AgenticOrchestrator(

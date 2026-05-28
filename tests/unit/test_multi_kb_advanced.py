@@ -49,6 +49,9 @@ class _FakeEmb:
     async def embed(self, texts: list[str]) -> list[list[float]]:
         return [[0.1, 0.2, 0.3] for _ in texts]
 
+    async def embed_query(self, texts: list[str]) -> list[list[float]]:
+        return await self.embed(texts)
+
 
 @pytest.mark.asyncio
 async def test_wrrf_fan_out_across_collections_tags_kb_name():

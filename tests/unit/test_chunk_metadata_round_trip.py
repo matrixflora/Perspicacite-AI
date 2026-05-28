@@ -71,6 +71,7 @@ def test_search_two_pass_exposes_decoded_paper_metadata():
 
     fake_emb = MagicMock()
     fake_emb.embed = AsyncMock(return_value=[[0.0] * 8])
+    fake_emb.embed_query = AsyncMock(return_value=[[0.0] * 8])
 
     dkb = DynamicKnowledgeBase(fake_vs, fake_emb, config=KnowledgeBaseConfig(vector_size=8))
     dkb.collection_name = "test"
@@ -115,6 +116,7 @@ def test_search_two_pass_decodes_paper_metadata_via_peek_row():
 
     fake_emb = MagicMock()
     fake_emb.embed = AsyncMock(return_value=[[0.0] * 8])
+    fake_emb.embed_query = AsyncMock(return_value=[[0.0] * 8])
 
     dkb = DynamicKnowledgeBase(fake_vs, fake_emb, config=KnowledgeBaseConfig(vector_size=8))
     dkb.collection_name = "test"
