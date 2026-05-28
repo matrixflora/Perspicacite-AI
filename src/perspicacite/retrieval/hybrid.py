@@ -166,10 +166,21 @@ def compute_bm25_scores(
         query: Search query
 
     Returns:
-        Array of BM25 scores
+        Array of BM25 scores (all-zero when no document has any tokens,
+        e.g. KB ingested with titles-only or semantic-only content)
     """
+    n = len(documents)
+    if n == 0:
+        return np.array([])
+
     # Tokenize documents
     tokenized_docs = [doc.lower().split() for doc in documents]
+
+    # Guard: BM25Okapi raises ZeroDivisionError when every document is empty
+    # (no tokens).  This happens on semantic KBs (e.g. BEIR citation-prediction)
+    # where only embeddings were stored and full_text is empty.
+    if not any(tokenized_docs):
+        return np.zeros(n)
 
     # Create BM25 index
     bm25 = BM25Okapi(tokenized_docs)
@@ -221,12 +232,12 @@ async def hybrid_retrieval(
         if hasattr(doc, "chunk") and hasattr(doc.chunk, "text"):
             text = doc.chunk.text
         elif hasattr(doc, "page_content"):
-            text = doc.page_content
+            text = doc.page_content or ""
         elif hasattr(doc, "content"):
             text = str(doc.content)
         else:
             text = str(doc)
-        doc_texts.append(text)
+        doc_texts.append(text or "")
 
     # Compute BM25 scores
     bm25_scores = compute_bm25_scores(doc_texts, query)
@@ -237,6 +248,37 @@ async def hybrid_retrieval(
         vector_scores_range=(vector_scores_arr.min(), vector_scores_arr.max()),
         bm25_scores_range=(bm25_scores.min(), bm25_scores.max()),
     )
+
+    # Graceful degradation: if one component has no signal, use the other as-is.
+    # This is common on semantic tasks (e.g. citation-prediction) where BM25
+    # returns all-zero scores because query vocabulary doesn't match document
+    # terms.  Without this guard the combined score is flat (all 0.5) and the
+    # sort is arbitrary, discarding the vector ranking.
+    if bm25_scores.max() == 0.0:
+        logger.info(
+            "hybrid_bm25_no_signal_fallback",
+            query=query[:100],
+            fallback="vector_only",
+        )
+        results = sorted(
+            zip(documents, vector_scores_arr.tolist()),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        return list(results)
+
+    if vector_scores_arr.max() == 0.0:
+        logger.info(
+            "hybrid_vector_no_signal_fallback",
+            query=query[:100],
+            fallback="bm25_only",
+        )
+        results = sorted(
+            zip(documents, bm25_scores.tolist()),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        return list(results)
 
     # Combine scores
     combined_scores = combine_scores(

@@ -85,18 +85,22 @@ class BM25Index:
         # Normalize scores to [0, 1]
         max_score = max(scores) if scores.any() else 1.0
 
-        # Build results
+        # Build results — include all top-k regardless of score value.
+        # Filtering on scores[idx] > 0 would return an empty list for
+        # semantic queries (e.g. citation-prediction) where no document
+        # contains the query tokens, leaving the caller with nothing to
+        # fall back on.  A score of 0 is still a valid ranking signal
+        # (uniform prior); the caller's WRRF/hybrid layer handles degradation.
         results = []
         for idx in top_indices:
-            if scores[idx] > 0:  # Only include positive scores
-                normalized_score = scores[idx] / max_score if max_score > 0 else 0
-                results.append(
-                    RetrievedChunk(
-                        chunk=self.documents[idx],
-                        score=float(normalized_score),
-                        retrieval_method="bm25",
-                    )
+            normalized_score = scores[idx] / max_score if max_score > 0 else 0.0
+            results.append(
+                RetrievedChunk(
+                    chunk=self.documents[idx],
+                    score=float(normalized_score),
+                    retrieval_method="bm25",
                 )
+            )
 
         logger.debug(
             "bm25_search_complete",
