@@ -242,6 +242,31 @@ class RAGRequest(BaseModel):
         ),
     )
 
+    # === Per-call retrieval-strategy overrides ===
+    # None = use the mode/config default; True/False overrides for this call.
+    # Rationale: the optimal choice depends on the KB's embedding strength —
+    # weak embedders (MiniLM) benefit from BM25 hybrid + cross-encoder rerank,
+    # strong instruction-tuned embedders (Qwen3, codestral-embed, OpenAI-3-large)
+    # are hurt by both. A single server hosting mixed-strength KBs can flip these
+    # per request instead of needing one server per profile.
+    # See docs/embedding_reranker_policy.md.
+    use_hybrid: bool | None = Field(
+        default=None,
+        description=(
+            "Override hybrid (vector+BM25) retrieval for this call. None = mode "
+            "default (rag_modes.<mode>.use_hybrid). False = pure vector — "
+            "recommended for strong instruction-tuned embedders."
+        ),
+    )
+    use_reranker: bool | None = Field(
+        default=None,
+        description=(
+            "Override cross-encoder reranking of web-search results for this "
+            "call. None = server default (rag_modes.reranker_enabled). False = "
+            "no rerank — recommended for strong instruction-tuned embedders."
+        ),
+    )
+
     def __repr__(self) -> str:
         return (
             f"RAGRequest(query='{self.query[:50]}...', "

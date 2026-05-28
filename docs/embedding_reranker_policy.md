@@ -181,11 +181,17 @@ workflow:
 4. Set reranker/hybrid from the `retrieval_hint`.
 
 > **Single-server caveat:** one running server embeds queries with *one* model
-> (`config.knowledge_base.embedding_model`) and `reranker_enabled`/`use_hybrid`
-> are server-level. To serve multiple embedding families, run one server per
-> profile (e.g. MiniLM:8000, codestral:8003, OpenAI:8002) and route to the right
-> *server*. Per-request reranker/hybrid override is a known future enhancement
-> (see §7 gaps).
+> (`config.knowledge_base.embedding_model`). To serve multiple embedding families,
+> run one server per profile (e.g. MiniLM:8000, codestral:8003, OpenAI:8002) and
+> route to the right *server*.
+>
+> **Per-request override (no reconfig needed):** `generate_report` /
+> `RAGRequest` accept `use_hybrid` and `use_reranker` (both `bool | None`,
+> default `None` = config). So even on a single server an agent can flip them
+> per call — set both `False` when querying a strong-embedder KB. Effective for
+> `basic`/`advanced`/`contradiction`; `deep_research`'s internal web step still
+> uses the server default. Pull the recommendation straight from
+> `list_knowledge_bases` → `retrieval_hint`.
 
 ---
 

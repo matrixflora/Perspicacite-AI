@@ -149,3 +149,66 @@ async def test_pipeline_reranks_when_enabled_in_config():
         )
     mock_rerank.assert_called_once()
     assert result[0].title == "B"  # reranked order
+
+
+# ---------------------------------------------------------------------------
+# Per-request override (RAGRequest.use_reranker → reranker_override) wins
+# ---------------------------------------------------------------------------
+def test_ragrequest_accepts_per_request_overrides():
+    from perspicacite.models.rag import RAGRequest
+
+    r = RAGRequest(query="q")
+    assert r.use_hybrid is None and r.use_reranker is None  # defaults
+    r2 = RAGRequest(query="q", use_hybrid=False, use_reranker=False)
+    assert r2.use_hybrid is False and r2.use_reranker is False
+
+
+@pytest.mark.asyncio
+async def test_reranker_override_false_beats_config_enabled():
+    """reranker_override=False skips rerank even when config enables it."""
+    papers = [_paper("A"), _paper("B")]
+    mock_rerank = AsyncMock(return_value=[])
+    with patch(
+        "perspicacite.rag.web_search.run_web_aggregator_search",
+        AsyncMock(return_value=papers),
+    ), patch(
+        "perspicacite.pipeline.enrichment.crossref_enrich.enrich_papers",
+        AsyncMock(side_effect=lambda p, **kw: p),
+    ), patch(
+        "perspicacite.search.screening.screen_papers_rerank", mock_rerank
+    ):
+        await resolve_papers_pipeline(
+            query="q", databases=["openalex"], max_docs=5,
+            app_state=_app_state(reranker_enabled=True),  # config says ON
+            enrich=False, rerank=True, reranker_override=False,  # request says OFF
+        )
+    mock_rerank.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reranker_override_true_beats_config_disabled():
+    """reranker_override=True forces rerank even when config disables it."""
+    papers = [_paper("A"), _paper("B")]
+    from perspicacite.search.screening import ScreenResult
+
+    fake = [
+        ScreenResult(item={"_paper": papers[1], "title": "B", "abstract": "x"}, score=0.9, kept=True),
+        ScreenResult(item={"_paper": papers[0], "title": "A", "abstract": "x"}, score=0.4, kept=True),
+    ]
+    mock_rerank = AsyncMock(return_value=fake)
+    with patch(
+        "perspicacite.rag.web_search.run_web_aggregator_search",
+        AsyncMock(return_value=papers),
+    ), patch(
+        "perspicacite.pipeline.enrichment.crossref_enrich.enrich_papers",
+        AsyncMock(side_effect=lambda p, **kw: p),
+    ), patch(
+        "perspicacite.search.screening.screen_papers_rerank", mock_rerank
+    ):
+        result = await resolve_papers_pipeline(
+            query="q", databases=["openalex"], max_docs=5,
+            app_state=_app_state(reranker_enabled=False),  # config says OFF
+            enrich=False, rerank=True, reranker_override=True,  # request says ON
+        )
+    mock_rerank.assert_called_once()
+    assert result[0].title == "B"

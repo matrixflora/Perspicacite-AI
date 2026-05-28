@@ -670,6 +670,7 @@ Sources:
                 max_docs=cap,
                 config=getattr(self, "config", None),
                 app_state=getattr(request, "app_state", None),
+                reranker_override=getattr(request, "use_reranker", None),
                 telemetry=_telemetry,
                 optimize_query=False,
             )
@@ -1067,8 +1068,15 @@ Don't deviate the topic of the queries and questions. Do not use bullet points o
 
             scores_per_query[q_idx] = {}
 
-            # v1: hybrid for every query when advanced_mode + use_hybrid
-            if self.use_hybrid and results and llm is not None:
+            # v1: hybrid for every query when advanced_mode + use_hybrid.
+            # Per-request override wins over the mode/config default so a strong
+            # instruction-tuned embedder can disable hybrid for this call
+            # (use_hybrid=False) without reconfiguring the server.
+            _req_hybrid = getattr(request, "use_hybrid", None)
+            effective_use_hybrid = (
+                self.use_hybrid if _req_hybrid is None else _req_hybrid
+            )
+            if effective_use_hybrid and results and llm is not None:
                 try:
                     logger.info("advanced_applying_hybrid", query=query[:100])
 

@@ -28,11 +28,17 @@ async def resolve_papers_pipeline(
     telemetry: Any = None,
     enrich: bool = True,
     rerank: bool = True,
+    reranker_override: bool | None = None,
     min_relevance: float = 0.0,
     optimize_query: bool | None = None,
     context: str | None = None,
 ) -> list[Paper]:
-    """Run aggregator → Crossref enrich → MiniLM rerank → relevance gate."""
+    """Run aggregator → Crossref enrich → MiniLM rerank → relevance gate.
+
+    ``reranker_override`` (per-request, from RAGRequest.use_reranker) wins over
+    the server-level ``rag_modes.reranker_enabled`` config when not None — lets a
+    single server skip reranking for a strong-embedder query.
+    """
     from perspicacite.rag.web_search import run_web_aggregator_search
 
     papers = await run_web_aggregator_search(
@@ -53,7 +59,11 @@ async def resolve_papers_pipeline(
             logger.warning("resolve_papers_enrich_failed", error=str(e))
 
     _rag_modes_cfg = getattr(getattr(app_state, "config", None), "rag_modes", None)
-    _reranker_enabled = getattr(_rag_modes_cfg, "reranker_enabled", True)
+    _cfg_reranker_enabled = getattr(_rag_modes_cfg, "reranker_enabled", True)
+    # Per-request override (RAGRequest.use_reranker) wins over server config.
+    _reranker_enabled = (
+        reranker_override if reranker_override is not None else _cfg_reranker_enabled
+    )
     _reranker_model = getattr(
         _rag_modes_cfg, "reranker_model", "cross-encoder/ms-marco-MiniLM-L-6-v2"
     )

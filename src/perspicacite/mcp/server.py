@@ -1587,6 +1587,8 @@ async def generate_report(
     domains: list[str] | None = None,
     bm25_weight: float | None = None,
     vector_weight: float | None = None,
+    use_hybrid: bool | None = None,
+    use_reranker: bool | None = None,
     ctx: Context | None = None,
 ) -> str:
     """
@@ -1650,6 +1652,16 @@ async def generate_report(
             for hybrid retrieval modes. None uses the config default (0.5).
             Complementary to bm25_weight. Both can be set independently for
             asymmetric hybrid weighting.
+        use_hybrid: Override hybrid (vector+BM25) retrieval for this call.
+            None = mode default. False = pure vector. Set False for KBs built
+            with a strong instruction-tuned embedder (Qwen3-Embedding,
+            codestral-embed, text-embedding-3-large) — BM25 blending hurts them.
+            Check list_knowledge_bases' retrieval_hint.recommended_hybrid.
+        use_reranker: Override cross-encoder reranking of web-search results.
+            None = server default. False = no rerank. Set False for the same
+            strong-embedder KBs (see retrieval_hint.recommended_reranker). Both
+            help weak embedders (MiniLM) and hurt strong ones — see
+            docs/embedding_reranker_policy.md.
 
     Returns:
         JSON object with the following keys:
@@ -1829,6 +1841,8 @@ async def generate_report(
             databases=filtered_databases,
             bm25_weight=bm25_weight,
             vector_weight=vector_weight,
+            use_hybrid=use_hybrid,
+            use_reranker=use_reranker,
         )
 
         # Build telemetry sink and attach to the request so each RAG mode

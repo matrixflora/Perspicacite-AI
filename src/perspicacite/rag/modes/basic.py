@@ -164,6 +164,7 @@ async def _web_fallback_papers(
     app_state: Any = None,
     telemetry: list[dict[str, Any]] | None = None,
     min_relevance: float = 0.0,
+    reranker_override: bool | None = None,
 ) -> list[dict[str, Any]]:
     # Live literature search used when the KB returns nothing. Routes
     # through the unified resolve_papers_pipeline (aggregator → Crossref
@@ -189,6 +190,7 @@ async def _web_fallback_papers(
         telemetry=telemetry,
         enrich=True,
         rerank=True,
+        reranker_override=reranker_override,
         min_relevance=min_relevance,
         optimize_query=optimize_query,
         context=context,
@@ -417,6 +419,7 @@ class BasicRAGMode(BaseRAGMode):
                 max_docs=cap,
                 config=getattr(self, "config", None),
                 app_state=getattr(request, "app_state", None),
+                reranker_override=getattr(request, "use_reranker", None),
                 context=getattr(request, "_resolved_context", None),
             )
             web_fallback_used = True
@@ -678,6 +681,7 @@ class BasicRAGMode(BaseRAGMode):
                 max_docs=cap,
                 config=getattr(self, "config", None),
                 app_state=getattr(request, "app_state", None),
+                reranker_override=getattr(request, "use_reranker", None),
                 telemetry=_telemetry,
                 # Tell the inner call to skip its own optimizer run; we
                 # already did it upfront above.

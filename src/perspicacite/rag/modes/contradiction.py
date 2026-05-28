@@ -427,6 +427,7 @@ class ContradictionRAGMode(BaseRAGMode):
                         max_docs=12,  # need >= 3, fetch a healthy pool
                         config=getattr(self, "config", None),
                         app_state=getattr(request, "app_state", None),
+                        reranker_override=getattr(request, "use_reranker", None),
                         telemetry=web_telemetry,
                     )
                     # Drain telemetry into SSE only when we're holding a list
