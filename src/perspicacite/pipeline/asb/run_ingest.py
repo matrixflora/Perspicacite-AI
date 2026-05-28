@@ -433,7 +433,10 @@ async def _make_or_get_kb(name: str, *, description: str = "", app_state: Any = 
     )
     kb = DynamicKnowledgeBase(
         vector_store=app_state.vector_store,
-        embedding_service=app_state.embedding_service,
+        # Both AppState and MCPState expose `embedding_provider`; there is no
+        # `embedding_service` attribute. Reading it broke ingest_asb_run on
+        # every path ("'MCPState' object has no attribute 'embedding_service'").
+        embedding_service=app_state.embedding_provider,
         config=config,
     )
     kb.name = name
