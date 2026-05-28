@@ -13,17 +13,18 @@ This document answers three practical questions:
 
 ## 1. TL;DR decision table
 
-| KB content | Recommended embedding | Provider | Reranker |
-|------------|----------------------|----------|----------|
-| **Biomedical / scientific (default)** | `all-MiniLM-L6-v2` | local | **ON** (ms-marco) |
-| Biomedical, higher recall | `BAAI/bge-m3` | local | ON (bge-reranker-v2-m3) |
-| Code | `openrouter/mistralai/codestral-embed-2505` | OpenRouter | **OFF** |
-| Hard / asymmetric retrieval | `openrouter/qwen/qwen3-embedding-8b` | OpenRouter | **OFF** |
-| General, hosted | `openrouter/openai/text-embedding-3-large` | OpenRouter | **OFF** |
+| KB content | Recommended embedding | Provider | Reranker | Hybrid (BM25) |
+|------------|----------------------|----------|----------|---------------|
+| **Biomedical / scientific (default)** | `all-MiniLM-L6-v2` | local | **ON** (ms-marco) | **ON** |
+| Biomedical, higher recall | `BAAI/bge-m3` | local | ON (bge-reranker-v2-m3) | ON |
+| Code | `openrouter/mistralai/codestral-embed-2505` | OpenRouter | **OFF** | **OFF** |
+| Hard / asymmetric retrieval | `openrouter/qwen/qwen3-embedding-8b` | OpenRouter | **OFF** | **OFF** |
+| General, hosted | `openrouter/openai/text-embedding-3-large` | OpenRouter | **OFF** | OFF |
 
-**The rule in one line:** *the reranker only helps when it is a better relevance
-judge than the embedder. Weak local embedder → rerank ON. Strong instruction-tuned
-embedder → rerank OFF.*
+**The rule in one line:** *both the reranker and the BM25 hybrid only help when they
+add signal the embedder lacks. Weak local embedder → rerank + hybrid ON. Strong
+instruction-tuned embedder → both OFF (trust the embedder).* See §3 (reranker) and
+§4 (hybrid) for the measured evidence.
 
 ---
 
@@ -105,7 +106,39 @@ NDCG@10 (0.745 → 0.851). A weak bi-encoder leaves real headroom for a cross-en
 
 ---
 
-## 4. KB compatibility constraint (why you can't swap embeddings per query)
+## 4. Hybrid retrieval (BM25 + vector) — same axis as the reranker
+
+BM25 lexical scoring is blended with vector scores when `use_hybrid: true`
+(per-mode in `rag_modes`). Like the reranker, **its value shrinks as the
+embedder strengthens** — and a high BM25 weight actively hurts a strong embedder.
+
+Measured (`perspicacite-eval/scripts/qads_qwen3_hybrid_probe.py`,
+`score = α·vector + (1−α)·BM25`, SciFact dev n=188):
+
+| Embedder | pure vector | light BM25 (α≈0.75) | balanced (α=0.5) | BM25-heavy (α=0.25) | pure BM25 |
+|----------|-------------|---------------------|------------------|---------------------|-----------|
+| **Qwen3-8B** (strong) | 0.906 | **0.912** (+0.6) | 0.892 (−1.4) | 0.869 (−3.7) | 0.820 (−8.6) |
+| **all-MiniLM** (weak) | 0.745 | — | **0.774** (+2.9) | — | — |
+
+- **Weak embedder (MiniLM):** a balanced hybrid adds ~+3 pp. Keep `use_hybrid: true`.
+- **Strong embedder (Qwen3, codestral, OpenAI-3-large):** only a *light* BM25 touch
+  is marginally positive; balanced weights HURT. Because `advanced` mode lets the LLM
+  pick the weight (it has chosen 0.5–0.6, which lands in the harmful zone — this is the
+  root cause of the SciFact claim-431 miss), the safe choice is **`use_hybrid: false`**.
+  The +0.6 pp upside of perfectly-tuned light BM25 is not worth the −3.7 pp downside
+  risk of LLM mis-weighting.
+
+So the rule generalises across all three stages — **reranker, hybrid/BM25 weight,
+and QADS dimension masking all want: weak embedder → add the auxiliary signal;
+strong embedder → trust the embedder.**
+
+| Stage | Weak embedder (MiniLM) | Strong embedder (Qwen3/codestral/OpenAI) |
+|-------|------------------------|------------------------------------------|
+| Cross-encoder reranker | ON (+~10 pp on SciFact) | OFF (−1 to −5 pp) |
+| Hybrid BM25 | ON, balanced (+~3 pp) | OFF / very light only |
+| QADS topk dim mask | n/a (low-dim) | helps (+3.8 pp at top-1024 of 4096) |
+
+## 6. KB compatibility constraint (why you can't swap embeddings per query)
 
 The embedding model is **baked into the KB at ingest time**: ChromaDB stores vectors
 of a fixed dimension produced by one model. A query **must** be embedded by the *same*
@@ -137,7 +170,7 @@ the **cheap per-query knob**.
 
 ---
 
-## 5. Pointers
+## 7. Pointers
 
 - Config field: `RAGModesConfig.reranker_enabled` (`src/perspicacite/config/schema.py`).
 - Gate sites: `rag/resolve_papers.py` (web-search rerank), `web/state.py` (prewarm),
