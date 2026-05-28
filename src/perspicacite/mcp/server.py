@@ -908,13 +908,54 @@ async def get_paper_references(
 # =============================================================================
 
 
+# Embedding families strong enough that a general cross-encoder reranker and a
+# BM25 hybrid blend tend to HURT rather than help (the embedder already produces
+# a near-perfect top-k). See docs/embedding_reranker_policy.md. Heuristic
+# substring match on the embedding model id — conservative: anything not matched
+# is treated as a "standard" embedder where rerank + hybrid help.
+_STRONG_EMBEDDING_MARKERS = (
+    "qwen3-embedding", "codestral-embed", "text-embedding-3-large",
+    "gemini-embedding", "e5-mistral", "gte-qwen", "embed-v",  # cohere embed-v*
+)
+
+
+def _retrieval_hint(embedding_model: str) -> dict:
+    """Derive a reranker/hybrid recommendation from the KB's embedding model.
+
+    Heuristic, backed by docs/embedding_reranker_policy.md: strong
+    instruction-tuned / large API embedders should NOT be reranked or
+    BM25-blended; weaker local embedders (MiniLM, base BGE, SPECTER2, PubMedBERT)
+    benefit from both.
+    """
+    m = (embedding_model or "").lower()
+    strong = any(marker in m for marker in _STRONG_EMBEDDING_MARKERS)
+    return {
+        "embedding_strength": "strong" if strong else "standard",
+        "recommended_reranker": not strong,
+        "recommended_hybrid": not strong,
+        "note": (
+            "strong embedder — prefer pure vector (rerank + BM25 hybrid tend to hurt)"
+            if strong else
+            "standard embedder — cross-encoder rerank + BM25 hybrid usually help"
+        ),
+    }
+
+
 @mcp.tool()
 async def list_knowledge_bases() -> str:
     """
     List all available knowledge bases.
 
     Returns:
-        JSON with list of KBs including name, description, paper/chunk counts.
+        JSON with list of KBs including name, description, paper/chunk counts,
+        the embedding_model each KB was ingested with, and a retrieval_hint
+        (reranker/hybrid recommendation derived from the embedding's strength).
+
+    IMPORTANT for agents: a KB can only be queried with its OWN embedding_model.
+    When fanning a query across multiple KBs (kb_names=[...]), only group KBs that
+    share the same embedding_model — mixed-embedding groups are rejected at query
+    time. Use the embedding_model field to pick compatible KBs and the
+    retrieval_hint to decide whether to enable reranking/hybrid for each.
     """
     state = _require_state()
     if isinstance(state, str):
@@ -924,12 +965,15 @@ async def list_knowledge_bases() -> str:
         kbs = await state.session_store.list_kbs()
         result = []
         for kb in kbs:
+            embedding_model = getattr(kb, "embedding_model", None)
             result.append(
                 {
                     "name": kb.name,
                     "description": kb.description,
                     "paper_count": kb.paper_count,
                     "chunk_count": kb.chunk_count,
+                    "embedding_model": embedding_model,
+                    "retrieval_hint": _retrieval_hint(embedding_model or ""),
                     "created_at": str(kb.created_at) if hasattr(kb, "created_at") else None,
                 }
             )

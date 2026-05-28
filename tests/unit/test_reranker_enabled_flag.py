@@ -96,6 +96,29 @@ async def test_pipeline_skips_rerank_when_disabled_in_config():
     assert len(result) == 2
 
 
+# ---------------------------------------------------------------------------
+# MCP list_knowledge_bases retrieval hint — strong vs standard embedder
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "model, strength, rerank, hybrid",
+    [
+        ("all-MiniLM-L6-v2", "standard", True, True),
+        ("BAAI/bge-m3", "standard", True, True),
+        ("allenai/specter2_base", "standard", True, True),
+        ("openrouter/qwen/qwen3-embedding-8b", "strong", False, False),
+        ("openrouter/mistralai/codestral-embed-2505", "strong", False, False),
+        ("text-embedding-3-large", "strong", False, False),
+    ],
+)
+def test_retrieval_hint_classification(model, strength, rerank, hybrid):
+    from perspicacite.mcp.server import _retrieval_hint
+
+    h = _retrieval_hint(model)
+    assert h["embedding_strength"] == strength
+    assert h["recommended_reranker"] is rerank
+    assert h["recommended_hybrid"] is hybrid
+
+
 @pytest.mark.asyncio
 async def test_pipeline_reranks_when_enabled_in_config():
     """reranker_enabled=True → screen_papers_rerank IS called."""

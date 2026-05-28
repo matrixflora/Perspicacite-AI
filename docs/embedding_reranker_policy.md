@@ -168,6 +168,25 @@ the KB (and therefore the embedding) by the query's domain, and sets the reranke
 per the §3 rule. Embedding choice is an **ingest-time, per-KB** decision; reranker is
 the **cheap per-query knob**.
 
+### How an agent discovers compatibility (MCP)
+
+`list_knowledge_bases` returns, per KB: `embedding_model` and a `retrieval_hint`
+(`embedding_strength`, `recommended_reranker`, `recommended_hybrid`). The agent
+workflow:
+
+1. `list_knowledge_bases` → see each KB's `embedding_model` + hint.
+2. `route_kbs(query)` → rank KBs by relevance to the query.
+3. Group the chosen KBs **by identical `embedding_model`** before passing as
+   `kb_names` (mixed-embedding groups are rejected by `check_embedding_compat`).
+4. Set reranker/hybrid from the `retrieval_hint`.
+
+> **Single-server caveat:** one running server embeds queries with *one* model
+> (`config.knowledge_base.embedding_model`) and `reranker_enabled`/`use_hybrid`
+> are server-level. To serve multiple embedding families, run one server per
+> profile (e.g. MiniLM:8000, codestral:8003, OpenAI:8002) and route to the right
+> *server*. Per-request reranker/hybrid override is a known future enhancement
+> (see §7 gaps).
+
 ---
 
 ## 7. Pointers
