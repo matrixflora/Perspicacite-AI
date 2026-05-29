@@ -1827,6 +1827,14 @@ async def generate_report(
             ``"cancelled"``
           - ``diagnostic`` (dict | null): mode-specific internals, e.g.
             ``{"cycles_completed": 2, "papers_retrieved": 14}`` for deep_research
+          - ``_provenance`` (dict): authorship/trust envelope so host agents do
+            not mistake LLM synthesis for source-verified text. Keys:
+            ``provider`` / ``model`` (the LLM that wrote ``report``),
+            ``rag_cycles_executed`` (int), ``ai_generated_fields``
+            (``["report"]`` — these fields are model-authored, not grounded),
+            and ``untrusted_sources`` (DOIs/titles of retrieved sources whose
+            content is attacker-influenceable). The ``report`` text may
+            misrepresent or propagate injected steering from these sources.
 
         Present only when ``extract_claims=True``:
           - ``indicia`` (list): typed claim dicts (5-slot SuperPattern + ECO/CiTO)
@@ -2117,6 +2125,27 @@ async def generate_report(
             [{"metadata": s.get("metadata") if isinstance(s, dict) else None} for s in sources]
         )
 
+        def _build_provenance(cycles: int) -> dict[str, Any]:
+            """Provenance envelope flagging which response fields are LLM-authored.
+
+            ``report`` is model synthesis, not source-verified text. Host agents
+            otherwise see it next to factual ``sources``/``papers_used`` and
+            assume the whole report is citation-grounded. Every retrieved source
+            is attacker-influenceable (a poisoned preprint can steer synthesis),
+            so all of them are listed as untrusted.
+            """
+            return {
+                "provider": default_provider,
+                "model": default_model,
+                "rag_cycles_executed": cycles,
+                "ai_generated_fields": ["report"],
+                "untrusted_sources": [
+                    (s.get("doi") or s.get("title"))
+                    for s in sources
+                    if isinstance(s, dict) and (s.get("doi") or s.get("title"))
+                ],
+            }
+
         if cancelled_reason == "cancelled":
             logger.info(
                 "mcp_generate_report_cancelled",
@@ -2139,6 +2168,9 @@ async def generate_report(
                 "iteration_count": report_iterations if report_iterations is not None else 0,
                 "completion_reason": report_completion_reason or "cancelled",
                 "diagnostic": report_diagnostic,
+                "_provenance": _build_provenance(
+                    report_iterations if report_iterations is not None else 0
+                ),
             }
             _cancelled_payload.update(_response_collector.as_response_extras())
             return _json_ok(_cancelled_payload)
@@ -2194,6 +2226,9 @@ async def generate_report(
             "iteration_count": report_iterations if report_iterations is not None else 1,
             "completion_reason": report_completion_reason or "complete",
             "diagnostic": report_diagnostic,
+            "_provenance": _build_provenance(
+                report_iterations if report_iterations is not None else 1
+            ),
         }
         _final_payload.update(_response_collector.as_response_extras())
         if indicia is not None:
@@ -5865,6 +5900,7 @@ async def extract_parameters_from_passages(
     try:
         from perspicacite.pipeline.extraction import (
             Passage,
+            annotate_anchor_status,
             extract_structured,
             handle_quote_for_license,
         )
@@ -5911,6 +5947,10 @@ async def extract_parameters_from_passages(
                 timeout_s=80.0,
             )
             records = []  # return empty list on timeout rather than error
+
+        # R3 — verify each record's quote against the source passages BEFORE the
+        # license-tier rewrite, so verification sees the model's original quote.
+        records = annotate_anchor_status(records, passage_objs)
 
         # Apply license-tier policy to source_quote on each record.
         doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
@@ -5993,6 +6033,7 @@ async def extract_failure_modes_from_passages(
     try:
         from perspicacite.pipeline.extraction import (
             Passage,
+            annotate_anchor_status,
             extract_structured,
             handle_quote_for_license,
         )
@@ -6033,6 +6074,9 @@ async def extract_failure_modes_from_passages(
             )
             records = []  # return empty list on timeout rather than error
 
+        # R3 — verify quotes before the license-tier rewrite.
+        records = annotate_anchor_status(records, passage_objs)
+
         doi_to_license = {p.source_doi: p.license_id for p in passage_objs}
         cleaned: list[dict] = []
         for r in records:
@@ -6067,7 +6111,11 @@ async def extract_claims_from_passages(
     evidence) from retrieved passages, validated against the indicium standard.
 
     Each claim has context/subject/qualifier/relation/object plus evidence
-    (DOI + exact quote + ECO evidence_type). Returns
+    (DOI + exact quote + ECO evidence_type), and an ``_anchor`` record
+    {status, matched_index, quote_exact, score} from verifying its quote against
+    the source passages (R3): status is verified / repaired / unverified, and
+    quote_exact is present only when verified/repaired (never fabricated for an
+    unverified quote). Returns
     {success, claims:[...], claims_valid: bool, validation_report?: str}.
     Use after retrieval (e.g. get_relevant_passages) to produce a machine-
     readable, standards-compliant claim set instead of prose.
@@ -6103,9 +6151,31 @@ async def extract_claims_from_passages(
         except ImportError:
             pass  # indicium-adapters not installed — proceed without adapter
 
+    # get_relevant_passages emits flat {text, source_doi}; extract_claims and
+    # anchor_claims both read {chunk_text, source:{doi}}. Normalize so the model
+    # actually sees passage text AND the anchor verifier has real candidates —
+    # without this, anchoring would silently see empty text and tag everything
+    # unverified.
+    norm_passages = [
+        {
+            "chunk_text": p.get("chunk_text") or p.get("text", ""),
+            "source": {"doi": p.get("source_doi") or (p.get("source") or {}).get("doi")},
+        }
+        for p in passages
+        if isinstance(p, dict)
+    ]
+
     claims = await extract_claims(
-        llm_client=state.llm_client, passages=passages, context=context, model=model,
+        llm_client=state.llm_client, passages=norm_passages, context=context, model=model,
         domain_adapter=adapter)
+
+    # R3 — verify each claim's quote against the passages it was drawn from and
+    # tag it. Fail-open: every claim is kept, each carrying claim["_anchor"]
+    # {status, matched_index, quote_exact, score}. norm_passages is index-aligned
+    # with the list the model saw, so matched_index is meaningful.
+    from perspicacite.indicium_layer.anchor import anchor_claims
+
+    claims = anchor_claims(claims, norm_passages)
 
     conforms, report = validate_claims(claims, domain_adapter=adapter) if claims else (True, "")
     out: dict = {"claims": claims, "claims_valid": conforms}
@@ -6218,6 +6288,9 @@ async def build_claim_graph(
             refresh=refresh,
             max_pairs_per_claim=max_pairs_per_claim,
             model=model,
+            anchor_strict=state.config.anchor.strict,
+            anchor_near_threshold=state.config.anchor.near_threshold,
+            anchor_audit_dir=state.config.anchor.audit_dir,
         )
     finally:
         store.close()

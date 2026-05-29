@@ -154,12 +154,30 @@ def claims_to_graph(claims: list[dict]):
         cid = c.get("id") or f"pos:{i}"
         node = rdflib.URIRef(f"urn:perspicacite:claim:{cid}")
         g.add((node, rdflib.RDF.type, asb.Claim))
-        for slot in ("context", "subject", "qualifier", "relation", "object"):
+        for slot in ("context", "subject", "relation", "object"):
             if c.get(slot):
                 g.add((node, asb[slot], rdflib.Literal(c[slot])))
+        # Route the qualifier: core Bucur terms go on the closed asb:qualifier
+        # enum; domain-adapter qualifiers go on the open asb:domainQualifier slot
+        # (indicium#1, Reading 1) so they pass SHACL instead of failing the enum.
+        qual = c.get("qualifier")
+        if qual:
+            pred = "qualifier" if qual in _QUALIFIERS else "domainQualifier"
+            g.add((node, asb[pred], rdflib.Literal(qual)))
         for slot, curie in (c.get("ontology_terms") or {}).items():
             if curie:
                 g.add((node, asb[f"{slot}_ontology_term"], rdflib.Literal(str(curie))))
+        # R3 anchor provenance (additive asb: triples; all asb:Claim shapes are
+        # sh:closed false, so this does not affect SHACL validation).
+        anchor = c.get("_anchor")
+        if anchor:
+            status = anchor.get("status")
+            if status:
+                g.add((node, asb["anchorStatus"], rdflib.Literal(status)))
+            # Only emit the verbatim quote when it was verified/repaired —
+            # never launder an unverified (paraphrased/hallucinated) quote.
+            if status in ("verified", "repaired") and anchor.get("quote_exact"):
+                g.add((node, asb["quoteExact"], rdflib.Literal(anchor["quote_exact"])))
     return g
 
 
