@@ -52,6 +52,12 @@ Known databases: `semantic_scholar`, `openalex`, `pubmed`, `europepmc`,
 | Which of my KBs is most relevant to a query | `route_kbs` |
 | Grow a KB by following citation edges | `expand_kb_via_citations` |
 | Search a skill KB with EDAM IRI pre-filter (L2 skill routing) | `search_skill_kb` |
+| Extract typed claims (Bucur SuperPattern) from passages | `extract_claims_from_passages` |
+| Build then query a reasoning graph of claims across a KB | `build_claim_graph` → `query_claim_graph` (`claim_graph_export` → JSON-LD; `claim_graph_status` to poll) |
+
+The claim tools (`extract_claims_from_passages`, the `*_claim_graph` family, `export_astra`)
+require the server's optional `indicia` extra (`uv sync --extra indicia`); they return a clear
+error when it isn't installed.
 
 Use `adaptive=True` on `get_relevant_passages` for terse or jargon-heavy
 queries: the server runs the optimizer once and retries if the first pass
@@ -117,6 +123,15 @@ all KBs.
    `retrieval_hint` (see §6.1).
 
 # 6. Mode and screening (`generate_report`)
+
+**Default policy — prefer `basic` (standard RAG) or `advanced`.** These two cover
+the large majority of queries at low latency. Use `advanced` as the standing
+default (best single-claim retrieval); drop to `basic` for a fast answer from a
+well-targeted KB. **Escalate to `deep_research`, `agentic`, `literature_survey`,
+or `contradiction` only when the task explicitly asks for it** (e.g. "survey the
+field", "do these papers agree/refute X?", open-ended multi-step research) **or
+genuinely requires multi-paper synthesis or agreement analysis** — those modes
+cost ~3–10× the latency, so do not reach for them by default.
 
 - `basic` — quick single-pass retrieval + synthesis, no rerank. Lowest latency
   (~12s). Good for a fast factual answer from a well-targeted KB.
