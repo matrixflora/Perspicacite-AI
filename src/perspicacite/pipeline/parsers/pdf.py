@@ -6,13 +6,26 @@ unavailable.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from perspicacite.logging import get_logger
 
+if TYPE_CHECKING:
+    from perspicacite.pipeline.parsers.docling_pdf import DoclingFigure, DoclingTable
+
 logger = get_logger("perspicacite.pipeline.parsers.pdf")
+
+
+def _docling_importable() -> bool:
+    from perspicacite.pipeline.parsers.docling_pdf import docling_importable
+    return docling_importable()
+
+
+def _docling_extract_worker(path: str):
+    from perspicacite.pipeline.parsers.docling_pdf import DoclingPDFParser
+    return DoclingPDFParser().extract(path)
 
 
 def _clean_text(text: str, threshold: float = 0.05) -> str:
@@ -48,6 +61,9 @@ class ParsedContent:
     title: str | None = None
     sections: dict[str, str] | None = None
     metadata: dict[str, Any] | None = None
+    # R2 (docling): empty on the fitz path; populated when docling is used.
+    tables: list["DoclingTable"] = field(default_factory=list)
+    figures: list["DoclingFigure"] = field(default_factory=list)
 
 
 class PDFParser:
@@ -166,6 +182,52 @@ class PDFParser:
         pdf.close()
 
         return "\n\n".join(all_text), sections, page_count
+
+    # ------------------------------------------------------------------
+    # docling extras pass: guards + worker runner (R2 docling)
+    # ------------------------------------------------------------------
+
+    def _page_count(self, source) -> int:
+        fitz = self._get_fitz()
+        if fitz is None:
+            return 0
+        try:
+            doc = (
+                fitz.open(str(source))
+                if isinstance(source, (str, Path))
+                else fitz.open(stream=source, filetype="pdf")
+            )
+            n = doc.page_count
+            doc.close()
+            return n
+        except Exception:
+            return 0
+
+    def _should_run_docling_extras(self, page_count: int, config) -> bool:
+        """True when docling tables/figures extraction should run: the advanced
+        flag is on, the [docling] extra is importable, and the PDF is within the
+        page-count cap. The wall-clock timeout is the runtime safety net."""
+        if not getattr(config, "docling_extract_tables_figures", False):
+            return False
+        if not _docling_importable():
+            return False
+        return page_count <= int(getattr(config, "docling_max_pages", 40))
+
+    def _run_docling_with_timeout(self, source, timeout_s: int):
+        """Run docling in a worker process; return ParsedContent or None on
+        timeout/error (caller falls back to fitz)."""
+        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures import TimeoutError as FTimeout
+        try:
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_docling_extract_worker, str(source))
+                return fut.result(timeout=timeout_s)
+        except FTimeout:
+            logger.warning("docling_fallback", reason="timeout", path=str(source))
+            return None
+        except Exception as exc:
+            logger.warning("docling_fallback", reason="error", error=str(exc))
+            return None
 
     # ------------------------------------------------------------------
     # Public API
