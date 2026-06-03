@@ -150,6 +150,9 @@ def claims_to_graph(claims: list[dict]):
 
     g = rdflib.Graph()
     asb = rdflib.Namespace(_ASB)
+    SSSOM = rdflib.Namespace("https://w3id.org/sssom/")
+    INDICIUM = rdflib.Namespace("https://w3id.org/indicium/")
+    DCT = rdflib.Namespace("http://purl.org/dc/terms/")
     for i, c in enumerate(claims):
         cid = c.get("id") or f"pos:{i}"
         node = rdflib.URIRef(f"urn:perspicacite:claim:{cid}")
@@ -166,7 +169,22 @@ def claims_to_graph(claims: list[dict]):
             g.add((node, asb[pred], rdflib.Literal(qual)))
         for slot, curie in (c.get("ontology_terms") or {}).items():
             if curie:
+                # Keep existing flat literal (additive, backward-compatible).
                 g.add((node, asb[f"{slot}_ontology_term"], rdflib.Literal(str(curie))))
+                # Emit first-class sssom:Mapping node conformant to indicium
+                # 1.11 SSSOMMapping SHACL shape.  Property URIs come from the
+                # shapes.ttl sh:path entries (dct:identifier, indicium:*).
+                just = (c.get("ontology_term_justifications") or {}).get(slot) or "semapv:CompositeMatching"
+                m = rdflib.URIRef(f"urn:perspicacite:claim:{cid}#{slot}-mapping")
+                g.add((m, rdflib.RDF.type, SSSOM.Mapping))
+                g.add((m, DCT.identifier, rdflib.Literal(str(m))))
+                g.add((m, INDICIUM.subject_id, rdflib.Literal(f"urn:perspicacite:claim:{cid}#{slot}")))
+                g.add((m, INDICIUM.subject_label, rdflib.Literal(str(c.get(slot) or ""))))
+                g.add((m, INDICIUM.predicate_id, rdflib.Literal("skos:exactMatch")))
+                g.add((m, INDICIUM.object_id, rdflib.Literal(str(curie))))
+                g.add((m, INDICIUM.mapping_justification, rdflib.Literal(just)))
+                # Tie the mapping to the claim node (asb:Claim is sh:closed false).
+                g.add((node, asb["hasMapping"], m))
         # R3 anchor provenance (additive asb: triples; all asb:Claim shapes are
         # sh:closed false, so this does not affect SHACL validation).
         anchor = c.get("_anchor")

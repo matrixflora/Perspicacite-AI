@@ -54,3 +54,30 @@ def test_claim_missing_slots_is_rejected():
     claims = [{"context": "c"}]  # missing 4 of 5 required slots
     conforms, _ = validate_claims(claims)
     assert conforms is False
+
+
+@pytest.mark.unit
+def test_claims_to_graph_emits_sssom_mapping():
+    import rdflib
+    import indicium
+    from perspicacite.pipeline.claims import claims_to_graph
+
+    SSSOM = rdflib.Namespace("https://w3id.org/sssom/")
+    asb = rdflib.Namespace("https://asb.holobiomics.org/ns/asb#")
+
+    pytest.importorskip("indicium")
+
+    claims = [{
+        "id": "c1", "context": "x", "subject": "caffeine", "relation": "is", "object": "stimulant",
+        "qualifier": "identifies",
+        "ontology_terms": {"subject": "CHEBI:27732"},
+        "ontology_term_justifications": {"subject": "semapv:CompositeMatching"},
+    }]
+    g = claims_to_graph(claims)
+    maps = list(g.subjects(rdflib.RDF.type, SSSOM.Mapping))
+    assert maps, "expected an sssom:Mapping node"
+    # flat literal still present
+    assert any(str(o) == "CHEBI:27732" for o in g.objects(None, asb.subject_ontology_term))
+    # SHACL conforms against indicium 1.11
+    ok, report = indicium.validate_graph(g)
+    assert ok, report
