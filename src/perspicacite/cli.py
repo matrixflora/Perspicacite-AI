@@ -500,7 +500,9 @@ def ingest_local(
     from perspicacite.web.state import AppState
 
     async def _run() -> None:
-        state = AppState()
+        # honor the global -c config (else AppState loads the default config.yml and
+        # uses the wrong embedding model — breaks ingest into a differently-embedded KB).
+        state = AppState(config_path=ctx.obj.get("config_path"))
         await state.initialize()
 
         class _Reg:

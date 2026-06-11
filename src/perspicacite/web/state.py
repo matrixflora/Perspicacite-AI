@@ -114,10 +114,15 @@ class AppState:
         logger.info("LLM client initialized")
 
         # Initialize embeddings (uses factory so local sentence-transformers
-        # models like "all-MiniLM-L6-v2" work without an OpenAI key, and
-        # API-based models still get a local fallback).
+        # models like "all-MiniLM-L6-v2" work without an OpenAI key).
+        # use_local_fallback=False: the local fallback only ever wraps API models,
+        # but it has a DIFFERENT dimension (MiniLM 384 vs OpenAI 3072), so on any API
+        # error it silently emits 384-dim vectors that a 3072-dim collection rejects —
+        # poisoning ingests. Fail loud on API errors instead. (Local models are
+        # unaffected: the factory returns them without a fallback wrapper.)
         self.embedding_provider = create_embedding_provider(
             model=config.knowledge_base.embedding_model,
+            use_local_fallback=False,
         )
         logger.info("Embedding provider initialized")
 
