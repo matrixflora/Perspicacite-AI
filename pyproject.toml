@@ -36,6 +36,7 @@ dependencies = [
     "nltk>=3.8",
     "langchain-text-splitters>=0.3.0",
     "pathspec>=1.1.1",
+    "python-docx>=1.1.0",
 ]
 
 [project.optional-dependencies]

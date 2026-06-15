@@ -14,6 +14,7 @@ from perspicacite.logging import get_logger
 from perspicacite.models.kb import chroma_collection_name_for_kb
 from perspicacite.provenance.context import get_collector
 from perspicacite.rag.dynamic_kb import DynamicKnowledgeBase
+from perspicacite.rag.export.apa_docx_exporter import export_apa_docx
 from perspicacite.rag.utils import format_references_academic
 from perspicacite.retrieval.hybrid import hybrid_retrieval
 
@@ -2427,6 +2428,15 @@ Generate your answer:"""
                 answer = answer.rstrip() + "\n\n" + references_section
                 logger.info("agentic_references_section_added", answer_chars=len(answer))
 
+        doc_id = session.session_id.split("-")[0] if session else "manuscript"
+        output_path = f"output/{doc_id}_manuscript.docx"
+        print("OUTPUT PATH:", output_path)
+        try:
+            export_apa_docx(answer, papers, output_path)
+            logger.info("agentic_manuscript_exported", path=output_path)
+        except Exception:
+            logger.warning("agentic_manuscript_export_failed", exc_info=True)
+
         return answer, citation_map
 
     _CITE_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
@@ -2625,6 +2635,15 @@ Generate your answer:"""
         references_section = self._format_references_section(papers)
         if references_section:
             answer = answer.rstrip() + "\n\n" + references_section
+
+        doc_id = session.session_id.split("-")[0] if session else "manuscript"
+        output_path = f"output/{doc_id}_manuscript.docx"
+        print("OUTPUT PATH:", output_path)
+        try:
+            export_apa_docx(answer, papers, output_path)
+            logger.info("agentic_manuscript_exported", path=output_path)
+        except Exception:
+            logger.warning("agentic_manuscript_export_failed", exc_info=True)
 
         return answer, citation_map
 
